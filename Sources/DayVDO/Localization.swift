@@ -10,7 +10,7 @@ enum L10n {
 
     static var languageCode: String {
         let localization = language.localizationIdentifier
-            ?? Bundle.module.preferredLocalizations.first
+            ?? resources.preferredLocalizations.first
             ?? Locale.current.language.languageCode?.identifier
             ?? "zh-Hans"
         return localization
@@ -39,10 +39,20 @@ enum L10n {
 
     private static var localizedBundle: Bundle {
         guard let identifier = language.localizationIdentifier,
-              let path = Bundle.module.path(forResource: identifier, ofType: "lproj"),
+              let path = resources.path(forResource: identifier, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
-            return .module
+            return resources
         }
         return bundle
+    }
+
+    private static var resources: Bundle {
+        if let resourceURL = Bundle.main.resourceURL,
+           let appBundle = Bundle(
+               url: resourceURL.appendingPathComponent("DayVDO_DayVDO.bundle")
+           ) {
+            return appBundle
+        }
+        return .module
     }
 }
