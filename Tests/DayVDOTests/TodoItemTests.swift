@@ -16,4 +16,30 @@ final class TodoItemTests: XCTestCase {
     func testNormalizedTitleTrimsWhitespace() {
         XCTAssertEqual(TodoItem(title: "  写周报 \n").normalizedTitle, "写周报")
     }
+
+    func testImportanceAndUrgencyLabels() {
+        XCTAssertEqual(TodoItem.Priority.allCases.map(\.title), ["无", "可做", "需做", "必做"])
+        XCTAssertEqual(
+            TodoItem.Urgency.allCases.map(\.title),
+            ["无", "改天也没关系", "最好当天完成", "当天必须完成"]
+        )
+    }
+
+    func testLegacyItemWithoutUrgencyDefaultsToNone() throws {
+        let item = TodoItem(
+            title: "旧待办",
+            dueDate: .now,
+            priority: .high,
+            urgency: .mustToday
+        )
+        let encoded = try JSONEncoder().encode(item)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "urgency")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(TodoItem.self, from: legacyData)
+
+        XCTAssertEqual(decoded.priority, .high)
+        XCTAssertEqual(decoded.urgency, .none)
+    }
 }

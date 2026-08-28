@@ -5,29 +5,40 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("待办") {
-                Toggle("显示已完成的待办", isOn: $store.settings.showCompleted)
-                Picker("默认优先级", selection: $store.settings.defaultPriority) {
-                    ForEach(TodoItem.Priority.allCases) { priority in
-                        Text(priority.title).tag(priority)
+            Section(L10n.string("通用")) {
+                Picker(L10n.string("语言"), selection: $store.settings.language) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.title).tag(language)
                     }
                 }
-                Toggle("删除前询问", isOn: $store.settings.confirmBeforeDeleting)
+                Picker(L10n.string("外观"), selection: $store.settings.appearance) {
+                    ForEach(AppearanceMode.allCases) { appearance in
+                        Text(appearance.title).tag(appearance)
+                    }
+                }
             }
 
-            Section("日历") {
-                Toggle("每周从星期一开始", isOn: $store.settings.startWeekOnMonday)
+            Section(L10n.string("待办")) {
+                Toggle(L10n.string("显示已完成的待办"), isOn: $store.settings.showCompleted)
+                Picker(L10n.string("默认重要度"), selection: $store.settings.defaultPriority) {
+                    ForEach(TodoItem.Priority.allCases) { priority in
+                        Text(L10n.string(priority.title)).tag(priority)
+                    }
+                }
+                Toggle(L10n.string("删除前询问"), isOn: $store.settings.confirmBeforeDeleting)
             }
 
-            Section("关于") {
-                LabeledContent("应用", value: "DayVDO")
-                LabeledContent("版本", value: "0.1.0")
-                Text("一款专注、原生且尊重系统外观的 macOS 待办应用。")
-                    .foregroundStyle(.secondary)
+            Section(L10n.string("日历")) {
+                Toggle(L10n.string("每周从星期一开始"), isOn: $store.settings.startWeekOnMonday)
+            }
+
+            Section(L10n.string("关于")) {
+                LabeledContent(L10n.string("应用"), value: "DayVDO")
+                LabeledContent(L10n.string("版本"), value: "0.2.0")
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("设置")
+        .navigationTitle(L10n.string("设置"))
         .padding(.top, 8)
     }
 }

@@ -1,0 +1,9 @@
+/* Simplified Chinese is the source language; untranslated keys fall back to themselves. */
+"日迹" = "日迹";
+"通用" = "通用";
+"语言" = "语言";
+"外观" = "外观";
+"系统默认" = "系统默认";
+"自动" = "自动";
+"白天" = "白天";
+"深夜" = "深夜";

@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DayVDO",
+    defaultLocalization: "zh-Hans",
     platforms: [.macOS(.v15)],
     products: [
         .executable(name: "DayVDO", targets: ["DayVDO"])
@@ -10,7 +11,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "DayVDO",
-            path: "Sources/DayVDO"
+            path: "Sources/DayVDO",
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "DayVDOTests",

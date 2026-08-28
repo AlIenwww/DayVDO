@@ -29,8 +29,8 @@ struct AllTodosView: View {
         Group {
             if filteredItems.isEmpty {
                 EmptyStateView(
-                    title: query.isEmpty ? "还没有待办" : "没有找到结果",
-                    message: query.isEmpty ? "添加待办，开始规划接下来的事情。" : "请尝试其他关键词或筛选条件。",
+                    title: L10n.string(query.isEmpty ? "还没有待办" : "没有找到结果"),
+                    message: L10n.string(query.isEmpty ? "添加待办，开始规划接下来的事情。" : "请尝试其他关键词或筛选条件。"),
                     symbol: query.isEmpty ? "checklist" : "magnifyingglass"
                 )
             } else {
@@ -40,15 +40,15 @@ struct AllTodosView: View {
                 .listStyle(.inset)
             }
         }
-        .navigationTitle("总待办")
-        .searchable(text: $query, placement: .toolbar, prompt: "搜索待办")
+        .navigationTitle(L10n.string("总待办"))
+        .searchable(text: $query, placement: .toolbar, prompt: L10n.string("搜索待办"))
         .toolbar {
             ToolbarItem {
-                Picker("筛选", selection: $filter) {
-                    ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
+                Picker(L10n.string("筛选"), selection: $filter) {
+                    ForEach(Filter.allCases) { Text(L10n.string($0.rawValue)).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 220)
+                .frame(width: L10n.prefersCompactControls ? 220 : 280)
             }
         }
     }

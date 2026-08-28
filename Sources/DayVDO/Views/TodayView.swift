@@ -13,20 +13,20 @@ struct TodayView: View {
             Divider()
             if store.todayItems.isEmpty {
                 EmptyStateView(
-                    title: "今天暂无待办",
-                    message: "给今天留下一件值得完成的小事。",
+                    title: L10n.string("今天暂无待办"),
+                    message: L10n.string("给今天留下一件值得完成的小事。"),
                     symbol: "sun.max"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    Section("待完成 · \(active.count)") {
+                    Section(L10n.format("待完成 · %lld", active.count)) {
                         ForEach(active) { item in
                             TodoRow(item: item, showsDate: false) { editingItem = item }
                         }
                     }
                     if store.settings.showCompleted, !completed.isEmpty {
-                        Section("已完成 · \(completed.count)") {
+                        Section(L10n.format("已完成 · %lld", completed.count)) {
                             ForEach(completed) { item in
                                 TodoRow(item: item, showsDate: false) { editingItem = item }
                             }
@@ -37,21 +37,21 @@ struct TodayView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .navigationTitle("今日待办")
+        .navigationTitle(L10n.string("今日待办"))
     }
 
     private var header: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(Date.now.formatted(.dateTime.month(.wide).day()))
+                Text(Date.now.formatted(.dateTime.month(.wide).day().locale(L10n.locale)))
                     .font(.title2.bold())
-                Text(Date.now.formatted(.dateTime.weekday(.wide)))
+                Text(Date.now.formatted(.dateTime.weekday(.wide).locale(L10n.locale)))
                     .foregroundStyle(.secondary)
             }
             Spacer()
             if !store.todayItems.isEmpty {
                 VStack(alignment: .trailing, spacing: 5) {
-                    Text("完成 \(completed.count) / \(store.todayItems.count)")
+                    Text(L10n.format("完成 %lld / %lld", completed.count, store.todayItems.count))
                         .font(.callout.weight(.medium))
                     ProgressView(value: Double(completed.count), total: Double(store.todayItems.count))
                         .frame(width: 150)

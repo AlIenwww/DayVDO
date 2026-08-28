@@ -2,9 +2,14 @@ import Foundation
 
 @MainActor
 final class TodoStore: ObservableObject {
-    @Published private(set) var items: [TodoItem] = []
+    @Published private(set) var items: [TodoItem] = [] {
+        didSet { rebuildDayIndex() }
+    }
     @Published var settings = AppSettings() {
-        didSet { save() }
+        didSet {
+            L10n.configure(language: settings.language)
+            save()
+        }
     }
 
     private struct Snapshot: Codable {
@@ -13,6 +18,7 @@ final class TodoStore: ObservableObject {
     }
 
     private let fileURL: URL
+    private var itemsByDay: [Date: [TodoItem]] = [:]
     private var isLoading = false
 
     init(fileURL: URL? = nil) {
@@ -22,6 +28,7 @@ final class TodoStore: ObservableObject {
         }
         self.fileURL = resolvedURL
         load()
+        L10n.configure(language: settings.language)
     }
 
     static var defaultFileURL: URL {
@@ -55,8 +62,8 @@ final class TodoStore: ObservableObject {
     }
 
     func items(on date: Date) -> [TodoItem] {
-        items.filter { $0.isDue(on: date) && (settings.showCompleted || !$0.isCompleted) }
-            .sorted(by: TodoStore.areInIncreasingOrder)
+        let dayItems = itemsByDay[Calendar.current.startOfDay(for: date)] ?? []
+        return settings.showCompleted ? dayItems : dayItems.filter { !$0.isCompleted }
     }
 
     func upsert(_ item: TodoItem) {
@@ -70,7 +77,6 @@ final class TodoStore: ObservableObject {
             items.append(copy)
         }
         save()
-        objectWillChange.send()
     }
 
     func toggle(_ item: TodoItem) {
@@ -78,13 +84,11 @@ final class TodoStore: ObservableObject {
         items[index].isCompleted.toggle()
         items[index].completedAt = items[index].isCompleted ? .now : nil
         save()
-        objectWillChange.send()
     }
 
     func delete(_ item: TodoItem) {
         items.removeAll { $0.id == item.id }
         save()
-        objectWillChange.send()
     }
 
     private func load() {
@@ -111,9 +115,21 @@ final class TodoStore: ObservableObject {
         }
     }
 
+    private func rebuildDayIndex() {
+        let calendar = Calendar.current
+        var index: [Date: [TodoItem]] = [:]
+        for item in items.sorted(by: TodoStore.areInIncreasingOrder) {
+            guard let dueDate = item.dueDate else { continue }
+            let day = calendar.startOfDay(for: dueDate)
+            index[day, default: []].append(item)
+        }
+        itemsByDay = index
+    }
+
     private static func areInIncreasingOrder(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {
         if lhs.isCompleted != rhs.isCompleted { return !lhs.isCompleted }
         if lhs.priority != rhs.priority { return lhs.priority.rawValue > rhs.priority.rawValue }
+        if lhs.urgency != rhs.urgency { return lhs.urgency.rawValue > rhs.urgency.rawValue }
         switch (lhs.dueDate, rhs.dueDate) {
         case let (left?, right?): return left < right
         case (_?, nil): return true

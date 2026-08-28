@@ -18,7 +18,7 @@ struct TodoRow: View {
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(item.isCompleted ? "标记为未完成" : "标记为已完成")
+            .accessibilityLabel(L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成"))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
@@ -28,13 +28,21 @@ struct TodoRow: View {
 
                 HStack(spacing: 8) {
                     if showsDate, let dueDate = item.dueDate {
-                        Label(dueDate.formatted(date: .abbreviated, time: .omitted), systemImage: "calendar")
+                        Label(
+                            dueDate.formatted(
+                                .dateTime.year().month(.abbreviated).day().locale(L10n.locale)
+                            ),
+                            systemImage: "calendar"
+                        )
                     }
                     if !item.notes.isEmpty {
-                        Label("有备注", systemImage: "text.alignleft")
+                        Label(L10n.string("有备注"), systemImage: "text.alignleft")
                     }
                     if item.priority != .none {
-                        Label(item.priority.title, systemImage: item.priority.symbolName)
+                        Label(L10n.string(item.priority.title), systemImage: item.priority.symbolName)
+                    }
+                    if item.urgency != .none {
+                        Label(L10n.string(item.urgency.title), systemImage: item.urgency.symbolName)
                     }
                 }
                 .font(.caption)
@@ -48,29 +56,29 @@ struct TodoRow: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
-            .help("编辑待办")
+            .help(L10n.string("编辑待办"))
         }
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .contextMenu {
-            Button("编辑", systemImage: "pencil", action: onEdit)
-            Button(item.isCompleted ? "标记为未完成" : "标记为已完成", systemImage: "checkmark.circle") {
+            Button(L10n.string("编辑"), systemImage: "pencil", action: onEdit)
+            Button(L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成"), systemImage: "checkmark.circle") {
                 store.toggle(item)
             }
             Divider()
-            Button("删除", systemImage: "trash", role: .destructive) {
+            Button(L10n.string("删除"), systemImage: "trash", role: .destructive) {
                 requestDeletion()
             }
         }
         .confirmationDialog(
-            "删除“\(item.title)”？",
+            L10n.format("删除“%@”？", item.title),
             isPresented: $isConfirmingDeletion,
             titleVisibility: .visible
         ) {
-            Button("删除", role: .destructive) { store.delete(item) }
-            Button("取消", role: .cancel) {}
+            Button(L10n.string("删除"), role: .destructive) { store.delete(item) }
+            Button(L10n.string("取消"), role: .cancel) {}
         } message: {
-            Text("此操作无法撤销。")
+            Text(L10n.string("此操作无法撤销。"))
         }
     }
 

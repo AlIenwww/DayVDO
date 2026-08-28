@@ -31,16 +31,21 @@ struct ContentView: View {
     @EnvironmentObject private var store: TodoStore
     @State private var selection: SidebarDestination? = .today
     @State private var editingItem: TodoItem?
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(SidebarDestination.allCases, selection: $selection) { destination in
                 NavigationLink(value: destination) {
-                    Label(destination.title, systemImage: destination.symbol)
+                    Label(L10n.string(destination.title), systemImage: destination.symbol)
                 }
             }
-            .navigationTitle("日迹")
-            .navigationSplitViewColumnWidth(210)
+            .navigationTitle(L10n.string("日迹"))
+            .navigationSplitViewColumnWidth(
+                min: 180,
+                ideal: L10n.prefersCompactControls ? 210 : 240,
+                max: 280
+            )
         } detail: {
             Group {
                 switch selection ?? .today {
@@ -49,7 +54,10 @@ struct ContentView: View {
                 case .all:
                     AllTodosView(editingItem: $editingItem)
                 case .calendar:
-                    CalendarView(editingItem: $editingItem)
+                    CalendarView(
+                        editingItem: $editingItem,
+                        columnVisibility: $columnVisibility
+                    )
                 case .settings:
                     SettingsView()
                 }
@@ -64,9 +72,9 @@ struct ContentView: View {
                                 priority: store.settings.defaultPriority
                             )
                         } label: {
-                            Label("新建待办…", systemImage: "plus")
+                            Label(L10n.string("新建待办…"), systemImage: "plus")
                         }
-                        .help("新建待办 (⌘N)")
+                        .help(L10n.string("新建待办 (⌘N)"))
                     }
                 }
             }

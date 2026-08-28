@@ -4,6 +4,7 @@ import AppKit
 /// AppKit's native graphical calendar without the exterior keyboard focus ring.
 /// The selected day remains highlighted, so focus and selection are still visible.
 struct BorderlessCalendarPicker: NSViewRepresentable {
+    @Environment(\.locale) private var locale
     @Binding var selection: Date
 
     func makeCoordinator() -> Coordinator {
@@ -16,6 +17,7 @@ struct BorderlessCalendarPicker: NSViewRepresentable {
         picker.datePickerMode = .single
         picker.datePickerElements = .yearMonthDay
         picker.dateValue = selection
+        picker.locale = locale
         picker.isBordered = false
         picker.isBezeled = false
         picker.drawsBackground = false
@@ -27,6 +29,7 @@ struct BorderlessCalendarPicker: NSViewRepresentable {
     }
 
     func updateNSView(_ picker: NSDatePicker, context: Context) {
+        picker.locale = locale
         if !Calendar.current.isDate(picker.dateValue, inSameDayAs: selection) {
             picker.dateValue = selection
         }

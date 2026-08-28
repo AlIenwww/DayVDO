@@ -17,12 +17,14 @@ struct DayVDOApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
+                .environment(\.locale, store.settings.language.locale)
+                .preferredColorScheme(preferredColorScheme)
                 .frame(minWidth: 760, minHeight: 520)
         }
         .defaultSize(width: 1080, height: 720)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("新建待办") {
+                Button(L10n.string("新建待办")) {
                     NotificationCenter.default.post(name: .newTodoRequested, object: nil)
                 }
                 .keyboardShortcut("n", modifiers: .command)
@@ -32,7 +34,17 @@ struct DayVDOApp: App {
         Settings {
             SettingsView()
                 .environmentObject(store)
-                .frame(width: 520, height: 360)
+                .environment(\.locale, store.settings.language.locale)
+                .preferredColorScheme(preferredColorScheme)
+                .frame(width: 520, height: 480)
+        }
+    }
+
+    private var preferredColorScheme: ColorScheme? {
+        switch store.settings.appearance {
+        case .automatic: nil
+        case .light: .light
+        case .dark: .dark
         }
     }
 }
