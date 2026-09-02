@@ -3,6 +3,7 @@ import AppKit
 
 struct TodoEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: TodoStore
     @State private var draft: TodoItem
     @State private var hasDueDate: Bool
     @State private var isShowingDatePicker = false
@@ -22,7 +23,7 @@ struct TodoEditorView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(L10n.string(isEditing ? "编辑待办" : "添加待办"))
+                    Text(editorTitle)
                         .font(.title2.weight(.semibold))
                     Text(L10n.string("记录任务，并选择它应当完成的日期。"))
                         .font(.callout)
@@ -48,9 +49,74 @@ struct TodoEditorView: View {
                 }
                 .padding(20)
 
+                if showsProjectPicker {
+                    Divider()
+                    HStack(spacing: 10) {
+                        Image(systemName: "folder")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(L10n.string("所属项目"))
+                        Spacer()
+                        Menu {
+                            Button {
+                                draft.projectID = nil
+                                draft.projectSortOrder = nil
+                            } label: {
+                                Label(
+                                    L10n.string("无归类"),
+                                    systemImage: draft.projectID == nil ? "checkmark" : "tray"
+                                )
+                            }
+                            Divider()
+                            ForEach(store.sortedProjects) { project in
+                                Button {
+                                    if draft.projectID != project.id {
+                                        draft.projectID = project.id
+                                        draft.projectSortOrder = nil
+                                        if draft.tagID == nil {
+                                            draft.tagID = project.tagID
+                                        }
+                                    }
+                                } label: {
+                                    Label(
+                                        project.title,
+                                        systemImage: draft.projectID == project.id ? "checkmark" : "folder"
+                                    )
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text(selectedProjectTitle)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: 190, alignment: .trailing)
+                        }
+                        .menuIndicator(.hidden)
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(height: 46)
+                }
+
                 Divider()
 
                 VStack(spacing: 0) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "tag")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(L10n.string("标签"))
+                        Spacer()
+                        TaskTagPicker(selection: $draft.tagID)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(height: 46)
+
+                    Divider().padding(.leading, 50)
+
                     HStack(spacing: 10) {
                         Image(systemName: "flag")
                             .foregroundStyle(.secondary)
@@ -154,7 +220,7 @@ struct TodoEditorView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
-        .frame(width: 520, height: 496)
+        .frame(width: 520, height: showsProjectPicker ? 588 : 542)
         .task {
             await Task.yield()
             titleIsFocused = true
@@ -172,6 +238,21 @@ struct TodoEditorView: View {
 
     private var optionWidth: CGFloat {
         L10n.prefersCompactControls ? 136 : 176
+    }
+
+    private var editorTitle: String {
+        if draft.projectID != nil {
+            return L10n.string(isEditing ? "编辑子任务" : "添加子任务")
+        }
+        return L10n.string(isEditing ? "编辑待办" : "添加待办")
+    }
+
+    private var showsProjectPicker: Bool {
+        !store.projects.isEmpty || draft.projectID != nil
+    }
+
+    private var selectedProjectTitle: String {
+        store.project(withID: draft.projectID)?.title ?? L10n.string("无归类")
     }
 }
 

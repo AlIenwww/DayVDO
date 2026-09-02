@@ -41,5 +41,22 @@ final class TodoItemTests: XCTestCase {
 
         XCTAssertEqual(decoded.priority, .high)
         XCTAssertEqual(decoded.urgency, .none)
+        XCTAssertNil(decoded.projectID)
+        XCTAssertNil(decoded.projectSortOrder)
+        XCTAssertNil(decoded.tagID)
+    }
+
+    func testLegacyProjectWithoutTagDecodesAsUntagged() throws {
+        let project = TodoProject(title: "旧项目", tagID: UUID())
+        let encoded = try JSONEncoder().encode(project)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "tagID")
+
+        let decoded = try JSONDecoder().decode(
+            TodoProject.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        XCTAssertNil(decoded.tagID)
     }
 }

@@ -32,5 +32,7 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(L10n.string("今日待办"), "Today")
         XCTAssertEqual(L10n.string("系统默认"), "System Default")
+        XCTAssertEqual(L10n.string("新建大项目"), "New Project")
+        XCTAssertEqual(L10n.string("无归类"), "No Category")
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: TodoStore
+    @State private var isManagingTags = false
 
     var body: some View {
         Form {
@@ -32,13 +33,24 @@ struct SettingsView: View {
                 Toggle(L10n.string("每周从星期一开始"), isOn: $store.settings.startWeekOnMonday)
             }
 
+            Section(L10n.string("标签")) {
+                LabeledContent(L10n.string("自定义标签")) {
+                    Button(L10n.string("管理标签…")) {
+                        isManagingTags = true
+                    }
+                }
+            }
+
             Section(L10n.string("关于")) {
                 LabeledContent(L10n.string("应用"), value: "DayVDO")
-                LabeledContent(L10n.string("版本"), value: "0.2.0")
+                LabeledContent(L10n.string("版本"), value: "0.3.0")
             }
         }
         .formStyle(.grouped)
         .navigationTitle(L10n.string("设置"))
         .padding(.top, 8)
+        .sheet(isPresented: $isManagingTags) {
+            TaskTagManagementView()
+        }
     }
 }

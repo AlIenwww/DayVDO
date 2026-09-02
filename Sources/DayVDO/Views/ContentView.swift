@@ -31,6 +31,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: TodoStore
     @State private var selection: SidebarDestination? = .today
     @State private var editingItem: TodoItem?
+    @State private var editingProject: TodoProject?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -52,7 +53,10 @@ struct ContentView: View {
                 case .today:
                     TodayView(editingItem: $editingItem)
                 case .all:
-                    AllTodosView(editingItem: $editingItem)
+                    AllTodosView(
+                        editingItem: $editingItem,
+                        editingProject: $editingProject
+                    )
                 case .calendar:
                     CalendarView(
                         editingItem: $editingItem,
@@ -63,7 +67,7 @@ struct ContentView: View {
                 }
             }
             .toolbar {
-                if selection == .today || selection == .all {
+                if selection == .today {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             editingItem = TodoItem(
@@ -76,6 +80,24 @@ struct ContentView: View {
                         }
                         .help(L10n.string("新建待办 (⌘N)"))
                     }
+                } else if selection == .all {
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            Button(L10n.string("新建待办…"), systemImage: "checkmark.circle") {
+                                editingItem = TodoItem(
+                                    title: "",
+                                    priority: store.settings.defaultPriority
+                                )
+                            }
+                            Button(L10n.string("新建大项目…"), systemImage: "folder.badge.plus") {
+                                editingProject = TodoProject(title: "")
+                            }
+                        } label: {
+                            Label(L10n.string("新建"), systemImage: "plus")
+                        }
+                        .menuIndicator(.hidden)
+                        .help(L10n.string("新建待办或大项目"))
+                    }
                 }
             }
         }
@@ -85,6 +107,12 @@ struct ContentView: View {
                 item: item,
                 isEditing: store.items.contains { $0.id == item.id }
             ) { store.upsert($0) }
+        }
+        .sheet(item: $editingProject) { project in
+            ProjectEditorView(
+                project: project,
+                isEditing: store.projects.contains { $0.id == project.id }
+            ) { store.upsertProject($0) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .newTodoRequested)) { _ in
             editingItem = TodoItem(

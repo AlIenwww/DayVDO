@@ -64,6 +64,9 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
     var isCompleted: Bool
     var createdAt: Date
     var completedAt: Date?
+    var projectID: UUID?
+    var projectSortOrder: Int?
+    var tagID: UUID?
 
     init(
         id: UUID = UUID(),
@@ -74,7 +77,10 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         urgency: Urgency = .none,
         isCompleted: Bool = false,
         createdAt: Date = .now,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        projectID: UUID? = nil,
+        projectSortOrder: Int? = nil,
+        tagID: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -85,6 +91,9 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         self.isCompleted = isCompleted
         self.createdAt = createdAt
         self.completedAt = completedAt
+        self.projectID = projectID
+        self.projectSortOrder = projectSortOrder
+        self.tagID = tagID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -97,6 +106,9 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         case isCompleted
         case createdAt
         case completedAt
+        case projectID
+        case projectSortOrder
+        case tagID
     }
 
     init(from decoder: Decoder) throws {
@@ -110,6 +122,9 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        projectID = try container.decodeIfPresent(UUID.self, forKey: .projectID)
+        projectSortOrder = try container.decodeIfPresent(Int.self, forKey: .projectSortOrder)
+        tagID = try container.decodeIfPresent(UUID.self, forKey: .tagID)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -123,6 +138,9 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         try container.encode(isCompleted, forKey: .isCompleted)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
+        try container.encodeIfPresent(projectID, forKey: .projectID)
+        try container.encodeIfPresent(projectSortOrder, forKey: .projectSortOrder)
+        try container.encodeIfPresent(tagID, forKey: .tagID)
     }
 }
 

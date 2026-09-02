@@ -869,17 +869,32 @@ private struct CalendarDayCell: View {
                     .background(selected ? Color.accentColor : Color.clear, in: Circle())
 
                 ForEach(items.prefix(2)) { item in
-                    Text(item.title)
-                        .font(.caption2)
-                        .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                        .strikethrough(item.isCompleted)
-                        .lineLimit(1)
-                        .padding(.horizontal, 4)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            Color.accentColor.opacity(item.isCompleted ? 0.05 : 0.13),
-                            in: RoundedRectangle(cornerRadius: 3)
-                        )
+                    let itemColor = store.tag(withID: item.tagID)?.color.color ?? Color.accentColor
+                    HStack(spacing: 3) {
+                        if item.projectID != nil {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 7))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(item.title)
+                            .strikethrough(item.isCompleted)
+                            .lineLimit(1)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                    .padding(.horizontal, 4)
+                    .padding(.leading, 3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        itemColor.opacity(item.isCompleted ? 0.05 : 0.13),
+                        in: RoundedRectangle(cornerRadius: 3)
+                    )
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(itemColor.opacity(item.isCompleted ? 0.45 : 0.9))
+                            .frame(width: 2)
+                            .padding(.vertical, 2)
+                    }
                 }
 
                 if items.count > 2 {
