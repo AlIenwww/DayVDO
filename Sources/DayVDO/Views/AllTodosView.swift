@@ -94,7 +94,7 @@ struct AllTodosView: View {
                         ForEach(AllTodosFilter.allCases) { Text(L10n.string($0.rawValue)).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: L10n.prefersCompactControls ? 220 : 280)
+                    .frame(width: statusFilterWidth)
 
                     Menu {
                         ForEach(AllTodosFilter.allCases) { option in
@@ -150,7 +150,7 @@ struct AllTodosView: View {
                 } label: {
                     Label(tagFilterTitle, systemImage: "tag")
                         .lineLimit(1)
-                        .frame(maxWidth: L10n.prefersCompactControls ? 130 : 170)
+                        .frame(maxWidth: tagFilterWidth)
                 }
                 .help(L10n.string("按标签筛选"))
             }
@@ -190,6 +190,18 @@ struct AllTodosView: View {
         } message: {
             Text(L10n.string("你可以将子任务保留为普通待办，或将它们一起删除。"))
         }
+    }
+
+    private var statusFilterWidth: CGFloat {
+        LocalizedControlSizing.segmentedWidth(
+            for: AllTodosFilter.allCases.map { L10n.string($0.rawValue) }
+        )
+    }
+
+    private var tagFilterWidth: CGFloat {
+        LocalizedControlSizing.menuLabelWidth(
+            for: [tagFilterTitle, L10n.string("全部标签"), L10n.string("无标签")]
+        )
     }
 
     private func topLevelTodoRow(_ item: TodoItem) -> some View {
@@ -622,8 +634,12 @@ struct AllTodosView: View {
                 }
             }
         } else {
-            update()
-            renderedProjectIDs = desired
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                update()
+                renderedProjectIDs = desired
+            }
         }
     }
 }

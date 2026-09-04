@@ -7,7 +7,7 @@
 "编辑待办"="Modifier la tâche"; "添加待办"="Ajouter une tâche"; "记录任务，并选择它应当完成的日期。"="Décrivez la tâche et choisissez son échéance.";
 "待办名称"="Nom de la tâche"; "添加待办事项"="Ajouter une tâche"; "备注"="Notes"; "添加备注"="Ajouter des notes";
 "重要度"="Importance"; "紧急度"="Urgence"; "日期"="Date"; "设置日期"="Définir une date"; "取消"="Annuler"; "保存"="Enregistrer";
-"无"="Aucune"; "可做"="Facultative"; "需做"="Importante"; "必做"="Essentielle"; "改天也没关系"="Peut attendre"; "最好当天完成"="Le jour prévu"; "当天必须完成"="Obligatoire ce jour";
+"无"="—"; "可做"="Facultative"; "需做"="Importante"; "必做"="Essentielle"; "随意"="À tout moment"; "尽快"="Rapidement"; "立刻"="Immédiatement";
 "全部"="Toutes"; "待完成"="À faire"; "已完成"="Terminées"; "还没有待办"="Aucune tâche"; "没有找到结果"="Aucun résultat";
 "添加待办，开始规划接下来的事情。"="Ajoutez une tâche pour commencer à planifier."; "请尝试其他关键词或筛选条件。"="Essayez un autre mot-clé ou filtre."; "搜索待办"="Rechercher des tâches"; "筛选"="Filtrer";
 "今天暂无待办"="Aucune tâche aujourd’hui"; "给今天留下一件值得完成的小事。"="Ajoutez une chose utile à accomplir aujourd’hui.";

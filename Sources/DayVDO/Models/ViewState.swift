@@ -32,6 +32,8 @@ final class ProjectExpansionState: ObservableObject {
     private let expandedKey = "DayVDO.expandedProjectIDs"
     private let knownKey = "DayVDO.knownProjectIDs"
     private let completedKey = "DayVDO.completedProjectIDs"
+    private let behaviorVersionKey = "DayVDO.projectExpansionBehaviorVersion"
+    private let currentBehaviorVersion = 1
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -44,6 +46,14 @@ final class ProjectExpansionState: ObservableObject {
         completedIDs = Set(
             (defaults.stringArray(forKey: completedKey) ?? []).compactMap(UUID.init(uuidString:))
         )
+        if defaults.integer(forKey: behaviorVersionKey) < currentBehaviorVersion {
+            // Earlier builds automatically expanded every new active project. Those entries
+            // cannot be distinguished from a deliberate choice, so reset them once when
+            // switching to the new default-collapsed behavior.
+            expandedIDs.removeAll()
+            defaults.set(currentBehaviorVersion, forKey: behaviorVersionKey)
+            defaults.set([String](), forKey: expandedKey)
+        }
     }
 
     func isExpanded(_ id: UUID) -> Bool {
@@ -61,9 +71,7 @@ final class ProjectExpansionState: ObservableObject {
     }
 
     func synchronize(projectIDs: Set<UUID>, completedIDs: Set<UUID>) {
-        let newActiveProjects = projectIDs.subtracting(knownIDs).subtracting(completedIDs)
         let newlyCompletedProjects = completedIDs.subtracting(self.completedIDs)
-        expandedIDs.formUnion(newActiveProjects)
         expandedIDs.subtract(newlyCompletedProjects)
         expandedIDs.formIntersection(projectIDs)
         knownIDs.formUnion(projectIDs)

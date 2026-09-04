@@ -1,4 +1,5 @@
 /* Simplified Chinese is the source language; untranslated keys fall back to themselves. */
+"无" = "—";
 "通用" = "通用";
 "语言" = "语言";
 "外观" = "外观";

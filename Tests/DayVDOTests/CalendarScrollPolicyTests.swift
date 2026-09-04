@@ -2,6 +2,21 @@ import XCTest
 @testable import DayVDO
 
 final class CalendarScrollPolicyTests: XCTestCase {
+    func testViewportHeightChangesAreSeparatedFromScrollMovement() {
+        XCTAssertFalse(
+            CalendarScrollPolicy.viewportHeightChanged(from: nil, to: 100)
+        )
+        XCTAssertFalse(
+            CalendarScrollPolicy.viewportHeightChanged(from: 100, to: 100.4)
+        )
+        XCTAssertTrue(
+            CalendarScrollPolicy.viewportHeightChanged(from: 100, to: 101)
+        )
+        XCTAssertTrue(
+            CalendarScrollPolicy.viewportHeightChanged(from: 100, to: 180)
+        )
+    }
+
     func testStationaryGestureDoesNotChooseANewDestination() {
         XCTAssertEqual(
             destination(start: 12, current: 12.005, duration: 0.2, velocity: 0),

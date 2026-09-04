@@ -32,6 +32,7 @@ enum CalendarScrollDestination: Equatable {
 
 enum CalendarScrollPolicy {
     static let stationaryThreshold: CGFloat = 0.01
+    static let viewportResizeTolerance: CGFloat = 0.5
     static let fastFlickVelocity: CGFloat = 3
     static let longFlickDistance: CGFloat = 2
     static let precisionDragMinimumDuration: TimeInterval = 0.35
@@ -39,6 +40,18 @@ enum CalendarScrollPolicy {
     static let velocitySampleWindow: TimeInterval = 0.1
     static let directionalCachePadding = 4
     static let maximumPredictiveDistance = 12
+
+    static func viewportHeightChanged(
+        from previousHeight: CGFloat?,
+        to currentHeight: CGFloat
+    ) -> Bool {
+        guard let previousHeight,
+              previousHeight.isFinite,
+              currentHeight.isFinite else {
+            return false
+        }
+        return abs(currentHeight - previousHeight) > viewportResizeTolerance
+    }
 
     static func destination(
         for snapshot: CalendarGestureSnapshot

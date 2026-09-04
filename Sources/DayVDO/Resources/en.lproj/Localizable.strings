@@ -34,13 +34,13 @@
 "设置日期" = "Set Date";
 "取消" = "Cancel";
 "保存" = "Save";
-"无" = "None";
+"无" = "—";
 "可做" = "Optional";
 "需做" = "Important";
 "必做" = "Essential";
-"改天也没关系" = "Can wait";
-"最好当天完成" = "Best on due date";
-"当天必须完成" = "Must meet due date";
+"随意" = "Anytime";
+"尽快" = "Soon";
+"立刻" = "Now";
 "全部" = "All";
 "待完成" = "Open";
 "已完成" = "Completed";

@@ -214,7 +214,7 @@ struct ContentView: View {
                     .foregroundStyle(.orange)
                 Text(persistenceMessage(issue))
                     .font(.callout)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 12)
                 if case .saveFailed = issue {
                     Button(L10n.string("重试")) { store.retryPersistence() }

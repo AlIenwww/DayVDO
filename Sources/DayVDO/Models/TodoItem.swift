@@ -39,9 +39,9 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         var title: String {
             switch self {
             case .none: "无"
-            case .canWait: "改天也没关系"
-            case .today: "最好当天完成"
-            case .mustToday: "当天必须完成"
+            case .canWait: "随意"
+            case .today: "尽快"
+            case .mustToday: "立刻"
             }
         }
 

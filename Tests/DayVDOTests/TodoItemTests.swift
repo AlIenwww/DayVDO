@@ -21,7 +21,7 @@ final class TodoItemTests: XCTestCase {
         XCTAssertEqual(TodoItem.Priority.allCases.map(\.title), ["无", "可做", "需做", "必做"])
         XCTAssertEqual(
             TodoItem.Urgency.allCases.map(\.title),
-            ["无", "改天也没关系", "最好当天完成", "当天必须完成"]
+            ["无", "随意", "尽快", "立刻"]
         )
     }
 

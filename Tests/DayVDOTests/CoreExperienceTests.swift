@@ -227,7 +227,7 @@ final class CoreExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testProjectExpansionPersistsAndNewProjectsUseCompletionDefault() {
+    func testProjectExpansionPersistsAndNewProjectsStartCollapsed() {
         let suiteName = "DayVDOTests.Expansion.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -239,12 +239,29 @@ final class CoreExperienceTests: XCTestCase {
             projectIDs: [activeID, completedID],
             completedIDs: [completedID]
         )
-        XCTAssertTrue(state.isExpanded(activeID))
+        XCTAssertFalse(state.isExpanded(activeID))
         XCTAssertFalse(state.isExpanded(completedID))
 
-        state.setExpanded(false, for: activeID)
+        state.setExpanded(true, for: activeID)
         state = ProjectExpansionState(defaults: defaults)
-        XCTAssertFalse(state.isExpanded(activeID))
+        XCTAssertTrue(state.isExpanded(activeID))
+    }
+
+    @MainActor
+    func testLegacyAutomaticProjectExpansionIsResetOnce() {
+        let suiteName = "DayVDOTests.ExpansionMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let projectID = UUID()
+        defaults.set([projectID.uuidString], forKey: "DayVDO.expandedProjectIDs")
+        defaults.set([projectID.uuidString], forKey: "DayVDO.knownProjectIDs")
+
+        var state = ProjectExpansionState(defaults: defaults)
+        XCTAssertFalse(state.isExpanded(projectID))
+
+        state.setExpanded(true, for: projectID)
+        state = ProjectExpansionState(defaults: defaults)
+        XCTAssertTrue(state.isExpanded(projectID))
     }
 
     func testExplicitCompletedFilterOverridesGlobalHiddenPreference() {

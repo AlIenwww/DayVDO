@@ -245,7 +245,10 @@ struct TodoEditorView: View {
     }
 
     private var optionWidth: CGFloat {
-        L10n.prefersCompactControls ? 136 : 176
+        LocalizedControlSizing.popUpWidth(
+            for: TodoItem.Priority.allCases.map { L10n.string($0.title) }
+                + TodoItem.Urgency.allCases.map { L10n.string($0.title) }
+        )
     }
 
     private var editorTitle: String {
@@ -280,6 +283,7 @@ private struct FixedWidthPopUp<Option: Hashable>: NSViewRepresentable {
         let button = NSPopUpButton(frame: .zero, pullsDown: false)
         button.controlSize = .regular
         button.bezelStyle = .rounded
+        button.alignment = .center
         button.setContentHuggingPriority(.defaultLow, for: .horizontal)
         button.imagePosition = .imageLeading
         button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
