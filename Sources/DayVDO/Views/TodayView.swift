@@ -1,8 +1,10 @@
+import AppKit
 import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject private var store: TodoStore
     @Binding var editingItem: TodoItem?
+    @State private var now = Date.now
 
     private var active: [TodoItem] { store.todayItems.filter { !$0.isCompleted } }
     private var completed: [TodoItem] { store.todayItems.filter(\.isCompleted) }
@@ -11,10 +13,16 @@ struct TodayView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if store.todayItems.isEmpty {
+            if visibleTodayItems.isEmpty {
                 EmptyStateView(
-                    title: L10n.string("今天暂无待办"),
-                    message: L10n.string("给今天留下一件值得完成的小事。"),
+                    title: L10n.string(
+                        store.todayItems.isEmpty ? "今天暂无待办" : "今天的待办已完成"
+                    ),
+                    message: L10n.string(
+                        store.todayItems.isEmpty
+                            ? "给今天留下一件值得完成的小事。"
+                            : "已完成事项当前已隐藏。"
+                    ),
                     symbol: "sun.max"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -38,14 +46,23 @@ struct TodayView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(L10n.string("今日待办"))
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            now = .now
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+            now = .now
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            now = .now
+        }
     }
 
     private var header: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(Date.now.formatted(.dateTime.month(.wide).day().locale(L10n.locale)))
+                Text(now.formatted(.dateTime.month(.wide).day().locale(L10n.locale)))
                     .font(.title2.bold())
-                Text(Date.now.formatted(.dateTime.weekday(.wide).locale(L10n.locale)))
+                Text(now.formatted(.dateTime.weekday(.wide).locale(L10n.locale)))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -59,5 +76,9 @@ struct TodayView: View {
             }
         }
         .padding(24)
+    }
+
+    private var visibleTodayItems: [TodoItem] {
+        store.settings.showCompleted ? store.todayItems : active
     }
 }

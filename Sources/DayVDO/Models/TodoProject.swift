@@ -4,7 +4,11 @@ struct TodoProject: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var title: String
     var notes: String
-    var dueDate: Date?
+    var dueDay: LocalDay?
+    var dueDate: Date? {
+        get { dueDay?.date() }
+        set { dueDay = newValue.map { LocalDay($0) } }
+    }
     var createdAt: Date
     var sortOrder: Int
     var usesManualTaskOrder: Bool
@@ -23,7 +27,7 @@ struct TodoProject: Identifiable, Codable, Hashable, Sendable {
         self.id = id
         self.title = title
         self.notes = notes
-        self.dueDate = dueDate
+        dueDay = dueDate.map { LocalDay($0) }
         self.createdAt = createdAt
         self.sortOrder = sortOrder
         self.usesManualTaskOrder = usesManualTaskOrder
@@ -46,7 +50,12 @@ struct TodoProject: Identifiable, Codable, Hashable, Sendable {
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
-        dueDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
+        if let day = try? container.decodeIfPresent(LocalDay.self, forKey: .dueDate) {
+            dueDay = day
+        } else {
+            let legacyDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
+            dueDay = legacyDate.map { LocalDay($0) }
+        }
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         sortOrder = try container.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
         usesManualTaskOrder = try container.decodeIfPresent(
@@ -54,6 +63,18 @@ struct TodoProject: Identifiable, Codable, Hashable, Sendable {
             forKey: .usesManualTaskOrder
         ) ?? false
         tagID = try container.decodeIfPresent(UUID.self, forKey: .tagID)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(notes, forKey: .notes)
+        try container.encodeIfPresent(dueDay, forKey: .dueDate)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(sortOrder, forKey: .sortOrder)
+        try container.encode(usesManualTaskOrder, forKey: .usesManualTaskOrder)
+        try container.encodeIfPresent(tagID, forKey: .tagID)
     }
 
     var normalizedTitle: String {

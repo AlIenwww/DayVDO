@@ -39,7 +39,7 @@ struct TodoRow: View {
 
             Button {
                 withAnimation(.snappy(duration: 0.18)) {
-                    store.toggle(item)
+                    _ = store.toggle(item)
                 }
             } label: {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
@@ -52,6 +52,7 @@ struct TodoRow: View {
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
+            .disabled(!store.canModify)
             .accessibilityLabel(L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成"))
 
             VStack(alignment: .leading, spacing: 4) {
@@ -88,10 +89,11 @@ struct TodoRow: View {
             presentation == .topLevel ? TopLevelTodoRowMetrics.verticalPadding : 5
         )
         .contentShape(Rectangle())
+        .disabled(!store.canModify)
         .contextMenu {
             Button(L10n.string("编辑"), systemImage: "pencil", action: onEdit)
             Button(L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成"), systemImage: "checkmark.circle") {
-                store.toggle(item)
+                _ = store.toggle(item)
             }
             Divider()
             Button(L10n.string("删除"), systemImage: "trash", role: .destructive) {
@@ -103,10 +105,19 @@ struct TodoRow: View {
             isPresented: $isConfirmingDeletion,
             titleVisibility: .visible
         ) {
-            Button(L10n.string("删除"), role: .destructive) { store.delete(item) }
+            Button(L10n.string("删除"), role: .destructive) { _ = store.delete(item) }
             Button(L10n.string("取消"), role: .cancel) {}
         } message: {
-            Text(L10n.string("此操作无法撤销。"))
+            Text(L10n.string("删除后可以从“编辑”菜单撤销。"))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(item.title)
+        .accessibilityValue(L10n.string(item.isCompleted ? "已完成" : "待完成"))
+        .accessibilityAction(named: L10n.string("编辑"), onEdit)
+        .accessibilityAction(
+            named: L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成")
+        ) {
+            _ = store.toggle(item)
         }
     }
 
@@ -114,7 +125,7 @@ struct TodoRow: View {
         if store.settings.confirmBeforeDeleting {
             isConfirmingDeletion = true
         } else {
-            store.delete(item)
+            _ = store.delete(item)
         }
     }
 

@@ -71,16 +71,20 @@ struct TaskTagPicker: View {
                         .lineLimit(1)
                 } else {
                     Text(L10n.string("无标签"))
-                        .foregroundStyle(.secondary)
                 }
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
             .frame(maxWidth: 190, alignment: .trailing)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(L10n.string("标签"))
+            .accessibilityValue(selectedTag?.name ?? L10n.string("无标签"))
         }
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
+        .disabled(!store.canModify)
         .sheet(item: $newTagDraft) { tag in
             TaskTagEditorView(tag: tag, isEditing: false) { savedTag in
                 selection = savedTag.id
@@ -149,7 +153,7 @@ struct TaskTagEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(L10n.string("保存")) { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(normalizedName.isEmpty || isDuplicateName)
+                    .disabled(normalizedName.isEmpty || isDuplicateName || !store.canModify)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -183,6 +187,7 @@ struct TaskTagManagementView: View {
     @EnvironmentObject private var store: TodoStore
     @State private var editingTag: TaskTag?
     @State private var deletingTag: TaskTag?
+    @State private var dropTargetTagID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -239,12 +244,22 @@ struct TaskTagManagementView: View {
                         .help(L10n.string("删除标签"))
                     }
                     .padding(.vertical, 4)
+                    .overlay(alignment: .top) {
+                        if dropTargetTagID == tag.id {
+                            Rectangle()
+                                .fill(Color.accentColor)
+                                .frame(height: 2)
+                                .padding(.horizontal, 4)
+                        }
+                    }
                     .draggable(tag.id.uuidString)
                     .dropDestination(for: String.self) { values, _ in
                         guard let rawID = values.first,
                               let draggedID = UUID(uuidString: rawID) else { return false }
                         store.moveTag(draggedID, to: tag.id)
                         return true
+                    } isTargeted: { targeted in
+                        dropTargetTagID = targeted ? tag.id : nil
                     }
                 }
                 .listStyle(.inset)

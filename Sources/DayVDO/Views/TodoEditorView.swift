@@ -10,9 +10,9 @@ struct TodoEditorView: View {
     @FocusState private var titleIsFocused: Bool
 
     let isEditing: Bool
-    let onSave: (TodoItem) -> Void
+    let onSave: (TodoItem) -> Bool
 
-    init(item: TodoItem, isEditing: Bool, onSave: @escaping (TodoItem) -> Void) {
+    init(item: TodoItem, isEditing: Bool, onSave: @escaping (TodoItem) -> Bool) {
         _draft = State(initialValue: item)
         _hasDueDate = State(initialValue: item.dueDate != nil)
         self.isEditing = isEditing
@@ -91,8 +91,12 @@ struct TodoEditorView: View {
                                 Image(systemName: "chevron.up.chevron.down")
                                     .font(.caption2.weight(.medium))
                                     .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
                             }
                             .frame(maxWidth: 190, alignment: .trailing)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(L10n.string("所属项目"))
+                            .accessibilityValue(selectedProjectTitle)
                         }
                         .menuIndicator(.hidden)
                         .buttonStyle(.plain)
@@ -184,6 +188,7 @@ struct TodoEditorView: View {
                                     Image(systemName: "chevron.down")
                                         .font(.caption2.weight(.semibold))
                                         .foregroundStyle(.secondary)
+                                        .accessibilityHidden(true)
                                 }
                                 .contentShape(Rectangle())
                             }
@@ -193,7 +198,8 @@ struct TodoEditorView: View {
                                     selection: Binding(
                                         get: { draft.dueDate ?? .now },
                                         set: { draft.dueDate = $0 }
-                                    )
+                                    ),
+                                    startsOnMonday: store.settings.startWeekOnMonday
                                 )
                                 .fixedSize()
                                 .padding(10)
@@ -204,7 +210,7 @@ struct TodoEditorView: View {
                     .frame(height: 46)
                 }
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .top)
 
             Divider()
 
@@ -214,13 +220,14 @@ struct TodoEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(L10n.string("保存")) { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft.normalizedTitle.isEmpty)
+                    .disabled(draft.normalizedTitle.isEmpty || !store.canModify)
             }
             .controlSize(.regular)
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
-        .frame(width: 520, height: showsProjectPicker ? 588 : 542)
+        .frame(width: 520)
+        .fixedSize(horizontal: false, vertical: true)
         .task {
             await Task.yield()
             titleIsFocused = true
@@ -232,8 +239,9 @@ struct TodoEditorView: View {
 
     private func save() {
         if !hasDueDate { draft.dueDate = nil }
-        onSave(draft)
-        dismiss()
+        if onSave(draft) {
+            dismiss()
+        }
     }
 
     private var optionWidth: CGFloat {

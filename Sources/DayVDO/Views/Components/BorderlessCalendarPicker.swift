@@ -6,6 +6,7 @@ import AppKit
 struct BorderlessCalendarPicker: NSViewRepresentable {
     @Environment(\.locale) private var locale
     @Binding var selection: Date
+    var startsOnMonday = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(selection: $selection)
@@ -18,6 +19,10 @@ struct BorderlessCalendarPicker: NSViewRepresentable {
         picker.datePickerElements = .yearMonthDay
         picker.dateValue = selection
         picker.locale = locale
+        picker.calendar = AppCalendar.make(
+            locale: locale,
+            startsOnMonday: startsOnMonday
+        )
         picker.isBordered = false
         picker.isBezeled = false
         picker.drawsBackground = false
@@ -30,6 +35,10 @@ struct BorderlessCalendarPicker: NSViewRepresentable {
 
     func updateNSView(_ picker: NSDatePicker, context: Context) {
         picker.locale = locale
+        picker.calendar = AppCalendar.make(
+            locale: locale,
+            startsOnMonday: startsOnMonday
+        )
         if !Calendar.current.isDate(picker.dateValue, inSameDayAs: selection) {
             picker.dateValue = selection
         }

@@ -58,7 +58,11 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var title: String
     var notes: String
-    var dueDate: Date?
+    var dueDay: LocalDay?
+    var dueDate: Date? {
+        get { dueDay?.date() }
+        set { dueDay = newValue.map { LocalDay($0) } }
+    }
     var priority: Priority
     var urgency: Urgency
     var isCompleted: Bool
@@ -85,7 +89,7 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         self.id = id
         self.title = title
         self.notes = notes
-        self.dueDate = dueDate
+        dueDay = dueDate.map { LocalDay($0) }
         self.priority = priority
         self.urgency = urgency
         self.isCompleted = isCompleted
@@ -116,7 +120,12 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
-        dueDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
+        if let day = try? container.decodeIfPresent(LocalDay.self, forKey: .dueDate) {
+            dueDay = day
+        } else {
+            let legacyDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
+            dueDay = legacyDate.map { LocalDay($0) }
+        }
         priority = try container.decodeIfPresent(Priority.self, forKey: .priority) ?? .none
         urgency = try container.decodeIfPresent(Urgency.self, forKey: .urgency) ?? .none
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
@@ -132,7 +141,7 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         try container.encode(id, forKey: .id)
         try container.encode(title, forKey: .title)
         try container.encode(notes, forKey: .notes)
-        try container.encodeIfPresent(dueDate, forKey: .dueDate)
+        try container.encodeIfPresent(dueDay, forKey: .dueDate)
         try container.encode(priority, forKey: .priority)
         try container.encode(urgency, forKey: .urgency)
         try container.encode(isCompleted, forKey: .isCompleted)
@@ -146,8 +155,8 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
 
 extension TodoItem {
     func isDue(on date: Date, calendar: Calendar = .current) -> Bool {
-        guard let dueDate else { return false }
-        return calendar.isDate(dueDate, inSameDayAs: date)
+        guard let dueDay else { return false }
+        return dueDay == LocalDay(date, timeZone: calendar.timeZone)
     }
 
     var normalizedTitle: String {

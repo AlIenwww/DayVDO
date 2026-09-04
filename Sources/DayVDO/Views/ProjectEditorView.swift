@@ -2,15 +2,16 @@ import SwiftUI
 
 struct ProjectEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: TodoStore
     @State private var draft: TodoProject
     @State private var hasDueDate: Bool
     @State private var isShowingDatePicker = false
     @FocusState private var titleIsFocused: Bool
 
     let isEditing: Bool
-    let onSave: (TodoProject) -> Void
+    let onSave: (TodoProject) -> Bool
 
-    init(project: TodoProject, isEditing: Bool, onSave: @escaping (TodoProject) -> Void) {
+    init(project: TodoProject, isEditing: Bool, onSave: @escaping (TodoProject) -> Bool) {
         _draft = State(initialValue: project)
         _hasDueDate = State(initialValue: project.dueDate != nil)
         self.isEditing = isEditing
@@ -92,6 +93,7 @@ struct ProjectEditorView: View {
                                 Image(systemName: "chevron.down")
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
                             }
                             .contentShape(Rectangle())
                         }
@@ -101,7 +103,8 @@ struct ProjectEditorView: View {
                                 selection: Binding(
                                     get: { draft.dueDate ?? .now },
                                     set: { draft.dueDate = $0 }
-                                )
+                                ),
+                                startsOnMonday: store.settings.startWeekOnMonday
                             )
                             .fixedSize()
                             .padding(10)
@@ -111,7 +114,7 @@ struct ProjectEditorView: View {
                 .padding(.horizontal, 20)
                 .frame(height: 48)
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .top)
 
             Divider()
 
@@ -121,12 +124,13 @@ struct ProjectEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(L10n.string("保存")) { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft.normalizedTitle.isEmpty)
+                    .disabled(draft.normalizedTitle.isEmpty || !store.canModify)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
-        .frame(width: 520, height: 438)
+        .frame(width: 520)
+        .fixedSize(horizontal: false, vertical: true)
         .task {
             await Task.yield()
             titleIsFocused = true
@@ -138,7 +142,8 @@ struct ProjectEditorView: View {
 
     private func save() {
         if !hasDueDate { draft.dueDate = nil }
-        onSave(draft)
-        dismiss()
+        if onSave(draft) {
+            dismiss()
+        }
     }
 }

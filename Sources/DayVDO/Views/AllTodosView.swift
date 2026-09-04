@@ -1,19 +1,6 @@
 import SwiftUI
 
 struct AllTodosView: View {
-    enum Filter: String, CaseIterable, Identifiable {
-        case all = "全部"
-        case active = "待完成"
-        case completed = "已完成"
-        var id: String { rawValue }
-    }
-
-    private enum TagFilter: Hashable {
-        case all
-        case untagged
-        case tag(UUID)
-    }
-
     private enum TopLevelEntry: Identifiable {
         case project(TodoProject)
         case todo(TodoItem)
@@ -36,14 +23,19 @@ struct AllTodosView: View {
     @EnvironmentObject private var store: TodoStore
     @Binding var editingItem: TodoItem?
     @Binding var editingProject: TodoProject?
-    @State private var query = ""
-    @State private var filter: Filter = .all
-    @State private var tagFilter: TagFilter = .all
-    @State private var expandedProjectIDs: Set<UUID> = []
-    @State private var projectCompletion: [UUID: Bool] = [:]
+    let searchFocusRequest: Int
+    @Binding var query: String
+    @Binding var filter: AllTodosFilter
+    @Binding var tagFilter: AllTodosTagFilter
+    @ObservedObject var expansionState: ProjectExpansionState
+    @State private var visualExpandedProjectIDs: Set<UUID> = []
+    @State private var renderedProjectIDs: Set<UUID> = []
     @State private var projectPendingDeletion: TodoProject?
     @State private var hoveredProjectID: UUID?
+    @State private var dropTargetItemID: UUID?
+    @State private var isSearchPresented = false
     @FocusState private var focusedProjectAddButtonID: UUID?
+    @FocusState private var focusedEntryID: String?
 
     private var topLevelEntries: [TopLevelEntry] {
         let projectEntries = store.projects
@@ -89,14 +81,36 @@ struct AllTodosView: View {
             }
         }
         .navigationTitle(L10n.string("总待办"))
-        .searchable(text: $query, placement: .toolbar, prompt: L10n.string("搜索待办"))
+        .searchable(
+            text: $query,
+            isPresented: $isSearchPresented,
+            placement: .toolbar,
+            prompt: L10n.string("搜索待办")
+        )
         .toolbar {
             ToolbarItem {
-                Picker(L10n.string("筛选"), selection: $filter) {
-                    ForEach(Filter.allCases) { Text(L10n.string($0.rawValue)).tag($0) }
+                ViewThatFits(in: .horizontal) {
+                    Picker(L10n.string("筛选"), selection: $filter) {
+                        ForEach(AllTodosFilter.allCases) { Text(L10n.string($0.rawValue)).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: L10n.prefersCompactControls ? 220 : 280)
+
+                    Menu {
+                        ForEach(AllTodosFilter.allCases) { option in
+                            Button {
+                                filter = option
+                            } label: {
+                                Label(
+                                    L10n.string(option.rawValue),
+                                    systemImage: filter == option ? "checkmark" : "line.3.horizontal.decrease"
+                                )
+                            }
+                        }
+                    } label: {
+                        Label(L10n.string(filter.rawValue), systemImage: "line.3.horizontal.decrease")
+                    }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: L10n.prefersCompactControls ? 220 : 280)
             }
             ToolbarItem {
                 Menu {
@@ -142,6 +156,11 @@ struct AllTodosView: View {
             }
         }
         .onAppear { synchronizeProjectExpansion(animated: false) }
+        .task(id: searchFocusRequest) {
+            guard searchFocusRequest > 0 else { return }
+            await Task.yield()
+            isSearchPresented = true
+        }
         .onChange(of: store.projects) { _, _ in synchronizeProjectExpansion(animated: true) }
         .onChange(of: store.items) { _, _ in synchronizeProjectExpansion(animated: true) }
         .onChange(of: store.tags) { _, tags in
@@ -159,11 +178,11 @@ struct AllTodosView: View {
         ) {
             if let project = projectPendingDeletion {
                 Button(L10n.string("删除项目并保留子任务")) {
-                    store.deleteProject(project, strategy: .keepTasks)
+                    _ = store.deleteProject(project, strategy: .keepTasks)
                     projectPendingDeletion = nil
                 }
                 Button(L10n.string("删除项目及所有子任务"), role: .destructive) {
-                    store.deleteProject(project, strategy: .deleteTasks)
+                    _ = store.deleteProject(project, strategy: .deleteTasks)
                     projectPendingDeletion = nil
                 }
             }
@@ -182,6 +201,17 @@ struct AllTodosView: View {
 
             topLevelDivider
         }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focusedEntryID, equals: "todo-\(item.id.uuidString)")
+        .onKeyPress(.return) {
+            editingItem = item
+            return .handled
+        }
+        .onKeyPress(.space) {
+            _ = store.toggle(item)
+            return .handled
+        }
     }
 
     private func projectRow(_ project: TodoProject) -> some View {
@@ -191,18 +221,33 @@ struct AllTodosView: View {
             projectHeader(project, expanded: expanded)
                 .padding(.horizontal, TopLevelTodoRowMetrics.listHorizontalInset)
 
-            CollapsibleProjectRowLayout(progress: expanded ? 1 : 0) {
-                projectChildrenContent(project)
+            if expanded || renderedProjectIDs.contains(project.id) {
+                CollapsibleProjectRowLayout(progress: expanded ? 1 : 0) {
+                    projectChildrenContent(project)
+                }
+                .opacity(expanded ? 1 : 0)
+                .clipped()
+                .allowsHitTesting(expanded)
+                .accessibilityHidden(!expanded)
+                .animation(projectDisclosureAnimation, value: expanded)
+                .padding(.leading, TopLevelTodoRowMetrics.listHorizontalInset)
+                .padding(.trailing, TopLevelTodoRowMetrics.listHorizontalInset)
             }
-            .opacity(expanded ? 1 : 0)
-            .clipped()
-            .allowsHitTesting(expanded)
-            .accessibilityHidden(!expanded)
-            .animation(projectDisclosureAnimation, value: expanded)
-            .padding(.leading, TopLevelTodoRowMetrics.listHorizontalInset)
-            .padding(.trailing, TopLevelTodoRowMetrics.listHorizontalInset)
 
             topLevelDivider
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focusedEntryID, equals: "project-\(project.id.uuidString)")
+        .onKeyPress(.return) {
+            editingProject = project
+            return .handled
+        }
+        .onKeyPress(.space) {
+            if !isExpansionForced {
+                setProjectExpanded(project.id, !expanded, animated: true)
+            }
+            return .handled
         }
     }
 
@@ -257,13 +302,22 @@ struct AllTodosView: View {
                         .padding(.horizontal, 10)
                         .background(Color.secondary.opacity(0.055), in: shape)
                         .overlay { shape.stroke(Color.secondary.opacity(0.12), lineWidth: 0.5) }
+                        .overlay(alignment: .top) {
+                            if dropTargetItemID == item.id {
+                                Rectangle()
+                                    .fill(Color.accentColor)
+                                    .frame(height: 2)
+                                    .padding(.horizontal, 8)
+                            }
+                        }
                         .padding(.leading, 28)
                         .draggable(item.id.uuidString)
                         .dropDestination(for: String.self) { values, _ in
                             guard let rawID = values.first,
                                   let draggedID = UUID(uuidString: rawID) else { return false }
-                            store.moveProjectItem(draggedID, before: item.id, in: project.id)
-                            return true
+                            return store.moveProjectItem(draggedID, before: item.id, in: project.id)
+                        } isTargeted: { targeted in
+                            dropTargetItemID = targeted ? item.id : nil
                         }
                 }
             }
@@ -285,7 +339,7 @@ struct AllTodosView: View {
             Button {
                 setProjectExpanded(
                     project.id,
-                    !expandedProjectIDs.contains(project.id),
+                    !visualExpandedProjectIDs.contains(project.id),
                     animated: true
                 )
             } label: {
@@ -300,6 +354,7 @@ struct AllTodosView: View {
                     .animation(projectDisclosureAnimation, value: expanded)
             }
             .buttonStyle(.plain)
+            .disabled(isExpansionForced)
             .accessibilityLabel(L10n.string(isExpanded(project) ? "收起项目" : "展开项目"))
 
             ZStack(alignment: .bottomTrailing) {
@@ -412,27 +467,43 @@ struct AllTodosView: View {
                 projectPendingDeletion = project
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(project.title)
+        .accessibilityValue(
+            L10n.format(
+                "%lld / %lld 已完成，%@",
+                progress.completed,
+                progress.total,
+                L10n.string(expanded ? "已展开" : "已收回")
+            )
+        )
+        .accessibilityAction(named: L10n.string(expanded ? "收起项目" : "展开项目")) {
+            setProjectExpanded(project.id, !expanded, animated: true)
+        }
+        .accessibilityAction(named: L10n.string("编辑项目")) { editingProject = project }
+        .accessibilityAction(named: L10n.string("添加子任务")) {
+            setProjectExpanded(project.id, true, animated: true)
+            editingItem = store.newItem(in: project)
+        }
     }
 
     private func filteredChildren(in project: TodoProject) -> [TodoItem] {
         let projectMatches = projectMatchesQuery(project)
         return store.items(in: project).filter { item in
             let matchesQuery = query.isEmpty || projectMatches || itemMatchesQuery(item)
-            let matchesFilter = switch filter {
-            case .all: store.settings.showCompleted || !item.isCompleted
-            case .active: !item.isCompleted
-            case .completed: item.isCompleted
-            }
+            let matchesFilter = filter.includes(
+                isCompleted: item.isCompleted,
+                showCompletedPreference: store.settings.showCompleted
+            )
             return matchesQuery && matchesFilter && matchesTag(item.tagID)
         }
     }
 
     private func itemMatches(_ item: TodoItem) -> Bool {
-        let matchesFilter = switch filter {
-        case .all: store.settings.showCompleted || !item.isCompleted
-        case .active: !item.isCompleted
-        case .completed: store.settings.showCompleted && item.isCompleted
-        }
+        let matchesFilter = filter.includes(
+            isCompleted: item.isCompleted,
+            showCompletedPreference: store.settings.showCompleted
+        )
         return matchesFilter && matchesTag(item.tagID) && (query.isEmpty || itemMatchesQuery(item))
     }
 
@@ -450,11 +521,10 @@ struct AllTodosView: View {
 
     private func projectMatchesCurrentView(_ project: TodoProject) -> Bool {
         let isCompleted = store.projectIsCompleted(project)
-        let matchesFilter = switch filter {
-        case .all: store.settings.showCompleted || !isCompleted
-        case .active: !isCompleted
-        case .completed: store.settings.showCompleted && isCompleted
-        }
+        let matchesFilter = filter.includes(
+            isCompleted: isCompleted,
+            showCompletedPreference: store.settings.showCompleted
+        )
         guard matchesFilter else { return false }
         let projectMatches = matchesTag(project.tagID)
             && (query.isEmpty || projectMatchesQuery(project))
@@ -465,24 +535,44 @@ struct AllTodosView: View {
     }
 
     private func isExpanded(_ project: TodoProject) -> Bool {
-        !query.isEmpty || tagFilter != .all || expandedProjectIDs.contains(project.id)
+        isExpansionForced || visualExpandedProjectIDs.contains(project.id)
     }
 
     private func setProjectExpanded(_ projectID: UUID, _ expanded: Bool, animated: Bool) {
-        let updateExpansion = {
-            if expanded {
-                expandedProjectIDs.insert(projectID)
+        guard !isExpansionForced else { return }
+        expansionState.setExpanded(expanded, for: projectID)
+
+        if expanded {
+            renderedProjectIDs.insert(projectID)
+            let update = { _ = visualExpandedProjectIDs.insert(projectID) }
+            if animated {
+                Task { @MainActor in
+                    await Task.yield()
+                    withAnimation(projectDisclosureAnimation, update)
+                }
             } else {
-                expandedProjectIDs.remove(projectID)
+                update()
             }
+            return
         }
 
         if animated {
-            withAnimation(projectDisclosureAnimation, updateExpansion)
+            withAnimation(projectDisclosureAnimation) {
+                _ = visualExpandedProjectIDs.remove(projectID)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(180))
+                if !visualExpandedProjectIDs.contains(projectID), !isExpansionForced {
+                    renderedProjectIDs.remove(projectID)
+                }
+            }
         } else {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
-            withTransaction(transaction, updateExpansion)
+            withTransaction(transaction) {
+                visualExpandedProjectIDs.remove(projectID)
+                renderedProjectIDs.remove(projectID)
+            }
         }
     }
 
@@ -510,39 +600,40 @@ struct AllTodosView: View {
         !query.isEmpty || filter != .all || tagFilter != .all
     }
 
+    private var isExpansionForced: Bool {
+        !query.isEmpty || tagFilter != .all
+    }
+
     private func synchronizeProjectExpansion(animated: Bool) {
-        var newCompletion: [UUID: Bool] = [:]
-        var newExpandedProjectIDs = expandedProjectIDs
-        for project in store.projects {
-            let completed = store.projectIsCompleted(project)
-            newCompletion[project.id] = completed
-            let wasCompleted = projectCompletion[project.id]
-            if completed {
-                newExpandedProjectIDs.remove(project.id)
-            } else if wasCompleted == true || wasCompleted == nil {
-                newExpandedProjectIDs.insert(project.id)
-            }
-        }
-        newExpandedProjectIDs.formIntersection(Set(store.projects.map(\.id)))
-        if newExpandedProjectIDs != expandedProjectIDs {
-            if animated {
-                let affectedProjectIDs = expandedProjectIDs.union(newExpandedProjectIDs)
-                for projectID in affectedProjectIDs {
-                    setProjectExpanded(
-                        projectID,
-                        newExpandedProjectIDs.contains(projectID),
-                        animated: true
-                    )
+        let projectIDs = Set(store.projects.map(\.id))
+        let completedIDs = Set(store.projects.filter(store.projectIsCompleted).map(\.id))
+        expansionState.synchronize(projectIDs: projectIDs, completedIDs: completedIDs)
+        let desired = expansionState.expandedIDs
+        renderedProjectIDs.formUnion(desired)
+
+        let removed = visualExpandedProjectIDs.subtracting(desired)
+        let update = { visualExpandedProjectIDs = desired }
+        if animated {
+            withAnimation(projectDisclosureAnimation, update)
+            if !removed.isEmpty {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(180))
+                    renderedProjectIDs.subtract(removed.subtracting(visualExpandedProjectIDs))
                 }
-            } else {
-                expandedProjectIDs = newExpandedProjectIDs
             }
+        } else {
+            update()
+            renderedProjectIDs = desired
         }
-        projectCompletion = newCompletion
     }
 }
 
 private struct CollapsibleProjectRowLayout: Layout, Animatable {
+    struct Cache {
+        var width: CGFloat?
+        var naturalSize = CGSize.zero
+    }
+
     var progress: Double
 
     var animatableData: Double {
@@ -553,15 +644,13 @@ private struct CollapsibleProjectRowLayout: Layout, Animatable {
     func sizeThatFits(
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout ()
+        cache: inout Cache
     ) -> CGSize {
         guard let subview = subviews.first else { return .zero }
-        let naturalSize = subview.sizeThatFits(
-            ProposedViewSize(width: proposal.width, height: nil)
-        )
+        updateNaturalSizeIfNeeded(proposal: proposal, subview: subview, cache: &cache)
         return CGSize(
-            width: proposal.width ?? naturalSize.width,
-            height: naturalSize.height * max(0, min(progress, 1))
+            width: proposal.width ?? cache.naturalSize.width,
+            height: cache.naturalSize.height * max(0, min(progress, 1))
         )
     }
 
@@ -569,16 +658,37 @@ private struct CollapsibleProjectRowLayout: Layout, Animatable {
         in bounds: CGRect,
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout ()
+        cache: inout Cache
     ) {
         guard let subview = subviews.first else { return }
-        let naturalSize = subview.sizeThatFits(
-            ProposedViewSize(width: bounds.width, height: nil)
+        updateNaturalSizeIfNeeded(
+            proposal: ProposedViewSize(width: bounds.width, height: nil),
+            subview: subview,
+            cache: &cache
         )
         subview.place(
             at: CGPoint(x: bounds.minX, y: bounds.minY),
             anchor: .topLeading,
-            proposal: ProposedViewSize(width: bounds.width, height: naturalSize.height)
+            proposal: ProposedViewSize(width: bounds.width, height: cache.naturalSize.height)
+        )
+    }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.width = nil
+        cache.naturalSize = .zero
+    }
+
+    private func updateNaturalSizeIfNeeded(
+        proposal: ProposedViewSize,
+        subview: LayoutSubview,
+        cache: inout Cache
+    ) {
+        guard cache.width != proposal.width || cache.naturalSize == .zero else { return }
+        cache.width = proposal.width
+        cache.naturalSize = subview.sizeThatFits(
+            ProposedViewSize(width: proposal.width, height: nil)
         )
     }
 }

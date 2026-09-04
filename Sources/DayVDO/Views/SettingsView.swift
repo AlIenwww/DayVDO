@@ -43,14 +43,23 @@ struct SettingsView: View {
 
             Section(L10n.string("关于")) {
                 LabeledContent(L10n.string("应用"), value: "DayVDO")
-                LabeledContent(L10n.string("版本"), value: "0.3.0")
+                LabeledContent(L10n.string("版本"), value: appVersion)
             }
         }
         .formStyle(.grouped)
+        .disabled(!store.canModify)
         .navigationTitle(L10n.string("设置"))
         .padding(.top, 8)
         .sheet(isPresented: $isManagingTags) {
             TaskTagManagementView()
         }
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            // `swift run` launches a bare executable without an Info.plist. The
+            // shipped app always takes the version from its bundle above.
+            ?? "0.4.0"
     }
 }

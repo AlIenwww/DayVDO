@@ -1,23 +1,22 @@
-import SwiftUI
 import AppKit
-import QuartzCore
+import SwiftUI
 
 struct CalendarView: View {
     @EnvironmentObject private var store: TodoStore
     @Binding var editingItem: TodoItem?
     @Binding var columnVisibility: NavigationSplitViewVisibility
-    @State private var selectedDate = Date.now
-    @State private var currentMonth = Date.now
+    @Binding var selectedDate: Date
+    @Binding var currentMonth: Date
     @State private var navigationRequest: CalendarNavigationRequest?
     @State private var isDatePickerPresented = false
     @State private var datePickerSelection = Date.now
-    @State private var isInspectorPresented = false
+    @Binding var isInspectorPresented: Bool
 
     private var calendar: Calendar {
-        var value = Calendar.current
-        value.firstWeekday = store.settings.startWeekOnMonday ? 2 : 1
-        value.locale = L10n.locale
-        return value
+        AppCalendar.make(
+            locale: L10n.locale,
+            startsOnMonday: store.settings.startWeekOnMonday
+        )
     }
 
     private var weekdaySymbols: [String] {
@@ -30,7 +29,7 @@ struct CalendarView: View {
         VStack(spacing: 0) {
             calendarToolbar
             weekdayHeader
-            CalendarNativeTimeline(
+            CalendarTimeline(
                 calendar: calendar,
                 displayedMonth: currentMonth,
                 selectedDate: selectedDate,
@@ -39,6 +38,7 @@ struct CalendarView: View {
                 onSelectDate: { selectedDate = $0 },
                 onVisibleMonthChange: { currentMonth = $0 }
             )
+            .id(calendar.firstWeekday)
         }
         .background(.background)
         .inspector(isPresented: $isInspectorPresented) {
@@ -64,9 +64,6 @@ struct CalendarView: View {
             }
         }
         .navigationTitle(L10n.string("日历"))
-        .onAppear {
-            currentMonth = monthStart(for: .now)
-        }
         .onChange(of: columnVisibility) { _, newVisibility in
             guard newVisibility != .detailOnly, isInspectorPresented else { return }
             withAnimation(.snappy(duration: 0.28)) {
@@ -78,7 +75,7 @@ struct CalendarView: View {
     private var calendarToolbar: some View {
         HStack(spacing: 8) {
             Button {
-                datePickerSelection = currentMonth
+                datePickerSelection = selectedDate
                 isDatePickerPresented.toggle()
             } label: {
                 HStack(spacing: 6) {
@@ -97,7 +94,10 @@ struct CalendarView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(L10n.string("跳转到日期"))
                         .font(.headline)
-                    BorderlessCalendarPicker(selection: $datePickerSelection)
+                    BorderlessCalendarPicker(
+                        selection: $datePickerSelection,
+                        startsOnMonday: store.settings.startWeekOnMonday
+                    )
                         .fixedSize()
                 }
                 .padding(16)
@@ -176,7 +176,11 @@ struct CalendarView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    editingItem = TodoItem(title: "", dueDate: selectedDate, priority: store.settings.defaultPriority)
+                    editingItem = TodoItem(
+                        title: "",
+                        dueDate: selectedDate,
+                        priority: store.settings.defaultPriority
+                    )
                 } label: {
                     Label(L10n.string("添加"), systemImage: "plus")
                 }
@@ -229,7 +233,15 @@ private struct CalendarNavigationRequest {
     let date: Date
 }
 
-private struct CalendarNativeTimeline: NSViewRepresentable {
+private struct CalendarTimeline: View {
+    private static let weekCount = 30
+    private static let visibleWeekCount = 6
+    private static let centerIndex = 12
+    private static let cacheEdgeBuffer = 10
+    private static let virtualEdgeBuffer = 52
+    private static let virtualWeekRange = -1040...1040
+    private static let initialLoadedWeekRange = -centerIndex...(weekCount - centerIndex - 1)
+
     let calendar: Calendar
     let displayedMonth: Date
     let selectedDate: Date
@@ -238,577 +250,563 @@ private struct CalendarNativeTimeline: NSViewRepresentable {
     let onSelectDate: (Date) -> Void
     let onVisibleMonthChange: (Date) -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
+    @State private var timelineAnchorWeek: Date
+    @State private var loadedWeekRange = Self.initialLoadedWeekRange
+    @State private var topWeekOffset: Int? = 0
+    @State private var latestWeekOffset: CGFloat = 0
+    @State private var lastMovementDirection: CalendarScrollDirection?
+    @State private var hasEstablishedInitialPosition = false
+    @State private var lastNavigationID: UUID?
+    @State private var lastReportedMonth: Date
+    @State private var isRecentering = false
+    @State private var navigationOffset: CGFloat = 0
+    @State private var navigationOpacity = 1.0
+    @State private var gestureTracker = CalendarGestureTracker()
+
+    init(
+        calendar: Calendar,
+        displayedMonth: Date,
+        selectedDate: Date,
+        navigationRequest: CalendarNavigationRequest?,
+        store: TodoStore,
+        onSelectDate: @escaping (Date) -> Void,
+        onVisibleMonthChange: @escaping (Date) -> Void
+    ) {
+        self.calendar = calendar
+        self.displayedMonth = displayedMonth
+        self.selectedDate = selectedDate
+        self.navigationRequest = navigationRequest
+        self.store = store
+        self.onSelectDate = onSelectDate
+        self.onVisibleMonthChange = onVisibleMonthChange
+
+        let month = calendar.dateInterval(of: .month, for: displayedMonth)?.start ?? displayedMonth
+        let initialTop = CalendarMonthGrid.dates(containing: month, calendar: calendar).first ?? month
+        _timelineAnchorWeek = State(initialValue: initialTop)
+        _lastReportedMonth = State(initialValue: month)
     }
 
-    func makeNSView(context: Context) -> CalendarCollectionScrollView {
-        let scrollView = CalendarCollectionScrollView()
-        let collectionView = NSCollectionView()
-        let layout = NSCollectionViewFlowLayout()
+    var body: some View {
+        GeometryReader { geometry in
+            let rowHeight = max(1, geometry.size.height / CGFloat(Self.visibleWeekCount))
 
-        layout.scrollDirection = .vertical
-        layout.minimumLineSpacing = 0
-        layout.minimumInteritemSpacing = 0
-        layout.sectionInset = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-
-        collectionView.collectionViewLayout = layout
-        collectionView.dataSource = context.coordinator
-        collectionView.delegate = context.coordinator
-        collectionView.isSelectable = false
-        collectionView.backgroundColors = [.clear]
-        collectionView.register(
-            CalendarWeekCollectionItem.self,
-            forItemWithIdentifier: CalendarWeekCollectionItem.identifier
-        )
-        collectionView.frame = NSRect(origin: .zero, size: scrollView.contentSize)
-        collectionView.autoresizingMask = [.width]
-
-        scrollView.drawsBackground = false
-        scrollView.scrollerStyle = .overlay
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.documentView = collectionView
-        scrollView.verticalScroller = nil
-        scrollView.hasVerticalScroller = false
-
-        context.coordinator.attach(
-            scrollView: scrollView,
-            collectionView: collectionView,
-            layout: layout
-        )
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: CalendarCollectionScrollView, context: Context) {
-        context.coordinator.update(parent: self)
-        context.coordinator.updateLayout()
-        context.coordinator.refreshVisibleItems()
-
-        if let request = navigationRequest,
-           request.id != context.coordinator.lastNavigationID {
-            context.coordinator.lastNavigationID = request.id
-            context.coordinator.navigate(to: request.date, animated: true)
-        }
-    }
-
-    static func dismantleNSView(_ nsView: CalendarCollectionScrollView, coordinator: Coordinator) {
-        coordinator.detach()
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, NSCollectionViewDataSource, NSCollectionViewDelegate {
-        private static let weekCount = 30
-        private static let centerIndex = weekCount / 2
-        private static let recenterThreshold = 7
-
-        var parent: CalendarNativeTimeline
-        var lastNavigationID: UUID?
-
-        private weak var scrollView: CalendarCollectionScrollView?
-        private weak var collectionView: NSCollectionView?
-        private weak var layout: NSCollectionViewFlowLayout?
-        private var boundsObserver: NSObjectProtocol?
-        private var rowHeight: CGFloat = 1
-        private var visibleMonth: Date
-        private var timelineAnchorWeek: Date
-        private var hasPositionedInitially = false
-        private var isProgrammaticScroll = false
-        private var isRecenteringTimeline = false
-        private var isPreparingNavigation = false
-        private var gestureStartMonth: Date?
-
-        init(parent: CalendarNativeTimeline) {
-            self.parent = parent
-            let month = parent.calendar.dateInterval(of: .month, for: parent.displayedMonth)?.start
-                ?? parent.displayedMonth
-            self.visibleMonth = month
-            self.timelineAnchorWeek = CalendarMonthGrid.dates(containing: month, calendar: parent.calendar).first
-                ?? month
-        }
-
-        func attach(
-            scrollView: CalendarCollectionScrollView,
-            collectionView: NSCollectionView,
-            layout: NSCollectionViewFlowLayout
-        ) {
-            self.scrollView = scrollView
-            self.collectionView = collectionView
-            self.layout = layout
-
-            scrollView.onGestureBegan = { [weak self] in
-                guard let self else { return }
-                self.cancelProgrammaticAnimation()
-                self.gestureStartMonth = self.monthAtViewport()
-            }
-            scrollView.onGestureEnded = { [weak self] startY, endY, signedDelta in
-                self?.settleGesture(startY: startY, endY: endY, signedDelta: signedDelta)
-            }
-            scrollView.onViewportSizeChanged = { [weak self] in
-                self?.updateLayout()
-            }
-
-            scrollView.contentView.postsBoundsChangedNotifications = true
-            boundsObserver = NotificationCenter.default.addObserver(
-                forName: NSView.boundsDidChangeNotification,
-                object: scrollView.contentView,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.visibleBoundsDidChange()
-                }
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.updateLayout()
-                self.positionInitiallyIfNeeded()
-            }
-        }
-
-        func detach() {
-            if let boundsObserver {
-                NotificationCenter.default.removeObserver(boundsObserver)
-            }
-            boundsObserver = nil
-            scrollView?.onViewportSizeChanged = nil
-        }
-
-        func update(parent: CalendarNativeTimeline) {
-            let weekdayChanged = self.parent.calendar.firstWeekday != parent.calendar.firstWeekday
-            let selectionChanged = !parent.calendar.isDate(
-                self.parent.selectedDate,
-                inSameDayAs: parent.selectedDate
-            )
-            self.parent = parent
-
-            if weekdayChanged {
-                visibleMonth = monthStart(for: parent.displayedMonth)
-                timelineAnchorWeek = CalendarMonthGrid.dates(
-                    containing: visibleMonth,
-                    calendar: parent.calendar
-                ).first ?? visibleMonth
-                collectionView?.reloadData()
-                setViewport(toWeekOffset: 0, animated: false)
-            } else if selectionChanged {
-                refreshVisibleItems()
-            }
-        }
-
-        func updateLayout() {
-            guard let scrollView, let collectionView, let layout else { return }
-            let viewportSize = scrollView.contentSize
-            guard viewportSize.width > 0, viewportSize.height > 0 else { return }
-
-            let newRowHeight = viewportSize.height / 6
-            let newItemSize = NSSize(
-                width: max(1, viewportSize.width - layout.sectionInset.left - layout.sectionInset.right),
-                height: newRowHeight
-            )
-            guard abs(layout.itemSize.width - newItemSize.width) > 0.5 ||
-                    abs(layout.itemSize.height - newItemSize.height) > 0.5 else { return }
-
-            let preservedRowPosition = rowHeight > 0
-                ? scrollView.contentView.bounds.minY / rowHeight
-                : CGFloat(Self.centerIndex)
-            rowHeight = newRowHeight
-            layout.itemSize = newItemSize
-            layout.invalidateLayout()
-            collectionView.layoutSubtreeIfNeeded()
-
-            if hasPositionedInitially {
-                let contentHeight = collectionView.collectionViewLayout?.collectionViewContentSize.height ?? 0
-                let maximumY = max(0, contentHeight - viewportSize.height)
-                let targetY = min(max(preservedRowPosition * newRowHeight, 0), maximumY)
-                scrollView.contentView.setBoundsOrigin(NSPoint(x: 0, y: targetY))
-                scrollView.reflectScrolledClipView(scrollView.contentView)
-            }
-        }
-
-        func positionInitiallyIfNeeded() {
-            guard !hasPositionedInitially else { return }
-            hasPositionedInitially = true
-            navigate(to: .now, animated: false)
-        }
-
-        func numberOfSections(in collectionView: NSCollectionView) -> Int {
-            1
-        }
-
-        func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
-            Self.weekCount
-        }
-
-        func collectionView(
-            _ collectionView: NSCollectionView,
-            itemForRepresentedObjectAt indexPath: IndexPath
-        ) -> NSCollectionViewItem {
-            let item = collectionView.makeItem(
-                withIdentifier: CalendarWeekCollectionItem.identifier,
-                for: indexPath
-            )
-            guard let weekItem = item as? CalendarWeekCollectionItem else { return item }
-            configure(weekItem, at: indexPath)
-            return weekItem
-        }
-
-        func refreshVisibleItems() {
-            guard let collectionView else { return }
-            for indexPath in collectionView.indexPathsForVisibleItems() {
-                guard let item = collectionView.item(at: indexPath) as? CalendarWeekCollectionItem else { continue }
-                configure(item, at: indexPath)
-            }
-        }
-
-        private func configure(_ item: CalendarWeekCollectionItem, at indexPath: IndexPath) {
-            let offset = weekOffset(for: indexPath.item)
-            let week = weekStart(at: offset)
-            let content = CalendarWeekRow(
-                weekStart: week,
-                displayedMonth: visibleMonth,
-                selectedDate: parent.selectedDate,
-                calendar: parent.calendar,
-                onSelectDate: { [weak self] date in
-                    self?.selectDate(date)
-                }
-            )
-            .environmentObject(parent.store)
-            item.setContent(AnyView(content))
-        }
-
-        private func selectDate(_ date: Date) {
-            parent.onSelectDate(date)
-            refreshVisibleItems()
-        }
-
-        func navigate(to date: Date, animated: Bool) {
-            guard let targetWeek = monthAnchorWeek(for: date) else { return }
-            let targetOffset = weekOffset(forWeek: targetWeek)
-            let safeLimit = Self.centerIndex - 6
-
-            if abs(targetOffset) <= safeLimit {
-                setViewport(toWeekOffset: targetOffset, animated: animated)
-                return
-            }
-
-            let currentWeek = weekStart(at: topWeekOffset())
-            let approachOffset = animated ? (targetWeek > currentWeek ? -8 : 8) : 0
-            isPreparingNavigation = true
-            timelineAnchorWeek = targetWeek
-            collectionView?.reloadData()
-            updateLayout()
-            setViewport(toWeekOffset: approachOffset, animated: false)
-
-            guard animated else {
-                isPreparingNavigation = false
-                visibleBoundsDidChange()
-                return
-            }
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.collectionView?.layoutSubtreeIfNeeded()
-                self.isPreparingNavigation = false
-                self.setViewport(toWeekOffset: 0, animated: true)
-            }
-        }
-
-        private func setViewport(toWeekOffset offset: Int, animated: Bool) {
-            guard let scrollView, let collectionView else { return }
-            let index = itemIndex(forWeekOffset: offset)
-            guard (0..<Self.weekCount).contains(index) else { return }
-
-            collectionView.layoutSubtreeIfNeeded()
-            let indexPath = IndexPath(item: index, section: 0)
-            guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else {
-                collectionView.scrollToItems(at: [indexPath], scrollPosition: .top)
-                DispatchQueue.main.async { [weak self] in
-                    self?.setViewport(toWeekOffset: offset, animated: animated)
-                }
-                return
-            }
-
-            let contentHeight = collectionView.collectionViewLayout?.collectionViewContentSize.height ?? 0
-            let maximumY = max(0, contentHeight - scrollView.contentSize.height)
-            let targetY = min(max(attributes.frame.minY, 0), maximumY)
-            let targetPoint = NSPoint(x: 0, y: targetY)
-
-            if animated, abs(scrollView.contentView.bounds.minY - targetY) > 0.5 {
-                isProgrammaticScroll = true
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.42
-                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    scrollView.contentView.animator().setBoundsOrigin(targetPoint)
-                } completionHandler: { [weak self] in
-                    Task { @MainActor [weak self] in
-                        guard let self, let scrollView = self.scrollView else { return }
-                        self.isProgrammaticScroll = false
-                        scrollView.reflectScrolledClipView(scrollView.contentView)
-                        self.visibleBoundsDidChange()
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Self.virtualWeekRange, id: \.self) { weekOffset in
+                        Group {
+                            if loadedWeekRange.contains(weekOffset) {
+                                CalendarWeekRow(
+                                    weekStart: week(at: weekOffset),
+                                    displayedMonth: displayedMonth,
+                                    selectedDate: selectedDate,
+                                    calendar: calendar,
+                                    onSelectDate: onSelectDate
+                                )
+                            } else {
+                                Color.clear
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .frame(height: rowHeight)
+                        .id(weekOffset)
                     }
                 }
-            } else {
-                scrollView.contentView.setBoundsOrigin(targetPoint)
-                scrollView.reflectScrolledClipView(scrollView.contentView)
-                visibleBoundsDidChange()
+                .scrollTargetLayout()
+                .padding(.horizontal, 12)
+                .background(CalendarScrollIndicatorHider())
+            }
+            .scrollPosition(id: $topWeekOffset, anchor: .top)
+            .scrollTargetBehavior(
+                CalendarScrollTargetBehavior(
+                    calendar: calendar,
+                    timelineAnchorWeek: timelineAnchorWeek,
+                    virtualWeekRange: Self.virtualWeekRange,
+                    visibleWeekCount: Self.visibleWeekCount,
+                    tracker: gestureTracker
+                )
+            )
+            .scrollIndicators(.hidden)
+            .offset(y: navigationOffset)
+            .opacity(navigationOpacity)
+            .onScrollGeometryChange(for: CGFloat.self) { scrollGeometry in
+                let currentRowHeight = max(
+                    1,
+                    scrollGeometry.containerSize.height / CGFloat(Self.visibleWeekCount)
+                )
+                return CGFloat(Self.virtualWeekRange.lowerBound)
+                    + scrollGeometry.contentOffset.y / currentRowHeight
+            } action: { _, newPosition in
+                geometryChanged(to: newPosition)
+            }
+            .onScrollPhaseChange { oldPhase, newPhase, context in
+                let currentRowHeight = max(
+                    1,
+                    context.geometry.containerSize.height / CGFloat(Self.visibleWeekCount)
+                )
+                let rowPosition = CGFloat(Self.virtualWeekRange.lowerBound)
+                    + context.geometry.contentOffset.y / currentRowHeight
+
+                if newPhase == .interacting, oldPhase != .interacting {
+                    lastMovementDirection = nil
+                    refreshLoadedWeeks(around: rowPosition, direction: nil, force: true)
+                    gestureTracker.begin(at: rowPosition)
+                }
+                if oldPhase == .interacting, newPhase != .interacting {
+                    let velocityInWeeks = (context.velocity?.dy ?? 0) / currentRowHeight
+                    let projectedRow = rowPosition + max(
+                        -CGFloat(CalendarScrollPolicy.maximumPredictiveDistance),
+                        min(
+                            CGFloat(CalendarScrollPolicy.maximumPredictiveDistance),
+                            velocityInWeeks * 0.22
+                        )
+                    )
+                    refreshLoadedWeeks(
+                        around: rowPosition,
+                        direction: CalendarScrollDirection(signedMovement: projectedRow - rowPosition),
+                        predictedRow: projectedRow,
+                        force: true
+                    )
+                    gestureTracker.release(
+                        at: rowPosition,
+                        systemVelocity: velocityInWeeks
+                    )
+                }
+                if newPhase == .animating {
+                    gestureTracker.cancelForProgrammaticScroll()
+                }
+                if newPhase == .idle {
+                    gestureTracker.finish()
+                    rebaseVirtualTimelineIfNeeded(at: rowPosition)
+                }
+            }
+            .onChange(of: navigationRequest?.id) { _, _ in
+                guard let navigationRequest,
+                      navigationRequest.id != lastNavigationID else { return }
+                lastNavigationID = navigationRequest.id
+                navigate(to: navigationRequest.date)
             }
         }
+    }
 
-        private func cancelProgrammaticAnimation() {
-            guard isProgrammaticScroll, let scrollView else { return }
-            isProgrammaticScroll = false
-            scrollView.contentView.layer?.removeAllAnimations()
+    private func geometryChanged(to rowPosition: CGFloat) {
+        guard rowPosition.isFinite else { return }
+        if !hasEstablishedInitialPosition {
+            guard abs(rowPosition) <= 1 else { return }
+            hasEstablishedInitialPosition = true
+        }
+        let direction = CalendarScrollDirection(
+            signedMovement: rowPosition - latestWeekOffset
+        ) ?? lastMovementDirection
+        refreshLoadedWeeks(around: rowPosition, direction: direction)
+
+        if let movementDirection = CalendarScrollDirection(
+            signedMovement: rowPosition - latestWeekOffset
+        ) {
+            lastMovementDirection = movementDirection
+        }
+        latestWeekOffset = rowPosition
+        gestureTracker.update(to: rowPosition)
+
+        let centerDayOffset = Int(((rowPosition + 3) * 7).rounded())
+        guard let centerDate = calendar.date(
+            byAdding: .day,
+            value: centerDayOffset,
+            to: timelineAnchorWeek
+        ) else { return }
+        let month = monthStart(for: centerDate)
+        guard !calendar.isDate(month, equalTo: lastReportedMonth, toGranularity: .month) else {
+            return
         }
 
-        private func settleGesture(startY: CGFloat, endY: CGFloat, signedDelta: CGFloat) {
-            guard !isProgrammaticScroll, rowHeight > 0 else { return }
-            let movement = abs(signedDelta) > 0.5 ? signedDelta : endY - startY
-            guard abs(movement) > 0.5 else { return }
+        lastReportedMonth = month
+        onVisibleMonthChange(month)
+    }
 
-            let direction = movement > 0 ? -1 : 1
-            let startMonth = gestureStartMonth ?? monthAtViewport()
-            gestureStartMonth = nil
-            guard let targetMonth = parent.calendar.date(
-                byAdding: .month,
-                value: direction,
-                to: startMonth
-            ) else { return }
-            let targetOffset = weekOffset(forMonth: targetMonth)
-            setViewport(toWeekOffset: targetOffset, animated: true)
+    private func refreshLoadedWeeks(
+        around rowPosition: CGFloat,
+        direction: CalendarScrollDirection?,
+        predictedRow: CGFloat? = nil,
+        force: Bool = false
+    ) {
+        guard rowPosition.isFinite else { return }
+        let visibleTop = Int(floor(rowPosition))
+        let visibleBottom = Int(ceil(rowPosition)) + Self.visibleWeekCount - 1
+        let cacheMiss = visibleTop < loadedWeekRange.lowerBound
+            || visibleBottom > loadedWeekRange.upperBound
+        let approachesEdge: Bool
+        switch direction {
+        case .later:
+            approachesEdge = loadedWeekRange.upperBound - visibleBottom
+                <= Self.cacheEdgeBuffer
+        case .earlier:
+            approachesEdge = visibleTop - loadedWeekRange.lowerBound
+                <= Self.cacheEdgeBuffer
+        case nil:
+            approachesEdge = loadedWeekRange.upperBound - visibleBottom
+                <= Self.cacheEdgeBuffer
+                || visibleTop - loadedWeekRange.lowerBound <= Self.cacheEdgeBuffer
+        }
+        guard force || cacheMiss || approachesEdge else { return }
+
+        let newRange: ClosedRange<Int>
+        if let predictedRow, predictedRow.isFinite {
+            newRange = CalendarScrollPolicy.predictiveCacheWindow(
+                currentTop: visibleTop,
+                predictedTop: Int(predictedRow.rounded()),
+                direction: direction,
+                cacheCount: Self.weekCount,
+                visibleCount: Self.visibleWeekCount,
+                limits: Self.virtualWeekRange
+            )
+        } else {
+            newRange = CalendarScrollPolicy.cacheWindow(
+                around: visibleTop,
+                direction: direction,
+                cacheCount: Self.weekCount,
+                visibleCount: Self.visibleWeekCount,
+                limits: Self.virtualWeekRange
+            )
+        }
+        guard newRange != loadedWeekRange else { return }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            loadedWeekRange = newRange
+        }
+    }
+
+    private func rebaseVirtualTimelineIfNeeded(at rowPosition: CGFloat) {
+        guard hasEstablishedInitialPosition, !isRecentering, rowPosition.isFinite else { return }
+        let maximumTopRow = Self.virtualWeekRange.upperBound - Self.visibleWeekCount + 1
+        let needsRecentering = rowPosition
+            <= CGFloat(Self.virtualWeekRange.lowerBound + Self.virtualEdgeBuffer)
+            || rowPosition >= CGFloat(maximumTopRow - Self.virtualEdgeBuffer)
+        guard needsRecentering else { return }
+
+        let visibleWeek = week(at: Int(rowPosition.rounded()))
+
+        isRecentering = true
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            timelineAnchorWeek = visibleWeek
+            loadedWeekRange = Self.initialLoadedWeekRange
+            topWeekOffset = 0
+            latestWeekOffset = 0
+            lastMovementDirection = nil
         }
 
-        private func recenterTimelineIfNeeded() {
-            let offset = topWeekOffset()
-            guard !isProgrammaticScroll,
-                  !isRecenteringTimeline,
-                  abs(offset) >= Self.recenterThreshold,
-                  let collectionView,
-                  let scrollView else { return }
+        Task { @MainActor in
+            await Task.yield()
+            isRecentering = false
+        }
+    }
 
-            isRecenteringTimeline = true
-            timelineAnchorWeek = weekStart(at: offset)
-            collectionView.reloadData()
-            collectionView.layoutSubtreeIfNeeded()
-            let centeredY = CGFloat(Self.centerIndex) * rowHeight
-            scrollView.contentView.setBoundsOrigin(NSPoint(x: 0, y: centeredY))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-            isRecenteringTimeline = false
+    private func navigate(to date: Date) {
+        guard let targetWeek = monthAnchorWeek(for: date) else { return }
+        gestureTracker.cancelForProgrammaticScroll()
+        lastMovementDirection = nil
+
+        let targetIndex = index(of: targetWeek)
+        let currentIndex = Int(latestWeekOffset.rounded())
+        let currentWeek = week(at: currentIndex)
+        let distance = abs(
+            calendar.dateComponents([.weekOfYear], from: currentWeek, to: targetWeek).weekOfYear ?? 0
+        )
+        let maximumTopRow = Self.virtualWeekRange.upperBound - Self.visibleWeekCount + 1
+
+        if (Self.virtualWeekRange.lowerBound...maximumTopRow).contains(targetIndex), distance <= 10 {
+            let navigationRange = CalendarScrollPolicy.cacheWindowCovering(
+                currentTop: currentIndex,
+                targetTop: targetIndex,
+                cacheCount: Self.weekCount,
+                visibleCount: Self.visibleWeekCount,
+                limits: Self.virtualWeekRange
+            )
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                loadedWeekRange = navigationRange
+                topWeekOffset = nil
+            }
+            Task { @MainActor in
+                await Task.yield()
+                withAnimation(.easeOut(duration: 0.32)) {
+                    topWeekOffset = targetIndex
+                }
+            }
+            return
         }
 
-        private func visibleBoundsDidChange() {
-            guard !isPreparingNavigation else { return }
-            recenterTimelineIfNeeded()
-            let offset = topWeekOffset()
-            let week = weekStart(at: offset)
-            let viewportCenter = parent.calendar.date(byAdding: .day, value: 21, to: week) ?? week
-            let month = monthStart(for: viewportCenter)
-            guard !parent.calendar.isDate(month, equalTo: visibleMonth, toGranularity: .month) else { return }
-
-            visibleMonth = month
-            refreshVisibleItems()
-            parent.onVisibleMonthChange(month)
+        let direction: CGFloat = targetWeek >= currentWeek ? 1 : -1
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            timelineAnchorWeek = targetWeek
+            loadedWeekRange = Self.initialLoadedWeekRange
+            topWeekOffset = 0
+            latestWeekOffset = 0
+            lastMovementDirection = nil
+            navigationOffset = direction * 18
+            navigationOpacity = 0
         }
 
-        private func monthAtViewport() -> Date {
-            let week = weekStart(at: topWeekOffset())
-            let viewportCenter = parent.calendar.date(byAdding: .day, value: 21, to: week) ?? week
-            return monthStart(for: viewportCenter)
+        Task { @MainActor in
+            await Task.yield()
+            withAnimation(.easeOut(duration: 0.2)) {
+                navigationOffset = 0
+                navigationOpacity = 1
+            }
         }
+    }
 
-        private func topWeekOffset() -> Int {
-            guard let scrollView, rowHeight > 0 else { return 0 }
-            let index = Int((scrollView.contentView.bounds.minY / rowHeight).rounded())
-            return weekOffset(for: min(max(index, 0), Self.weekCount - 1))
+    private func week(at index: Int) -> Date {
+        calendar.date(byAdding: .weekOfYear, value: index, to: timelineAnchorWeek)
+            ?? timelineAnchorWeek
+    }
+
+    private func index(of week: Date) -> Int {
+        let days = calendar.dateComponents([.day], from: timelineAnchorWeek, to: week).day ?? 0
+        return days / 7
+    }
+
+    private func monthAnchorWeek(for date: Date) -> Date? {
+        CalendarMonthGrid.dates(containing: monthStart(for: date), calendar: calendar).first
+    }
+
+    private func monthStart(for date: Date) -> Date {
+        calendar.dateInterval(of: .month, for: date)?.start ?? date
+    }
+}
+
+private final class CalendarGestureTracker {
+    private struct Sample {
+        let timestamp: TimeInterval
+        let rowPosition: CGFloat
+    }
+
+    private var generation = 0
+    private var consumedGeneration = -1
+    private var isTracking = false
+    private var startTimestamp: TimeInterval = 0
+    private var startRow: CGFloat = 0
+    private var latestRow: CGFloat = 0
+    private var samples: [Sample] = []
+    private var releasedSystemVelocity: CGFloat?
+
+    func begin(at rowPosition: CGFloat) {
+        generation &+= 1
+        isTracking = true
+        startTimestamp = ProcessInfo.processInfo.systemUptime
+        startRow = rowPosition
+        latestRow = rowPosition
+        releasedSystemVelocity = nil
+        samples = [Sample(timestamp: startTimestamp, rowPosition: rowPosition)]
+    }
+
+    func update(to rowPosition: CGFloat) {
+        guard isTracking, rowPosition.isFinite else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        latestRow = rowPosition
+        samples.append(Sample(timestamp: now, rowPosition: rowPosition))
+        trimSamples(relativeTo: now)
+    }
+
+    func release(at rowPosition: CGFloat, systemVelocity: CGFloat) {
+        guard isTracking else { return }
+        update(to: rowPosition)
+        releasedSystemVelocity = systemVelocity
+    }
+
+    func consumeSnapshot(fallbackSystemVelocity: CGFloat) -> CalendarGestureSnapshot? {
+        guard isTracking, consumedGeneration != generation else { return nil }
+        consumedGeneration = generation
+
+        let now = ProcessInfo.processInfo.systemUptime
+        trimSamples(relativeTo: now)
+        let measuredVelocity: CGFloat
+        if let first = samples.first,
+           let last = samples.last,
+           last.timestamp - first.timestamp >= 0.008 {
+            measuredVelocity = (last.rowPosition - first.rowPosition)
+                / CGFloat(last.timestamp - first.timestamp)
+        } else {
+            measuredVelocity = 0
         }
+        let systemVelocity = releasedSystemVelocity ?? fallbackSystemVelocity
+        let releaseVelocity = abs(measuredVelocity) >= 0.01 ? measuredVelocity : systemVelocity
 
-        private func weekOffset(for itemIndex: Int) -> Int {
-            itemIndex - Self.centerIndex
-        }
+        return CalendarGestureSnapshot(
+            startRow: startRow,
+            currentRow: latestRow,
+            duration: max(0, now - startTimestamp),
+            releaseVelocityInWeeksPerSecond: releaseVelocity,
+            usesPreciseDeltas: true
+        )
+    }
 
-        private func itemIndex(forWeekOffset offset: Int) -> Int {
-            Self.centerIndex + offset
-        }
+    func cancelForProgrammaticScroll() {
+        isTracking = false
+        consumedGeneration = generation
+        samples.removeAll(keepingCapacity: true)
+        releasedSystemVelocity = nil
+    }
 
-        private func weekStart(at offset: Int) -> Date {
-            parent.calendar.date(byAdding: .weekOfYear, value: offset, to: timelineAnchorWeek)
-                ?? timelineAnchorWeek
-        }
+    func finish() {
+        isTracking = false
+        samples.removeAll(keepingCapacity: true)
+        releasedSystemVelocity = nil
+    }
 
-        private func weekOffset(forMonth month: Date) -> Int {
-            guard let targetWeek = monthAnchorWeek(for: month) else { return 0 }
-            return weekOffset(forWeek: targetWeek)
-        }
-
-        private func weekOffset(forWeek targetWeek: Date) -> Int {
-            let dayDistance = parent.calendar.dateComponents(
-                [.day],
-                from: timelineAnchorWeek,
-                to: targetWeek
-            ).day ?? 0
-            return dayDistance / 7
-        }
-
-        private func monthAnchorWeek(for date: Date) -> Date? {
-            CalendarMonthGrid.dates(
-                containing: monthStart(for: date),
-                calendar: parent.calendar
-            ).first
-        }
-
-        private func monthAnchorWeekOffset(near offset: Int) -> Int {
-            let week = weekStart(at: offset)
-            let viewportCenter = parent.calendar.date(byAdding: .day, value: 21, to: week) ?? week
-            return weekOffset(forMonth: viewportCenter)
-        }
-
-        private func monthStart(for date: Date) -> Date {
-            parent.calendar.dateInterval(of: .month, for: date)?.start ?? date
+    private func trimSamples(relativeTo timestamp: TimeInterval) {
+        let cutoff = timestamp - CalendarScrollPolicy.velocitySampleWindow
+        while samples.count > 2, samples[1].timestamp < cutoff {
+            samples.removeFirst()
         }
     }
 }
 
-private final class CalendarCollectionScrollView: NSScrollView {
-    var onGestureBegan: (() -> Void)?
-    var onGestureEnded: ((CGFloat, CGFloat, CGFloat) -> Void)?
-    var onViewportSizeChanged: (() -> Void)?
+private struct CalendarScrollTargetBehavior: ScrollTargetBehavior {
+    let calendar: Calendar
+    let timelineAnchorWeek: Date
+    let virtualWeekRange: ClosedRange<Int>
+    let visibleWeekCount: Int
+    let tracker: CalendarGestureTracker
 
-    private var gestureStartY: CGFloat?
-    private var accumulatedSignedDelta: CGFloat = 0
-    private var gestureEndWorkItem: DispatchWorkItem?
-    private var isIgnoringMomentum = false
-    private var lastViewportSize = NSSize.zero
-    private var isViewportUpdateScheduled = false
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        let rowHeight = context.containerSize.height / CGFloat(visibleWeekCount)
+        guard rowHeight > 0, rowHeight.isFinite else { return }
 
-    override var hasVerticalScroller: Bool {
-        get { false }
-        set { super.hasVerticalScroller = false }
+        let proposedRow = CGFloat(virtualWeekRange.lowerBound) + target.rect.minY / rowHeight
+        let fallbackVelocity = context.velocity.dy / rowHeight
+        guard let snapshot = tracker.consumeSnapshot(
+            fallbackSystemVelocity: fallbackVelocity
+        ) else {
+            // Coarse mouse wheels don't always create a SwiftUI interaction phase.
+            let requestedRow = CalendarScrollPolicy.nearestWeekIndex(
+                for: proposedRow,
+                direction: nil
+            )
+            target.rect.origin.y = contentOffset(for: clampedTopRow(requestedRow)) * rowHeight
+            return
+        }
+
+        let decision = CalendarScrollPolicy.destination(for: snapshot)
+        let adjacentMonthIndex: Int?
+        if case let .adjacentMonth(direction: direction) = decision {
+            adjacentMonthIndex = adjacentMonthRow(
+                from: snapshot.startRow,
+                direction: direction
+            )
+        } else {
+            adjacentMonthIndex = nil
+        }
+        let monthCandidates = candidateMonthRows(near: proposedRow)
+        let requestedRow = CalendarScrollPolicy.targetIndex(
+            for: decision,
+            currentRow: snapshot.currentRow,
+            proposedMomentumRow: proposedRow,
+            adjacentMonthIndex: adjacentMonthIndex,
+            monthCandidates: monthCandidates
+        )
+
+        target.rect.origin.y = contentOffset(for: clampedTopRow(requestedRow)) * rowHeight
     }
 
-    override var verticalScroller: NSScroller? {
-        get { nil }
-        set { super.verticalScroller = nil }
+    private func adjacentMonthRow(
+        from startRow: CGFloat,
+        direction: CalendarScrollDirection
+    ) -> Int? {
+        let startMonth = viewportMonth(at: startRow)
+        guard let targetMonth = calendar.date(
+            byAdding: .month,
+            value: direction.rawValue,
+            to: startMonth
+        ) else { return nil }
+        return row(forMonth: targetMonth)
+    }
+
+    private func candidateMonthRows(near proposedRow: CGFloat) -> [Int] {
+        let projectedMonth = viewportMonth(at: proposedRow)
+        let maximumTopRow = virtualWeekRange.upperBound - visibleWeekCount + 1
+        return (-1...1).compactMap { monthDelta -> Int? in
+            guard let month = calendar.date(
+                byAdding: .month,
+                value: monthDelta,
+                to: projectedMonth
+            ), let row = row(forMonth: month),
+                  (virtualWeekRange.lowerBound...maximumTopRow).contains(row) else {
+                return nil
+            }
+            return row
+        }
+    }
+
+    private func viewportMonth(at row: CGFloat) -> Date {
+        let centerDayOffset = Int(((row + 3) * 7).rounded())
+        let centerDate = calendar.date(
+            byAdding: .day,
+            value: centerDayOffset,
+            to: timelineAnchorWeek
+        ) ?? timelineAnchorWeek
+        return calendar.dateInterval(of: .month, for: centerDate)?.start ?? centerDate
+    }
+
+    private func row(forMonth month: Date) -> Int? {
+        guard let anchor = CalendarMonthGrid.dates(
+            containing: calendar.dateInterval(of: .month, for: month)?.start ?? month,
+            calendar: calendar
+        ).first else { return nil }
+        let days = calendar.dateComponents([.day], from: timelineAnchorWeek, to: anchor).day ?? 0
+        return days / 7
+    }
+
+    private func clampedTopRow(_ row: Int) -> Int {
+        let maximumTopRow = virtualWeekRange.upperBound - visibleWeekCount + 1
+        return min(max(row, virtualWeekRange.lowerBound), maximumTopRow)
+    }
+
+    private func contentOffset(for logicalRow: Int) -> CGFloat {
+        CGFloat(logicalRow - virtualWeekRange.lowerBound)
+    }
+}
+
+private struct CalendarScrollIndicatorHider: NSViewRepresentable {
+    func makeNSView(context: Context) -> ScrollIndicatorProbeView {
+        ScrollIndicatorProbeView()
+    }
+
+    func updateNSView(_ nsView: ScrollIndicatorProbeView, context: Context) {
+        nsView.hideEnclosingScroller()
+    }
+}
+
+private final class ScrollIndicatorProbeView: NSView {
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        hideEnclosingScroller()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        removeScrollers()
+        hideEnclosingScroller()
     }
 
-    override func layout() {
-        super.layout()
-        removeScrollers()
-        scheduleViewportUpdateIfNeeded()
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 
-    override func scrollWheel(with event: NSEvent) {
-        if isIgnoringMomentum, !event.momentumPhase.isEmpty {
-            if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
-                isIgnoringMomentum = false
+    func hideEnclosingScroller() {
+        var ancestor = superview
+        while let view = ancestor {
+            if let scrollView = view as? NSScrollView {
+                scrollView.hasVerticalScroller = false
+                scrollView.verticalScroller?.isHidden = true
+                return
             }
-            return
+            ancestor = view.superview
         }
-
-        if event.phase.contains(.began) || gestureStartY == nil {
-            gestureEndWorkItem?.cancel()
-            gestureStartY = contentView.bounds.minY
-            accumulatedSignedDelta = 0
-            isIgnoringMomentum = false
-            onGestureBegan?()
-        }
-
-        accumulatedSignedDelta += event.scrollingDeltaY
-        super.scrollWheel(with: event)
-
-        if event.phase.contains(.cancelled) {
-            finishGesture(ignoreMomentum: false)
-        } else if event.phase.contains(.ended) {
-            finishGesture(ignoreMomentum: true)
-        } else if event.momentumPhase.contains(.began) {
-            gestureEndWorkItem?.cancel()
-            gestureEndWorkItem = nil
-        } else if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
-            finishGesture(ignoreMomentum: false)
-        } else if event.phase.isEmpty && event.momentumPhase.isEmpty {
-            scheduleGestureEnd(after: 0.06)
-        }
-    }
-
-    private func scheduleGestureEnd(after delay: TimeInterval) {
-        gestureEndWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.finishGesture(ignoreMomentum: false)
-        }
-        gestureEndWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-    }
-
-    private func finishGesture(ignoreMomentum: Bool) {
-        gestureEndWorkItem?.cancel()
-        gestureEndWorkItem = nil
-        guard let startY = gestureStartY else { return }
-        let endY = contentView.bounds.minY
-        let signedDelta = accumulatedSignedDelta
-        gestureStartY = nil
-        accumulatedSignedDelta = 0
-        isIgnoringMomentum = ignoreMomentum
-        onGestureEnded?(startY, endY, signedDelta)
-    }
-
-    private func removeScrollers() {
-        if super.hasVerticalScroller {
-            super.hasVerticalScroller = false
-        }
-        if super.hasHorizontalScroller {
-            super.hasHorizontalScroller = false
-        }
-        super.verticalScroller?.isHidden = true
-        super.horizontalScroller?.isHidden = true
-    }
-
-    private func scheduleViewportUpdateIfNeeded() {
-        let newSize = contentSize
-        guard abs(newSize.width - lastViewportSize.width) > 0.5 ||
-                abs(newSize.height - lastViewportSize.height) > 0.5 else { return }
-
-        lastViewportSize = newSize
-        guard !isViewportUpdateScheduled else { return }
-        isViewportUpdateScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.isViewportUpdateScheduled = false
-            self.onViewportSizeChanged?()
-        }
-    }
-}
-
-private final class CalendarWeekCollectionItem: NSCollectionViewItem {
-    static let identifier = NSUserInterfaceItemIdentifier("CalendarWeekCollectionItem")
-
-    private var hostingView: NSHostingView<AnyView>?
-
-    override func loadView() {
-        view = NSView()
-        view.wantsLayer = true
-    }
-
-    func setContent(_ content: AnyView) {
-        if let hostingView {
-            hostingView.rootView = content
-            return
-        }
-
-        let hostingView = NSHostingView(rootView: content)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(hostingView)
-        NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: view.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        self.hostingView = hostingView
     }
 }
 
@@ -916,6 +914,8 @@ private struct CalendarDayCell: View {
             date.formatted(.dateTime.year().month(.wide).day().locale(L10n.locale))
         )
         .accessibilityValue(L10n.format("%lld 项待办", items.count))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(today ? L10n.string("今天") : "")
     }
 }
 

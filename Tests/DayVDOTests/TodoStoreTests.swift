@@ -48,7 +48,7 @@ final class TodoStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testProjectAndChildRelationshipPersists() throws {
+    func testProjectAndChildRelationshipPersists() async throws {
         let fileURL = temporaryStoreURL()
         defer { try? FileManager.default.removeItem(at: fileURL) }
         let project = TodoProject(title: "申请大学", notes: "长期准备")
@@ -57,6 +57,8 @@ final class TodoStoreTests: XCTestCase {
 
         store.upsertProject(project)
         store.upsert(child)
+        let didSave = await store.flushPersistence()
+        XCTAssertTrue(didSave)
 
         let reloaded = TodoStore(fileURL: fileURL)
         XCTAssertEqual(reloaded.projects.map(\.id), [project.id])
@@ -192,7 +194,7 @@ final class TodoStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testTagsPersistWithColorAndAssignments() throws {
+    func testTagsPersistWithColorAndAssignments() async throws {
         let fileURL = temporaryStoreURL()
         defer { try? FileManager.default.removeItem(at: fileURL) }
         let tag = TaskTag(
@@ -206,6 +208,8 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertTrue(store.upsertTag(tag))
         store.upsertProject(project)
         store.upsert(item)
+        let didSave = await store.flushPersistence()
+        XCTAssertTrue(didSave)
 
         let reloaded = TodoStore(fileURL: fileURL)
         let savedTag = try XCTUnwrap(reloaded.tags.first)
@@ -262,7 +266,7 @@ final class TodoStoreTests: XCTestCase {
 
         store.moveTag(third.id, to: second.id)
 
-        XCTAssertEqual(store.sortedTags.map(\.name), ["第一", "第二", "第三"])
+        XCTAssertEqual(store.sortedTags.map(\.name), ["第一", "第三", "第二"])
     }
 
     @MainActor
