@@ -69,3 +69,89 @@
 "正在载入待办…" = "Cargando tareas…";
 "今天的待办已完成" = "Las tareas de hoy están terminadas";
 "已完成事项当前已隐藏。" = "Las tareas completadas están ocultas.";
+
+"预计时长" = "Duración estimada";
+
+"小时" = "h";
+
+"分钟" = "min";
+"%lld 分钟" = "%lld min";
+
+"清除预计时长" = "Borrar estimación";
+
+"请输入有效时长" = "Introduce una duración válida";
+
+"安排时间" = "Programar horario";
+
+"安排名称" = "Nombre del plan";
+
+"开始日期" = "Fecha de inicio";
+
+"开始时间" = "Hora de inicio";
+
+"结束日期" = "Fecha de fin";
+
+"结束时间" = "Hora de fin";
+
+"当天" = "Mismo día";
+
+"次日" = "Día siguiente";
+
+"使用 24 小时制，单段最长 24 小时。" = "Usa el formato de 24 horas. Cada bloque puede durar hasta 24 horas.";
+
+"请检查名称及起止时间。" = "Comprueba el nombre y las horas de inicio y fin.";
+
+"编辑原待办" = "Editar tarea original";
+
+"编辑安排" = "Editar bloque";
+
+"添加安排" = "Añadir bloque";
+
+"移除安排" = "Quitar bloque";
+
+"未安排" = "Sin programar";
+
+"已安排" = "Programado";
+
+"已安排 %lld / 预计 %lld 分钟" = "Programados %lld / estimados %lld min";
+
+"已安排 %lld 分钟" = "Programados %lld min";
+
+"收起时段" = "Mostrar menos horarios";
+
+"查看全部时段" = "Ver todos los horarios";
+
+"这一天暂无待办" = "No hay tareas para este día";
+
+"当日规划" = "Plan del día";
+"日程" = "Horario";
+
+"从前一天延续" = "Continúa del día anterior";
+
+"延续至次日" = "Continúa al día siguiente";
+
+"拖动调整时长" = "Arrastra para ajustar la duración";
+
+"前一天" = "Día anterior";
+
+"后一天" = "Día siguiente";
+
+"放大时间轴" = "Ampliar horario";
+
+"缩小时间轴" = "Reducir horario";
+
+"已达到预计时长" = "Duración estimada alcanzada";
+
+"继续安排 30 分钟" = "Añadir otros 30 minutos";
+
+"这个待办已安排足够时间，仍要再添加一段吗？" = "Esta tarea ya tiene tiempo suficiente. ¿Añadir otro bloque?";
+
+"修改日期会影响时间安排" = "Cambiar la fecha afecta los bloques";
+
+"保留钟点移到新日期" = "Mover conservando las horas";
+
+"清除安排并保存" = "Borrar bloques y guardar";
+
+"取消日期将清除这个待办的全部时间安排。" = "Quitar la fecha borrará todos los bloques de esta tarea.";
+
+"可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Conserva las horas en la nueva fecha o borra los bloques para planificar de nuevo.";

@@ -151,3 +151,89 @@
 "正在载入待办…" = "Loading to-dos…";
 "今天的待办已完成" = "Today's to-dos are complete";
 "已完成事项当前已隐藏。" = "Completed items are currently hidden.";
+
+"预计时长" = "Estimated duration";
+
+"小时" = "hr";
+
+"分钟" = "min";
+"%lld 分钟" = "%lld min";
+
+"清除预计时长" = "Clear estimate";
+
+"请输入有效时长" = "Enter a valid duration";
+
+"安排时间" = "Schedule time";
+
+"安排名称" = "Plan title";
+
+"开始日期" = "Start date";
+
+"开始时间" = "Start time";
+
+"结束日期" = "End date";
+
+"结束时间" = "End time";
+
+"当天" = "Same day";
+
+"次日" = "Next day";
+
+"使用 24 小时制，单段最长 24 小时。" = "Use 24-hour time. Each block can last up to 24 hours.";
+
+"请检查名称及起止时间。" = "Check the title and start/end times.";
+
+"编辑原待办" = "Edit original task";
+
+"编辑安排" = "Edit time block";
+
+"添加安排" = "Add time block";
+
+"移除安排" = "Remove time block";
+
+"未安排" = "Unscheduled";
+
+"已安排" = "Scheduled";
+
+"已安排 %lld / 预计 %lld 分钟" = "Scheduled %lld / estimated %lld min";
+
+"已安排 %lld 分钟" = "Scheduled %lld min";
+
+"收起时段" = "Show fewer times";
+
+"查看全部时段" = "Show all times";
+
+"这一天暂无待办" = "No tasks for this day";
+
+"当日规划" = "Daily plan";
+"日程" = "Schedule";
+
+"从前一天延续" = "Continued from previous day";
+
+"延续至次日" = "Continues next day";
+
+"拖动调整时长" = "Drag to resize";
+
+"前一天" = "Previous day";
+
+"后一天" = "Next day";
+
+"放大时间轴" = "Zoom in timeline";
+
+"缩小时间轴" = "Zoom out timeline";
+
+"已达到预计时长" = "Estimated duration reached";
+
+"继续安排 30 分钟" = "Add another 30 minutes";
+
+"这个待办已安排足够时间，仍要再添加一段吗？" = "This task has enough time scheduled. Add another block?";
+
+"修改日期会影响时间安排" = "Date change affects time blocks";
+
+"保留钟点移到新日期" = "Move, keeping the times";
+
+"清除安排并保存" = "Clear time blocks and save";
+
+"取消日期将清除这个待办的全部时间安排。" = "Removing the date will clear all time blocks for this task.";
+
+"可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Keep the times on the new date, or clear the blocks to plan again.";

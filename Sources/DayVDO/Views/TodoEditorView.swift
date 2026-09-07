@@ -7,6 +7,8 @@ struct TodoEditorView: View {
     @State private var draft: TodoItem
     @State private var hasDueDate: Bool
     @State private var isShowingDatePicker = false
+    @State private var showsScheduleDecision = false
+    @State private var isEstimateValid = true
     @FocusState private var titleIsFocused: Bool
 
     let isEditing: Bool
@@ -105,6 +107,16 @@ struct TodoEditorView: View {
                     .frame(height: 46)
                 }
 
+                Divider()
+
+                HStack {
+                    Text(L10n.string("预计时长"))
+                    Spacer()
+                    DurationInput(minutes: draft.estimatedMinutes, updatesDraft: true,
+                                  onValidityChange: { isEstimateValid = $0 }) { draft.estimatedMinutes = $0 }
+                }
+                .padding(.horizontal, 20)
+                .frame(height: 46)
                 Divider()
 
                 VStack(spacing: 0) {
@@ -220,7 +232,7 @@ struct TodoEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(L10n.string("保存")) { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft.normalizedTitle.isEmpty || !store.canModify)
+                    .disabled(draft.normalizedTitle.isEmpty || !store.canModify || !isEstimateValid)
             }
             .controlSize(.regular)
             .padding(.horizontal, 20)
@@ -232,6 +244,21 @@ struct TodoEditorView: View {
             await Task.yield()
             titleIsFocused = true
         }
+        .alert(L10n.string("修改日期会影响时间安排"), isPresented: $showsScheduleDecision) {
+            if draft.dueDay != nil {
+                Button(L10n.string("保留钟点移到新日期")) {
+                    if store.upsert(draft, scheduleDateChange: .move) { dismiss() }
+                }
+            }
+            Button(L10n.string("清除安排并保存"), role: .destructive) {
+                if store.upsert(draft, scheduleDateChange: .clear) { dismiss() }
+            }
+            Button(L10n.string("取消"), role: .cancel) {}
+        } message: {
+            Text(L10n.string(draft.dueDay == nil
+                ? "取消日期将清除这个待办的全部时间安排。"
+                : "可以保留各段钟点迁移到新日期，或清除安排后重新规划。"))
+        }
         .onChange(of: hasDueDate) { _, enabled in
             draft.dueDate = enabled ? (draft.dueDate ?? .now) : nil
         }
@@ -239,7 +266,11 @@ struct TodoEditorView: View {
 
     private func save() {
         if !hasDueDate { draft.dueDate = nil }
-        if onSave(draft) {
+        if store.needsScheduleDateDecision(draft) {
+            showsScheduleDecision = true
+            return
+        }
+        if onSave(draft) || (store.canModify && store.items.contains(draft)) {
             dismiss()
         }
     }

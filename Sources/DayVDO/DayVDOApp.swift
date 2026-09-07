@@ -76,7 +76,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct DayVDOApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = TodoStore()
+    @StateObject private var store: TodoStore
+
+    init() {
+        #if DEBUG
+        // A test-only bundle may opt into an explicit data file. This remains
+        // isolated even when a UI automation tool relaunches it without its environment.
+        if let path = Bundle.main.object(forInfoDictionaryKey: "DayVDOTestingDataPath") as? String {
+            _store = StateObject(wrappedValue: TodoStore(fileURL: URL(fileURLWithPath: path)))
+            return
+        }
+        #endif
+        _store = StateObject(wrappedValue: TodoStore())
+    }
 
     var body: some Scene {
         Window("DayVDO", id: "main") {
@@ -84,7 +96,7 @@ struct DayVDOApp: App {
                 .environmentObject(store)
                 .environment(\.locale, store.settings.language.locale)
                 .preferredColorScheme(preferredColorScheme)
-                .frame(minWidth: 760, minHeight: 520)
+                .frame(minWidth: 760, minHeight: 468)
                 .onAppear { appDelegate.store = store }
         }
         .defaultSize(width: 1080, height: 720)

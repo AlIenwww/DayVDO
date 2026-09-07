@@ -26,6 +26,8 @@ final class TodoStore: ObservableObject {
             scheduleSave()
         }
     }
+    @Published private(set) var schedules: [DaySchedule] = []
+
     @Published private(set) var persistenceIssue: PersistenceIssue?
     @Published private(set) var isReadOnly = false
     @Published private(set) var isInitialLoading = false
@@ -60,13 +62,14 @@ final class TodoStore: ObservableObject {
     }
 
     private struct Snapshot: Codable, Sendable, Equatable {
-        static let currentVersion = 2
+        static let currentVersion = 3
 
         var version: Int
         var items: [TodoItem]
         var projects: [TodoProject]
         var tags: [TaskTag]
         var settings: AppSettings
+        var schedules: [DaySchedule]
 
         private enum CodingKeys: String, CodingKey {
             case version
@@ -74,19 +77,22 @@ final class TodoStore: ObservableObject {
             case projects
             case tags
             case settings
+            case schedules
         }
 
         init(
             items: [TodoItem],
             projects: [TodoProject],
             tags: [TaskTag],
-            settings: AppSettings
+            settings: AppSettings,
+            schedules: [DaySchedule] = []
         ) {
             version = Self.currentVersion
             self.items = items
             self.projects = projects
             self.tags = tags
             self.settings = settings
+            self.schedules = schedules
         }
 
         init(from decoder: Decoder) throws {
@@ -102,6 +108,12 @@ final class TodoStore: ObservableObject {
             items = try container.decodeIfPresent([TodoItem].self, forKey: .items) ?? []
             projects = try container.decodeIfPresent([TodoProject].self, forKey: .projects) ?? []
             tags = try container.decodeIfPresent([TaskTag].self, forKey: .tags) ?? []
+            schedules = try container.decodeIfPresent([DaySchedule].self, forKey: .schedules) ?? []
+            guard schedules.allSatisfy(\.isValid),
+                  Set(schedules.map(\.id)).count == schedules.count,
+                  Set(items.map(\.id)).count == items.count else {
+                throw DecodingError.dataCorruptedError(forKey: .schedules, in: container, debugDescription: "Invalid schedule or duplicate identifier")
+            }
             settings = try container.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
         }
     }
@@ -203,16 +215,65 @@ final class TodoStore: ObservableObject {
         }
     }
 
+    func allItems(on day: LocalDay) -> [TodoItem] {
+        itemsByDay[day] ?? []
+    }
+
+    func schedules(on day: LocalDay) -> [DaySchedule] {
+        schedules.filter { $0.interval(on: day) != nil }
+    }
+
+    func schedules(for todoID: UUID) -> [DaySchedule] {
+        schedules.filter { $0.todoID == todoID }.sorted { $0.startMinute < $1.startMinute }
+    }
+
+    func scheduledMinutes(for todoID: UUID) -> Int {
+        schedules(for: todoID).reduce(0) { $0 + $1.durationMinutes }
+    }
+
+    @discardableResult
+    func upsertSchedule(_ schedule: DaySchedule) -> Bool {
+        guard schedule.isValid else { return false }
+        if let id = schedule.todoID {
+            guard items.first(where: { $0.id == id })?.dueDay == schedule.startDay else { return false }
+        }
+        var normalized = schedule
+        if case .independent(let title, let notes) = normalized.content {
+            normalized.content = .independent(title: title.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes)
+        }
+        return performUndoable(L10n.string(schedules.contains { $0.id == schedule.id } ? "编辑安排" : "添加安排")) {
+            if let index = schedules.firstIndex(where: { $0.id == schedule.id }) {
+                schedules[index] = normalized
+            } else {
+                schedules.append(normalized)
+            }
+        }
+    }
+
+    @discardableResult
+    func deleteSchedule(_ id: UUID) -> Bool {
+        performUndoable(L10n.string("移除安排")) { schedules.removeAll { $0.id == id } }
+    }
+
     func items(on date: Date) -> [TodoItem] {
         let dayItems = itemsByDay[LocalDay(date, timeZone: Calendar.current.timeZone)] ?? []
         return settings.showCompleted ? dayItems : dayItems.filter { !$0.isCompleted }
     }
 
+    enum ScheduleDateChange { case move, clear }
+
+    func needsScheduleDateDecision(_ item: TodoItem) -> Bool {
+        items.first(where: { $0.id == item.id })?.dueDay != item.dueDay
+            && schedules.contains { $0.todoID == item.id }
+    }
+
     @discardableResult
-    func upsert(_ item: TodoItem) -> Bool {
+    func upsert(_ item: TodoItem, scheduleDateChange: ScheduleDateChange? = nil) -> Bool {
         var copy = item
         copy.title = copy.normalizedTitle
-        guard !copy.title.isEmpty else { return false }
+        guard !copy.title.isEmpty, copy.estimatedMinutes.map({ $0 > 0 }) ?? true else { return false }
+        let changesScheduledDate = needsScheduleDateDecision(copy)
+        guard !changesScheduledDate || scheduleDateChange != nil else { return false }
 
         let isEditing = items.contains { $0.id == copy.id }
 
@@ -237,6 +298,15 @@ final class TodoStore: ObservableObject {
         }
 
         return performUndoable(L10n.string(isEditing ? "编辑待办" : "添加待办")) {
+            if changesScheduledDate {
+                if scheduleDateChange == .move, let day = copy.dueDay {
+                    for index in schedules.indices where schedules[index].todoID == copy.id {
+                        schedules[index].startDay = day
+                    }
+                } else {
+                    schedules.removeAll { $0.todoID == copy.id }
+                }
+            }
             if let index = items.firstIndex(where: { $0.id == copy.id }) {
                 items[index] = copy
             } else {
@@ -352,6 +422,7 @@ final class TodoStore: ObservableObject {
     func delete(_ item: TodoItem) -> Bool {
         performUndoable(L10n.string("删除待办")) {
             items.removeAll { $0.id == item.id }
+            schedules.removeAll { $0.todoID == item.id }
         }
     }
 
@@ -360,6 +431,8 @@ final class TodoStore: ObservableObject {
         performUndoable(L10n.string("删除项目")) {
             switch strategy {
             case .deleteTasks:
+                let removedIDs = Set(items.filter { $0.projectID == project.id }.map(\.id))
+                schedules.removeAll { $0.todoID.map(removedIDs.contains) ?? false }
                 items.removeAll { $0.projectID == project.id }
             case .keepTasks:
                 items = items.map { item in
@@ -581,6 +654,11 @@ final class TodoStore: ObservableObject {
             }
             return copy
         }
+        let validItems = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        schedules = snapshot.schedules.filter { schedule in
+            guard let id = schedule.todoID else { return true }
+            return validItems[id]?.dueDay == schedule.startDay
+        }
         settings = preservingSettings ? currentSettings : snapshot.settings
         isLoading = false
         rebuildIndexes()
@@ -613,7 +691,7 @@ final class TodoStore: ObservableObject {
     }
 
     private func currentSnapshot() -> Snapshot {
-        Snapshot(items: items, projects: projects, tags: tags, settings: settings)
+        Snapshot(items: items, projects: projects, tags: tags, settings: settings, schedules: schedules)
     }
 
     @discardableResult

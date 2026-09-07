@@ -32,6 +32,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: TodoStore
     @Environment(\.undoManager) private var undoManager
     @State private var selection: SidebarDestination? = .today
+    @State private var planningDay = LocalDay(.now)
     @State private var editingItem: TodoItem?
     @State private var editingProject: TodoProject?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -64,7 +65,7 @@ struct ContentView: View {
             Group {
                 switch selection ?? .today {
                 case .today:
-                    TodayView(editingItem: $editingItem)
+                    TodayView(editingItem: $editingItem, selectedDay: $planningDay)
                 case .all:
                     AllTodosView(
                         editingItem: $editingItem,
@@ -102,7 +103,7 @@ struct ContentView: View {
                         Button {
                             editingItem = TodoItem(
                                 title: "",
-                                dueDate: selection == .today ? .now : nil,
+                                dueDate: selection == .today ? planningDay.date() : nil,
                                 priority: store.settings.defaultPriority
                             )
                         } label: {
@@ -141,7 +142,7 @@ struct ContentView: View {
                     guard store.canModify else { return }
                     editingItem = TodoItem(
                         title: "",
-                        dueDate: selection == .today ? .now : nil,
+                        dueDate: selection == .today ? planningDay.date() : nil,
                         priority: store.settings.defaultPriority
                     )
                 },
@@ -171,6 +172,9 @@ struct ContentView: View {
                 project: project,
                 isEditing: store.projects.contains { $0.id == project.id }
             ) { store.upsertProject($0) }
+        }
+        .onChange(of: selection) { old, new in
+            if new == .today && old != .today { planningDay = LocalDay(.now) }
         }
         .onAppear {
             store.undoManager = undoManager

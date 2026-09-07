@@ -3,6 +3,13 @@ import XCTest
 @testable import DayVDO
 
 final class CoreExperienceTests: XCTestCase {
+    @MainActor
+    func testDefaultStoreUsesProductionApplicationSupportDirectory() {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        XCTAssertEqual(TodoStore.defaultFileURL,
+                       base.appendingPathComponent("DayVDO", isDirectory: true).appendingPathComponent("todos.json"))
+    }
+
     func testLocalDayRoundTripsAndStaysTheSameAcrossTimeZones() throws {
         let day = LocalDay(year: 2026, month: 9, day: 2)
         let encoded = try JSONEncoder().encode(day)
@@ -56,7 +63,7 @@ final class CoreExperienceTests: XCTestCase {
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: location.file)) as? [String: Any]
         )
-        XCTAssertEqual(object["version"] as? Int, 2)
+        XCTAssertEqual(object["version"] as? Int, 3)
         let items = try XCTUnwrap(object["items"] as? [[String: Any]])
         XCTAssertNotNil(items.first?["dueDate"] as? String)
     }

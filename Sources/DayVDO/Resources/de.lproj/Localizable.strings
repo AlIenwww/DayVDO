@@ -69,3 +69,89 @@
 "正在载入待办…" = "Aufgaben werden geladen…";
 "今天的待办已完成" = "Die heutigen Aufgaben sind erledigt";
 "已完成事项当前已隐藏。" = "Erledigte Aufgaben sind derzeit ausgeblendet.";
+
+"预计时长" = "Geschätzte Dauer";
+
+"小时" = "Std.";
+
+"分钟" = "Min.";
+"%lld 分钟" = "%lld Min.";
+
+"清除预计时长" = "Schätzung löschen";
+
+"请输入有效时长" = "Gültige Dauer eingeben";
+
+"安排时间" = "Zeit einplanen";
+
+"安排名称" = "Name der Planung";
+
+"开始日期" = "Startdatum";
+
+"开始时间" = "Startzeit";
+
+"结束日期" = "Enddatum";
+
+"结束时间" = "Endzeit";
+
+"当天" = "Gleicher Tag";
+
+"次日" = "Folgetag";
+
+"使用 24 小时制，单段最长 24 小时。" = "24-Stunden-Format. Ein Block darf höchstens 24 Stunden dauern.";
+
+"请检查名称及起止时间。" = "Name sowie Start- und Endzeit prüfen.";
+
+"编辑原待办" = "Ursprüngliche Aufgabe bearbeiten";
+
+"编辑安排" = "Zeitblock bearbeiten";
+
+"添加安排" = "Zeitblock hinzufügen";
+
+"移除安排" = "Zeitblock entfernen";
+
+"未安排" = "Nicht eingeplant";
+
+"已安排" = "Eingeplant";
+
+"已安排 %lld / 预计 %lld 分钟" = "Geplant %lld / geschätzt %lld Min.";
+
+"已安排 %lld 分钟" = "Geplant %lld Min.";
+
+"收起时段" = "Weniger Zeiten anzeigen";
+
+"查看全部时段" = "Alle Zeiten anzeigen";
+
+"这一天暂无待办" = "Keine Aufgaben für diesen Tag";
+
+"当日规划" = "Tagesplanung";
+"日程" = "Zeitplan";
+
+"从前一天延续" = "Vom Vortag fortgesetzt";
+
+"延续至次日" = "Bis zum Folgetag";
+
+"拖动调整时长" = "Ziehen, um die Dauer zu ändern";
+
+"前一天" = "Vorheriger Tag";
+
+"后一天" = "Nächster Tag";
+
+"放大时间轴" = "Zeitleiste vergrößern";
+
+"缩小时间轴" = "Zeitleiste verkleinern";
+
+"已达到预计时长" = "Geschätzte Dauer erreicht";
+
+"继续安排 30 分钟" = "Weitere 30 Minuten einplanen";
+
+"这个待办已安排足够时间，仍要再添加一段吗？" = "Für diese Aufgabe ist genug Zeit eingeplant. Weiteren Block hinzufügen?";
+
+"修改日期会影响时间安排" = "Datumsänderung betrifft Zeitblöcke";
+
+"保留钟点移到新日期" = "Mit gleichen Uhrzeiten verschieben";
+
+"清除安排并保存" = "Zeitblöcke löschen und speichern";
+
+"取消日期将清除这个待办的全部时间安排。" = "Ohne Datum werden alle Zeitblöcke dieser Aufgabe gelöscht.";
+
+"可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Uhrzeiten am neuen Datum beibehalten oder Zeitblöcke für eine neue Planung löschen.";

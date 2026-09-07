@@ -1,5 +1,16 @@
 import SwiftUI
 
+extension TodoItem.Priority {
+    var swiftUIColor: Color {
+        switch self {
+        case .none: .secondary
+        case .low: .green
+        case .medium: .blue
+        case .high: .red
+        }
+    }
+}
+
 struct TaskTagDot: View {
     let tag: TaskTag
     var size: CGFloat = 8

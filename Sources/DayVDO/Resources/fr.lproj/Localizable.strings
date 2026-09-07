@@ -69,3 +69,89 @@
 "正在载入待办…" = "Chargement des tâches…";
 "今天的待办已完成" = "Les tâches du jour sont terminées";
 "已完成事项当前已隐藏。" = "Les tâches terminées sont actuellement masquées.";
+
+"预计时长" = "Durée estimée";
+
+"小时" = "h";
+
+"分钟" = "min";
+"%lld 分钟" = "%lld min";
+
+"清除预计时长" = "Effacer l’estimation";
+
+"请输入有效时长" = "Saisissez une durée valide";
+
+"安排时间" = "Planifier un créneau";
+
+"安排名称" = "Nom de l’activité";
+
+"开始日期" = "Date de début";
+
+"开始时间" = "Heure de début";
+
+"结束日期" = "Date de fin";
+
+"结束时间" = "Heure de fin";
+
+"当天" = "Même jour";
+
+"次日" = "Jour suivant";
+
+"使用 24 小时制，单段最长 24 小时。" = "Format 24 heures. Chaque créneau peut durer jusqu’à 24 heures.";
+
+"请检查名称及起止时间。" = "Vérifiez le nom et les heures de début et de fin.";
+
+"编辑原待办" = "Modifier la tâche d’origine";
+
+"编辑安排" = "Modifier le créneau";
+
+"添加安排" = "Ajouter un créneau";
+
+"移除安排" = "Retirer le créneau";
+
+"未安排" = "Non planifié";
+
+"已安排" = "Planifié";
+
+"已安排 %lld / 预计 %lld 分钟" = "Planifié %lld / estimé %lld min";
+
+"已安排 %lld 分钟" = "Planifié %lld min";
+
+"收起时段" = "Réduire les horaires";
+
+"查看全部时段" = "Voir tous les horaires";
+
+"这一天暂无待办" = "Aucune tâche ce jour-là";
+
+"当日规划" = "Planning du jour";
+"日程" = "Planning";
+
+"从前一天延续" = "Suite de la veille";
+
+"延续至次日" = "Se poursuit le lendemain";
+
+"拖动调整时长" = "Faites glisser pour ajuster la durée";
+
+"前一天" = "Jour précédent";
+
+"后一天" = "Jour suivant";
+
+"放大时间轴" = "Agrandir la chronologie";
+
+"缩小时间轴" = "Réduire la chronologie";
+
+"已达到预计时长" = "Durée estimée atteinte";
+
+"继续安排 30 分钟" = "Ajouter 30 minutes";
+
+"这个待办已安排足够时间，仍要再添加一段吗？" = "Cette tâche dispose déjà d’assez de temps. Ajouter un créneau ?";
+
+"修改日期会影响时间安排" = "Le changement de date affecte les créneaux";
+
+"保留钟点移到新日期" = "Déplacer en gardant les heures";
+
+"清除安排并保存" = "Effacer les créneaux et enregistrer";
+
+"取消日期将清除这个待办的全部时间安排。" = "Retirer la date effacera tous les créneaux de cette tâche.";
+
+"可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Conservez les heures à la nouvelle date ou effacez les créneaux pour replanifier.";

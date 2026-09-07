@@ -65,6 +65,7 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
     }
     var priority: Priority
     var urgency: Urgency
+    var estimatedMinutes: Int?
     var isCompleted: Bool
     var createdAt: Date
     var completedAt: Date?
@@ -79,6 +80,7 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         dueDate: Date? = nil,
         priority: Priority = .none,
         urgency: Urgency = .none,
+        estimatedMinutes: Int? = nil,
         isCompleted: Bool = false,
         createdAt: Date = .now,
         completedAt: Date? = nil,
@@ -91,6 +93,7 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         self.notes = notes
         dueDay = dueDate.map { LocalDay($0) }
         self.priority = priority
+        self.estimatedMinutes = estimatedMinutes
         self.urgency = urgency
         self.isCompleted = isCompleted
         self.createdAt = createdAt
@@ -107,6 +110,7 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         case dueDate
         case priority
         case urgency
+        case estimatedMinutes
         case isCompleted
         case createdAt
         case completedAt
@@ -127,6 +131,8 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
             dueDay = legacyDate.map { LocalDay($0) }
         }
         priority = try container.decodeIfPresent(Priority.self, forKey: .priority) ?? .none
+        estimatedMinutes = try container.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
+        if let estimatedMinutes, estimatedMinutes <= 0 { self.estimatedMinutes = nil }
         urgency = try container.decodeIfPresent(Urgency.self, forKey: .urgency) ?? .none
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
@@ -144,6 +150,7 @@ struct TodoItem: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(dueDay, forKey: .dueDate)
         try container.encode(priority, forKey: .priority)
         try container.encode(urgency, forKey: .urgency)
+        try container.encodeIfPresent(estimatedMinutes, forKey: .estimatedMinutes)
         try container.encode(isCompleted, forKey: .isCompleted)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encodeIfPresent(completedAt, forKey: .completedAt)

@@ -154,7 +154,11 @@ struct TodoRow: View {
                 dateMetadata(dueDate)
             }
             if item.priority != .none {
-                statusMetadata(item.priority.title, systemImage: item.priority.symbolName)
+                statusMetadata(
+                    item.priority.title,
+                    systemImage: item.priority.symbolName,
+                    iconColor: item.priority.swiftUIColor
+                )
             }
             if item.urgency != .none {
                 statusMetadata(item.urgency.title, systemImage: item.urgency.symbolName)
@@ -184,7 +188,11 @@ struct TodoRow: View {
                     .lineLimit(1)
             }
             if item.priority != .none {
-                statusMetadata(item.priority.title, systemImage: item.priority.symbolName)
+                statusMetadata(
+                    item.priority.title,
+                    systemImage: item.priority.symbolName,
+                    iconColor: item.priority.swiftUIColor
+                )
             }
             if item.urgency != .none {
                 statusMetadata(item.urgency.title, systemImage: item.urgency.symbolName)
@@ -211,9 +219,17 @@ struct TodoRow: View {
         .lineLimit(1)
     }
 
-    private func statusMetadata(_ title: String, systemImage: String) -> some View {
-        Label(L10n.string(title), systemImage: systemImage)
-            .lineLimit(1)
+    private func statusMetadata(
+        _ title: String,
+        systemImage: String,
+        iconColor: Color = .secondary
+    ) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .foregroundStyle(iconColor)
+            Text(L10n.string(title))
+        }
+        .lineLimit(1)
     }
 }
 
