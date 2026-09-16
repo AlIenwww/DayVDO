@@ -63,8 +63,9 @@ final class CoreExperienceTests: XCTestCase {
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: location.file)) as? [String: Any]
         )
-        XCTAssertEqual(object["version"] as? Int, 3)
+        XCTAssertEqual(object["version"] as? Int, 4)
         let items = try XCTUnwrap(object["items"] as? [[String: Any]])
+        XCTAssertNotNil(items.first?["startDate"] as? String)
         XCTAssertNotNil(items.first?["dueDate"] as? String)
     }
 

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct TodayView: View {
@@ -87,7 +88,11 @@ struct TodayView: View {
     }
 
     private var todoPanel: some View {
-        PlanningTodoPanel(day: selectedDay, edit: { editingItem = $0 })
+        PlanningTodoPanel(
+            day: selectedDay,
+            today: LocalDay(now),
+            edit: { editingItem = $0 }
+        )
     }
 
     private func dateHeader(narrow: Bool) -> some View {
@@ -125,7 +130,7 @@ struct TodayView: View {
     }
 
     private func requestSchedule(_ id: UUID, at minute: Int) {
-        guard let todo = store.items.first(where: { $0.id == id }), todo.dueDay == selectedDay else { return }
+        guard let todo = store.items.first(where: { $0.id == id }) else { return }
         let scheduled = store.scheduledMinutes(for: id)
         let duration = DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled)
         let schedule = DaySchedule(startDay: selectedDay, startMinute: minute,

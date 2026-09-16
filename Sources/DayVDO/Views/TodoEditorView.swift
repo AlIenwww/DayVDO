@@ -5,9 +5,9 @@ struct TodoEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: TodoStore
     @State private var draft: TodoItem
-    @State private var hasDueDate: Bool
-    @State private var isShowingDatePicker = false
-    @State private var showsScheduleDecision = false
+    @State private var dateInput: TaskDateInput
+    @State private var isShowingStartDatePicker = false
+    @State private var isShowingDeadlinePicker = false
     @State private var isEstimateValid = true
     @FocusState private var titleIsFocused: Bool
 
@@ -16,7 +16,7 @@ struct TodoEditorView: View {
 
     init(item: TodoItem, isEditing: Bool, onSave: @escaping (TodoItem) -> Bool) {
         _draft = State(initialValue: item)
-        _hasDueDate = State(initialValue: item.dueDate != nil)
+        _dateInput = State(initialValue: TaskDateInput(item: item))
         self.isEditing = isEditing
         self.onSave = onSave
     }
@@ -27,7 +27,7 @@ struct TodoEditorView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(editorTitle)
                         .font(.title2.weight(.semibold))
-                    Text(L10n.string("记录任务，并选择它应当完成的日期。"))
+                    Text(L10n.string("记录任务，并按需要设置日期。"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -177,49 +177,50 @@ struct TodoEditorView: View {
 
                     Divider().padding(.leading, 50)
 
-                    HStack(spacing: 10) {
-                        Image(systemName: "calendar")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                        Text(L10n.string("日期"))
-                        Spacer()
-                        Toggle(L10n.string("设置日期"), isOn: $hasDueDate)
-                            .labelsHidden()
+                    VStack(spacing: 0) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "calendar")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
+                            Text(L10n.string("日期"))
+                            Spacer()
+                            Toggle(L10n.string("设置日期"), isOn: Binding(
+                                get: { dateInput.hasDate },
+                                set: { dateInput.setHasDate($0, defaultDay: draft.startDay ?? draft.dueDay ?? LocalDay(.now)) }
+                            ))
+                                .labelsHidden()
+                        }
+                        .padding(.horizontal, 20)
+                        .frame(height: 46)
 
-                        if hasDueDate {
-                            Button {
-                                isShowingDatePicker.toggle()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(
-                                        (draft.dueDate ?? .now).formatted(
-                                            .dateTime.year().month(.abbreviated).day().locale(L10n.locale)
-                                        )
-                                    )
-                                        .foregroundStyle(.primary)
-                                    Image(systemName: "chevron.down")
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .accessibilityHidden(true)
-                                }
-                                .contentShape(Rectangle())
+                        if dateInput.hasDate {
+                            Divider().padding(.leading, 50)
+                            dateRangeRow(
+                                title: L10n.string("任务日期"),
+                                day: dateInput.startDay ?? LocalDay(.now),
+                                isPresented: $isShowingStartDatePicker,
+                                confirm: { dateInput.confirmTaskDay() }
+                            ) { dateInput.chooseTaskDay(LocalDay($0)) }
+
+                            if dateInput.showsEndDate {
+                                Divider().padding(.leading, 50)
+                                dateRangeRow(
+                                    title: L10n.string("结束日期"),
+                                    day: dateInput.deadline ?? LocalDay(.now),
+                                    isPresented: $isShowingDeadlinePicker
+                                ) { dateInput.chooseEndDay(LocalDay($0)) }
                             }
-                            .buttonStyle(.plain)
-                            .popover(isPresented: $isShowingDatePicker, arrowEdge: .bottom) {
-                                BorderlessCalendarPicker(
-                                    selection: Binding(
-                                        get: { draft.dueDate ?? .now },
-                                        set: { draft.dueDate = $0 }
-                                    ),
-                                    startsOnMonday: store.settings.startWeekOnMonday
-                                )
-                                .fixedSize()
-                                .padding(10)
+
+                            if !dateInput.isValid {
+                                Text(L10n.string("结束日期不能早于任务日期。"))
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 50)
+                                    .padding(.bottom, 8)
                             }
                         }
                     }
-                    .padding(.horizontal, 20)
-                    .frame(height: 46)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .top)
@@ -232,7 +233,12 @@ struct TodoEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(L10n.string("保存")) { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft.normalizedTitle.isEmpty || !store.canModify || !isEstimateValid)
+                    .disabled(
+                        draft.normalizedTitle.isEmpty
+                            || !store.canModify
+                            || !isEstimateValid
+                            || !dateInput.isValid
+                    )
             }
             .controlSize(.regular)
             .padding(.horizontal, 20)
@@ -244,35 +250,72 @@ struct TodoEditorView: View {
             await Task.yield()
             titleIsFocused = true
         }
-        .alert(L10n.string("修改日期会影响时间安排"), isPresented: $showsScheduleDecision) {
-            if draft.dueDay != nil {
-                Button(L10n.string("保留钟点移到新日期")) {
-                    if store.upsert(draft, scheduleDateChange: .move) { dismiss() }
-                }
-            }
-            Button(L10n.string("清除安排并保存"), role: .destructive) {
-                if store.upsert(draft, scheduleDateChange: .clear) { dismiss() }
-            }
-            Button(L10n.string("取消"), role: .cancel) {}
-        } message: {
-            Text(L10n.string(draft.dueDay == nil
-                ? "取消日期将清除这个待办的全部时间安排。"
-                : "可以保留各段钟点迁移到新日期，或清除安排后重新规划。"))
-        }
-        .onChange(of: hasDueDate) { _, enabled in
-            draft.dueDate = enabled ? (draft.dueDate ?? .now) : nil
-        }
     }
 
     private func save() {
-        if !hasDueDate { draft.dueDate = nil }
-        if store.needsScheduleDateDecision(draft) {
-            showsScheduleDecision = true
-            return
-        }
-        if onSave(draft) || (store.canModify && store.items.contains(draft)) {
+        let candidate = dateInput.applying(to: draft)
+        guard dateInput.isValid, candidate.hasValidDateRange else { return }
+        if onSave(candidate) || (store.canModify && store.items.contains(candidate)) {
             dismiss()
         }
+    }
+
+    private func dateRangeRow(
+        title: String,
+        day: LocalDay,
+        isPresented: Binding<Bool>,
+        confirm: (() -> Void)? = nil,
+        update: @escaping (Date) -> Void
+    ) -> some View {
+        HStack(spacing: 10) {
+            Color.clear.frame(width: 20, height: 1)
+            Text(title)
+            Spacer()
+            Button {
+                isPresented.wrappedValue.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Text(
+                        day.date().formatted(
+                            .dateTime.year().month(.abbreviated).day().locale(L10n.locale)
+                        )
+                    )
+                    .foregroundStyle(.primary)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityValue(
+                day.date().formatted(.dateTime.year().month(.abbreviated).day().locale(L10n.locale))
+            )
+            .popover(isPresented: isPresented, arrowEdge: .bottom) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    BorderlessCalendarPicker(
+                        selection: Binding(
+                            get: { day.date() },
+                            set: { newDate in update(newDate) }
+                        ),
+                        startsOnMonday: store.settings.startWeekOnMonday
+                    )
+                    .fixedSize()
+                    if let confirm {
+                        Button(L10n.string("完成")) {
+                            confirm()
+                            isPresented.wrappedValue = false
+                        }
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+                .padding(10)
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 42)
     }
 
     private var optionWidth: CGFloat {

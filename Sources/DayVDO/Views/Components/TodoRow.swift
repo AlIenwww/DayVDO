@@ -42,18 +42,17 @@ struct TodoRow: View {
                     _ = store.toggle(item)
                 }
             } label: {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                TodoStatusIcon(status: item.status)
                     .font(.title3)
                     .frame(
                         width: TopLevelTodoRowMetrics.statusWidth,
                         height: TopLevelTodoRowMetrics.statusWidth
                     )
-                    .foregroundStyle(item.isCompleted ? Color.accentColor : .secondary)
-                    .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
             .disabled(!store.canModify)
             .accessibilityLabel(L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成"))
+            .contextMenu { TodoStatusMenuItems(item: item) }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
@@ -92,9 +91,8 @@ struct TodoRow: View {
         .disabled(!store.canModify)
         .contextMenu {
             Button(L10n.string("编辑"), systemImage: "pencil", action: onEdit)
-            Button(L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成"), systemImage: "checkmark.circle") {
-                _ = store.toggle(item)
-            }
+            Divider()
+            TodoStatusMenuItems(item: item)
             Divider()
             Button(L10n.string("删除"), systemImage: "trash", role: .destructive) {
                 requestDeletion()
@@ -112,12 +110,21 @@ struct TodoRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(item.title)
-        .accessibilityValue(L10n.string(item.isCompleted ? "已完成" : "待完成"))
+        .accessibilityValue(L10n.string(item.status.title))
         .accessibilityAction(named: L10n.string("编辑"), onEdit)
         .accessibilityAction(
             named: L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成")
         ) {
             _ = store.toggle(item)
+        }
+        .accessibilityAction(named: L10n.string("标记为未开始")) {
+            _ = store.setStatus(.notStarted, for: item)
+        }
+        .accessibilityAction(named: L10n.string("标记为进行中")) {
+            _ = store.setStatus(.inProgress, for: item)
+        }
+        .accessibilityAction(named: L10n.string("标记为已完成")) {
+            _ = store.setStatus(.completed, for: item)
         }
     }
 
@@ -131,7 +138,7 @@ struct TodoRow: View {
 
     private var hasTopLevelMetadata: Bool {
         store.tag(withID: item.tagID) != nil
-            || (showsDate && item.dueDate != nil)
+            || (showsDate && item.startDay != nil)
             || item.priority != .none
             || item.urgency != .none
             || !item.notes.isEmpty
@@ -140,7 +147,7 @@ struct TodoRow: View {
     private var hasStandardMetadata: Bool {
         store.tag(withID: item.tagID) != nil
             || (showsProject && store.project(withID: item.projectID) != nil)
-            || (showsDate && item.dueDate != nil)
+            || (showsDate && item.startDay != nil)
             || !item.notes.isEmpty
             || item.priority != .none
             || item.urgency != .none
@@ -150,8 +157,8 @@ struct TodoRow: View {
         HStack(spacing: 8) {
             tagMetadata
 
-            if showsDate, let dueDate = item.dueDate {
-                dateMetadata(dueDate)
+            if showsDate, item.startDay != nil {
+                dateRangeMetadata
             }
             if item.priority != .none {
                 statusMetadata(
@@ -180,8 +187,8 @@ struct TodoRow: View {
                 Label(project.title, systemImage: "folder")
                     .lineLimit(1)
             }
-            if showsDate, let dueDate = item.dueDate {
-                dateMetadata(dueDate)
+            if showsDate, item.startDay != nil {
+                dateRangeMetadata
             }
             if !item.notes.isEmpty {
                 Label(L10n.string("有备注"), systemImage: "text.alignleft")
@@ -209,11 +216,27 @@ struct TodoRow: View {
         }
     }
 
-    private func dateMetadata(_ date: Date) -> some View {
-        Label(
-            date.formatted(
+    private var dateRangeMetadata: some View {
+        let start = item.startDay?.date()
+        let deadline = item.dueDay?.date()
+        let text: String
+        if let start, let deadline, item.startDay != item.dueDay {
+            let startText = start.formatted(
                 .dateTime.year().month(.abbreviated).day().locale(L10n.locale)
-            ),
+            )
+            let endText = deadline.formatted(
+                .dateTime.year().month(.abbreviated).day().locale(L10n.locale)
+            )
+            text = "\(startText) – \(endText)"
+        } else if let date = start ?? deadline {
+            text = date.formatted(
+                .dateTime.year().month(.abbreviated).day().locale(L10n.locale)
+            )
+        } else {
+            text = ""
+        }
+        return Label(
+            text,
             systemImage: "calendar"
         )
         .lineLimit(1)

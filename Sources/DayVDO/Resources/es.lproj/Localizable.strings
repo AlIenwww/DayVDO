@@ -129,6 +129,7 @@
 "从前一天延续" = "Continúa del día anterior";
 
 "延续至次日" = "Continúa al día siguiente";
+"正在进行" = "En curso";
 
 "拖动调整时长" = "Arrastra para ajustar la duración";
 
@@ -155,3 +156,16 @@
 "取消日期将清除这个待办的全部时间安排。" = "Quitar la fecha borrará todos los bloques de esta tarea.";
 
 "可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Conserva las horas en la nueva fecha o borra los bloques para planificar de nuevo.";
+
+"未开始" = "Sin empezar";
+"进行中" = "En curso";
+"标记为未开始" = "Marcar como sin empezar";
+"标记为进行中" = "Marcar como en curso";
+"日期范围" = "Intervalo de fechas";
+"设置日期范围" = "Definir intervalo";
+"记录任务，并选择它的开始日和截止日。" = "Describe la tarea y elige su fecha de inicio y de vencimiento.";
+"截止日期不能早于开始日期。" = "La fecha de vencimiento no puede ser anterior a la de inicio.";
+"逾期" = "Atrasada";
+"任务日期" = "Fecha de la tarea";
+"结束日期不能早于任务日期。" = "La fecha de fin no puede ser anterior a la fecha de la tarea.";
+"记录任务，并按需要设置日期。" = "Describe la tarea y define las fechas si es necesario.";

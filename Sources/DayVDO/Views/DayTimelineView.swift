@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -36,6 +37,9 @@ struct DayTimelineView: View {
     @State private var viewportWidth: CGFloat = 400
     @State private var selectedID: UUID?
     @State private var magnificationBase: CGFloat?
+    @State private var magnificationAnchor: TimelineZoomAnchor?
+    @State private var zoomTarget: CGFloat?
+    @State private var previousMagnification: CGFloat = 1
     @State private var interaction: Interaction?
     @State private var preview: DaySchedule?
     @State private var createRange: Range<Int>?
@@ -47,6 +51,7 @@ struct DayTimelineView: View {
     @State private var cancellation = TimelineDragCancellation()
     @FocusState private var isFocused: Bool
     private let ticker = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    private let zoomTicker = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
     private let gutter: CGFloat = 54
 
     private struct Interaction {
@@ -57,12 +62,17 @@ struct DayTimelineView: View {
     }
     private enum Mode { case move, start, end, create }
     private var pixelsPerMinute: CGFloat { hourHeight / 60 }
+    private var currentMinute: Int {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: now)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+    }
     private var displayed: [DaySchedule] {
         store.schedules(on: day).map { $0.id == preview?.id ? preview! : $0 }
     }
 
     var body: some View {
         GeometryReader { geometry in
+            let placements = DayPlanningPolicy.placements(displayed, on: day)
             ScrollView(.vertical) {
                 ZStack(alignment: .topLeading) {
                     grid(width: geometry.size.width)
@@ -72,9 +82,7 @@ struct DayTimelineView: View {
                         .offset(x: gutter)
                         .gesture(creationGesture)
                     if day == LocalDay(now) {
-                        let components = Calendar.current.dateComponents([.hour, .minute], from: now)
-                        let minute = (components.hour ?? 0) * 60 + (components.minute ?? 0)
-                        let lineY = CGFloat(minute) * pixelsPerMinute
+                        let lineY = CGFloat(currentMinute) * pixelsPerMinute
                         Rectangle()
                             .fill(.red)
                             .frame(width: max(1, geometry.size.width - gutter), height: 1)
@@ -92,7 +100,7 @@ struct DayTimelineView: View {
                         .offset(x: gutter)
                         .allowsHitTesting(false)
                     }
-                    ForEach(DayPlanningPolicy.placements(displayed, on: day)) { placement in
+                    ForEach(placements) { placement in
                         if let schedule = displayed.first(where: { $0.id == placement.id }) {
                             scheduleBlock(schedule, placement: placement, width: geometry.size.width)
                         }
@@ -102,10 +110,8 @@ struct DayTimelineView: View {
                         previewBand(minute..<(minute + externalDuration), width: geometry.size.width)
                     }
                     if day == LocalDay(now) {
-                        let components = Calendar.current.dateComponents([.hour, .minute], from: now)
-                        let minute = (components.hour ?? 0) * 60 + (components.minute ?? 0)
-                        let lineY = CGFloat(minute) * pixelsPerMinute
-                        Text(SchedulePresentation.clock(minute))
+                        let lineY = CGFloat(currentMinute) * pixelsPerMinute
+                        Text(SchedulePresentation.clock(currentMinute))
                             .font(.caption2.monospacedDigit().weight(.semibold))
                             .foregroundStyle(.red)
                             .frame(width: gutter - 8, alignment: .trailing)
@@ -123,6 +129,26 @@ struct DayTimelineView: View {
 
             }
             .scrollPosition($position)
+            .popover(
+                item: $presentation,
+                attachmentAnchor: .point(popoverAttachmentPoint(
+                    placements: placements,
+                    width: geometry.size.width,
+                    height: geometry.size.height
+                )),
+                arrowEdge: .trailing
+            ) { request in
+                if let latest = store.schedules.first(where: { $0.id == request.scheduleID }) {
+                    SchedulePopoverView(
+                        schedule: latest,
+                        startsEditing: request.mode == .editor,
+                        editTodo: editTodo,
+                        close: { presentation = nil }
+                    )
+                    .id(request.id)
+                }
+            }
+            .scrollDisabled(magnificationAnchor != nil)
             .coordinateSpace(name: "planningViewport")
             .contentShape(Rectangle())
             .onScrollGeometryChange(for: TimelineViewport.self) { value in
@@ -133,28 +159,72 @@ struct DayTimelineView: View {
             }
             .onAppear { viewportWidth = geometry.size.width; locate() }
             .onChange(of: geometry.size.width) { _, width in viewportWidth = width }
-            .onDisappear { cancel() }
-            .onChange(of: day) { _, _ in cancel(); selectedID = nil; presentation = nil; locate() }
-            .onChange(of: hourHeight) { old, new in
-                let centerMinute = (scrollOffset + viewportHeight / 2 - 12) / (old / 60)
-                position.scrollTo(y: max(0, centerMinute * (new / 60) + 12 - viewportHeight / 2))
+            .onDisappear {
+                cancel()
+                magnificationBase = nil
+                magnificationAnchor = nil
+                zoomTarget = nil
             }
+            .onChange(of: day) { _, _ in
+                cancel()
+                magnificationBase = nil
+                magnificationAnchor = nil
+                zoomTarget = nil
+                selectedID = nil
+                presentation = nil
+                locate()
+            }
+            .onChange(of: displayed) { _, latest in
+                guard let request = presentation else { return }
+                if !DayPlanningPolicy.placements(latest, on: day)
+                    .contains(where: { $0.id == request.scheduleID }) {
+                    presentation = nil
+                    if selectedID == request.scheduleID { selectedID = nil }
+                }
+            }
+            .onChange(of: scrollOffset) { _, _ in dismissOffscreenPopover() }
             .onReceive(ticker) { _ in
                 finishCancellationIfReleased()
                 autoScroll()
             }
+            .onReceive(zoomTicker) { _ in advanceZoom() }
             .simultaneousGesture(
                 MagnificationGesture()
                     .onChanged { scale in
-                        if magnificationBase == nil { magnificationBase = hourHeight }
-                        hourHeight = clampedHourHeight((magnificationBase ?? hourHeight) * scale)
+                        if magnificationBase == nil {
+                            magnificationBase = hourHeight
+                            previousMagnification = 1
+                            zoomTarget = hourHeight
+                            magnificationAnchor = TimelineZoomPolicy.anchor(
+                                scrollOffset: scrollOffset,
+                                viewportHeight: viewportHeight,
+                                hourHeight: hourHeight
+                            )
+                        }
+                        // Accumulate input against the bounded target so reversing
+                        // at a limit responds immediately, without a dead zone.
+                        zoomTarget = TimelineZoomPolicy.clampedHourHeight(
+                            (zoomTarget ?? hourHeight) * scale / max(0.001, previousMagnification)
+                        )
+                        previousMagnification = scale
                     }
-                    .onEnded { _ in magnificationBase = nil }
+                    .onEnded { _ in
+                        magnificationBase = nil
+                    }
             )
             .background {
                 TimelineControlScrollMonitor { delta, precise in
                     let sensitivity: CGFloat = precise ? 0.8 : 8
-                    hourHeight = clampedHourHeight(hourHeight + delta * sensitivity)
+                    if magnificationAnchor == nil {
+                        magnificationAnchor = TimelineZoomPolicy.anchor(
+                            scrollOffset: scrollOffset,
+                            viewportHeight: viewportHeight,
+                            hourHeight: hourHeight
+                        )
+                    }
+                    zoomTarget = TimelineZoomPolicy.clampedHourHeight(
+                        (zoomTarget ?? hourHeight) + delta * sensitivity
+                    )
                 }
             }
             .focusable().focusEffectDisabled().focused($isFocused)
@@ -178,7 +248,7 @@ struct DayTimelineView: View {
             }
             .onKeyPress(.return) {
                 guard let selected = store.schedules.first(where: { $0.id == selectedID }) else { return .ignored }
-                presentation = .editor(selected.id); return .handled
+                showSchedule(selected.id, mode: .editor); return .handled
             }
 
         }
@@ -265,16 +335,33 @@ struct DayTimelineView: View {
         let todo = store.items.first { $0.id == schedule.todoID }
         let complete = todo?.isCompleted == true
         let color = complete ? Color.secondary : todo.map { store.tag(withID: $0.tagID)?.color.color ?? .accentColor } ?? .secondary
+        let isInProgress = DayPlanningPolicy.isInProgress(
+            placement,
+            at: currentMinute,
+            onCurrentDay: day == LocalDay(now)
+        )
+        let cornerRadius = min(5, height / 2)
         return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: min(5, height / 2)).fill(color.opacity(0.14))
-            RoundedRectangle(cornerRadius: min(5, height / 2))
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(color.opacity(isInProgress ? 0.20 : 0.14))
+            if isInProgress {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.red.opacity(0.055))
+                Capsule()
+                    .fill(Color.red)
+                    .frame(width: 3, height: max(4, height - 6))
+                    .padding(.leading, 3)
+                    .padding(.top, 3)
+                    .accessibilityHidden(true)
+            }
+            RoundedRectangle(cornerRadius: cornerRadius)
                 .stroke(color.opacity(selectedID == schedule.id ? 0.9 : 0.35), lineWidth: selectedID == schedule.id ? 2 : 1)
             if height >= 14 {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         if let todo, height >= 24 {
                             Button { store.toggle(todo) } label: {
-                                Image(systemName: complete ? "checkmark.circle.fill" : "circle")
+                                TodoStatusIcon(status: todo.status)
                             }.buttonStyle(.plain)
                                 .accessibilityLabel(L10n.string(complete ? "标记为未完成" : "标记为已完成"))
                         }
@@ -302,10 +389,10 @@ struct DayTimelineView: View {
         .contentShape(Rectangle())
         .gesture(blockGesture(schedule, mode: .move))
         .onTapGesture(count: 2) {
-            selectedID = schedule.id; isFocused = true; presentation = .editor(schedule.id)
+            showSchedule(schedule.id, mode: .editor)
         }
         .onTapGesture {
-            selectedID = schedule.id; isFocused = true; presentation = .details(schedule.id)
+            showSchedule(schedule.id, mode: .details)
         }
         .overlay(alignment: .top) {
             if height >= 24 && schedule.startDay == day {
@@ -320,31 +407,29 @@ struct DayTimelineView: View {
         .offset(x: gutter + CGFloat(placement.column) * columnWidth,
                 y: CGFloat(placement.interval.lowerBound) * pixelsPerMinute)
         .contextMenu {
-            Button(L10n.string("编辑安排")) { presentation = .editor(schedule.id) }
+            if let todo {
+                TodoStatusMenuItems(item: todo)
+                Divider()
+            }
+            Button(L10n.string("编辑安排")) {
+                // Present after the native context menu has closed.
+                DispatchQueue.main.async { showSchedule(schedule.id, mode: .editor) }
+            }
             Button(L10n.string("移除安排"), role: .destructive) {
                 presentation = nil
                 store.deleteSchedule(schedule.id)
             }
         }
-        .popover(isPresented: presentationBinding(for: schedule.id), arrowEdge: .trailing) {
-            if let request = presentation, request.scheduleID == schedule.id,
-               let latest = store.schedules.first(where: { $0.id == schedule.id }) {
-                SchedulePopoverView(
-                    schedule: latest,
-                    startsEditing: request.mode == .editor,
-                    editTodo: editTodo,
-                    close: { presentation = nil }
-                )
-                .id(request.id)
-            }
-        }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(SchedulePresentation.title(schedule, store: store) + ", " + SchedulePresentation.time(schedule))
+        .accessibilityLabel(
+            SchedulePresentation.title(schedule, store: store)
+                + ", " + SchedulePresentation.time(schedule)
+                + (isInProgress ? ", " + L10n.string("正在进行") : "")
+        )
         .accessibilityAction {
-            selectedID = schedule.id
-            presentation = .details(schedule.id)
+            showSchedule(schedule.id, mode: .details)
         }
-        .accessibilityAction(named: Text(L10n.string("编辑安排"))) { presentation = .editor(schedule.id) }
+        .accessibilityAction(named: Text(L10n.string("编辑安排"))) { showSchedule(schedule.id, mode: .editor) }
         .accessibilityAction(named: Text(L10n.string("移除安排"))) {
             presentation = nil
             store.deleteSchedule(schedule.id)
@@ -363,15 +448,72 @@ struct DayTimelineView: View {
             .help(L10n.string("拖动调整时长"))
     }
 
-    private func clampedHourHeight(_ value: CGFloat) -> CGFloat {
-        min(180, max(45, value))
+    private func advanceZoom() {
+        guard let target = zoomTarget, let anchor = magnificationAnchor else { return }
+        let next = TimelineZoomPolicy.nextFrame(current: hourHeight, target: target)
+        applyZoom(to: next, keeping: anchor)
+        if next == target, magnificationBase == nil {
+            zoomTarget = nil
+            magnificationAnchor = nil
+        }
     }
 
-    private func presentationBinding(for id: UUID) -> Binding<Bool> {
-        Binding(
-            get: { presentation?.scheduleID == id },
-            set: { shown in if !shown, presentation?.scheduleID == id { presentation = nil } }
+    private func applyZoom(
+        to targetHourHeight: CGFloat,
+        keeping anchor: TimelineZoomAnchor
+    ) {
+        guard abs(targetHourHeight - hourHeight) > 0.001 else { return }
+        let targetOffset = TimelineZoomPolicy.scrollOffset(
+            keeping: anchor,
+            hourHeight: targetHourHeight,
+            viewportHeight: viewportHeight
         )
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            hourHeight = targetHourHeight
+            scrollOffset = targetOffset
+            position.scrollTo(y: targetOffset)
+        }
+    }
+
+    private func showSchedule(_ id: UUID, mode: SchedulePopoverRequest.Mode) {
+        guard displayed.contains(where: { $0.id == id && $0.interval(on: day) != nil }) else { return }
+        selectedID = id
+        isFocused = true
+        presentation = mode == .editor ? .editor(id) : .details(id)
+    }
+
+    /// Attach the native popover to the stable scroll viewport, not to a
+    /// disabled transparent overlay or a dynamic schedule block.
+    private func popoverAttachmentPoint(
+        placements: [DayPlanningPolicy.Placement],
+        width: CGFloat,
+        height: CGFloat
+    ) -> UnitPoint {
+        guard let placement = placements.first(where: { $0.id == presentation?.scheduleID }) else {
+            return .center
+        }
+        let available = max(1, width - gutter - 8)
+        let columnWidth = available / CGFloat(placement.columnCount)
+        let blockHeight = CGFloat(placement.interval.count) * pixelsPerMinute
+        let x = gutter + CGFloat(placement.column + 1) * columnWidth - 10
+        let y = CGFloat(placement.interval.lowerBound) * pixelsPerMinute
+            + 12 - scrollOffset + min(20, blockHeight / 2)
+        return UnitPoint(
+            x: min(0.98, max(0.02, x / max(1, width))),
+            y: min(0.98, max(0.02, y / max(1, height)))
+        )
+    }
+
+    private func dismissOffscreenPopover() {
+        guard let request = presentation,
+              let placement = DayPlanningPolicy.placements(displayed, on: day)
+                .first(where: { $0.id == request.scheduleID }) else { return }
+        let top = CGFloat(placement.interval.lowerBound) * pixelsPerMinute + 12 - scrollOffset
+        let bottom = CGFloat(placement.interval.upperBound) * pixelsPerMinute + 12 - scrollOffset
+        if bottom < 0 || top > viewportHeight { presentation = nil }
     }
 
     private var dragTimeLabel: String? {

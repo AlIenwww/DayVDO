@@ -129,6 +129,7 @@
 "从前一天延续" = "Vom Vortag fortgesetzt";
 
 "延续至次日" = "Bis zum Folgetag";
+"正在进行" = "In Bearbeitung";
 
 "拖动调整时长" = "Ziehen, um die Dauer zu ändern";
 
@@ -155,3 +156,16 @@
 "取消日期将清除这个待办的全部时间安排。" = "Ohne Datum werden alle Zeitblöcke dieser Aufgabe gelöscht.";
 
 "可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Uhrzeiten am neuen Datum beibehalten oder Zeitblöcke für eine neue Planung löschen.";
+
+"未开始" = "Nicht begonnen";
+"进行中" = "In Bearbeitung";
+"标记为未开始" = "Als nicht begonnen markieren";
+"标记为进行中" = "Als in Bearbeitung markieren";
+"日期范围" = "Datumsbereich";
+"设置日期范围" = "Datumsbereich festlegen";
+"记录任务，并选择它的开始日和截止日。" = "Beschreibe die Aufgabe und wähle Start- und Fälligkeitsdatum.";
+"截止日期不能早于开始日期。" = "Das Fälligkeitsdatum darf nicht vor dem Startdatum liegen.";
+"逾期" = "Überfällig";
+"任务日期" = "Aufgabendatum";
+"结束日期不能早于任务日期。" = "Das Enddatum darf nicht vor dem Aufgabendatum liegen.";
+"记录任务，并按需要设置日期。" = "Beschreibe die Aufgabe und lege bei Bedarf Daten fest.";

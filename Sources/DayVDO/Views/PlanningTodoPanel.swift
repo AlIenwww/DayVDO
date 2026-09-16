@@ -37,17 +37,19 @@ enum PlanningTodoPanelPolicy {
 struct PlanningTodoPanel: View {
     @EnvironmentObject private var store: TodoStore
     let day: LocalDay
+    let today: LocalDay
     var edit: (TodoItem) -> Void
+    @Namespace private var cardPositions
     @State private var selectedID: UUID?
     @State private var expandedSections = Set(
         PlanningTodoSectionKind.allCases.filter(\.isExpandedByDefault)
     )
 
-    private var dayItems: [TodoItem] { store.allItems(on: day) }
+    private var dayItems: [TodoItem] { store.planningItems(on: day, today: today) }
     private var sections: [PlanningTodoSection] {
         PlanningTodoPanelPolicy.sections(
             items: dayItems,
-            schedules: store.schedules,
+            schedules: store.schedules(on: day),
             showCompleted: store.settings.showCompleted
         )
     }
@@ -61,14 +63,16 @@ struct PlanningTodoPanel: View {
                             if expandedSections.contains(section.kind) {
                                 ForEach(section.items) { item in
                                     PlanningTodoRow(
-                                        item: item,
-                                        sectionKind: section.kind,
+                                        snapshot: item,
+                                        day: day,
+                                        isOverdue: TaskDateRangePolicy.isOverdue(item, on: day, today: today),
                                         isSelected: selectedID == item.id,
                                         select: { selectedID = item.id },
                                         edit: edit
                                     )
+                                    .matchedGeometryEffect(id: item.id, in: cardPositions)
                                     .padding(.horizontal, 12).padding(.bottom, 10)
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                                    .transition(.opacity)
                                 }
                             }
                         } header: {
@@ -120,6 +124,8 @@ struct PlanningTodoPanel: View {
                             .padding(.vertical, 32)
                     }
                 }
+                .animation(.snappy(duration: 0.28), value: sections)
+                .id(day)
             }
         }
         .background(.background)
@@ -129,8 +135,9 @@ struct PlanningTodoPanel: View {
 
 private struct PlanningTodoRow: View {
     @EnvironmentObject private var store: TodoStore
-    let item: TodoItem
-    let sectionKind: PlanningTodoSectionKind
+    let snapshot: TodoItem
+    let day: LocalDay
+    let isOverdue: Bool
     let isSelected: Bool
     var select: () -> Void
     var edit: (TodoItem) -> Void
@@ -140,23 +147,46 @@ private struct PlanningTodoRow: View {
     @State private var confirmsDeletion = false
     @FocusState private var rowFocused: Bool
 
+    // Lazy sections can retain a row's input snapshot when it changes groups.
+    // Resolve its current model by stable identity for both content and actions.
+    private var item: TodoItem {
+        store.items.first { $0.id == snapshot.id } ?? snapshot
+    }
+
+    private var sectionKind: PlanningTodoSectionKind {
+        if item.isCompleted { return .completed }
+        return store.schedules(on: day).contains { $0.todoID == item.id }
+            ? .scheduled : .unscheduled
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Button { store.toggle(item) } label: {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isCompleted ? Color.secondary : Color.accentColor)
+                TodoStatusIcon(status: item.status)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(L10n.string(item.isCompleted ? "标记为未完成" : "标记为已完成"))
             .padding(.top, 2)
+            .contextMenu { TodoStatusMenuItems(item: item) }
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(item.title)
-                    .font(.body.weight(.medium))
-                    .lineLimit(2)
-                    .strikethrough(item.isCompleted)
-                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                    .layoutPriority(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.title)
+                        .font(.body.weight(.medium))
+                        .lineLimit(2)
+                        .strikethrough(item.isCompleted)
+                        .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                        .layoutPriority(1)
+                    if isOverdue {
+                        Text(L10n.string("逾期"))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.1), in: Capsule())
+                            .fixedSize()
+                    }
+                }
                 if let project = store.project(withID: item.projectID) {
                     Label(project.title, systemImage: "folder")
                         .lineLimit(1)
@@ -256,9 +286,16 @@ private struct PlanningTodoRow: View {
         .onHover { isHovered = $0 }
         .focusable()
         .focused($rowFocused)
+        .onKeyPress(.space) {
+            _ = store.toggle(item)
+            return .handled
+        }
         .onDrag { PlanningTodoTransfer.provider(for: item.id) }
         .contextMenu {
             Button(L10n.string("编辑待办")) { edit(item) }
+            Divider()
+            TodoStatusMenuItems(item: item)
+            Divider()
             Button(L10n.string("删除待办"), role: .destructive) {
                 if store.settings.confirmBeforeDeleting { confirmsDeletion = true }
                 else { store.delete(item) }
@@ -271,6 +308,16 @@ private struct PlanningTodoRow: View {
             Text(L10n.string("删除后可以从“编辑”菜单撤销。"))
         }
         .accessibilityElement(children: .contain)
+        .accessibilityValue(L10n.string(item.status.title))
+        .accessibilityAction(named: L10n.string("标记为未开始")) {
+            _ = store.setStatus(.notStarted, for: item)
+        }
+        .accessibilityAction(named: L10n.string("标记为进行中")) {
+            _ = store.setStatus(.inProgress, for: item)
+        }
+        .accessibilityAction(named: L10n.string("标记为已完成")) {
+            _ = store.setStatus(.completed, for: item)
+        }
         .accessibilityHint(
             Text(
                 [

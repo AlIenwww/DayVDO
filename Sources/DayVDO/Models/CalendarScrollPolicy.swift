@@ -33,6 +33,7 @@ enum CalendarScrollDestination: Equatable {
 enum CalendarScrollPolicy {
     static let stationaryThreshold: CGFloat = 0.01
     static let viewportResizeTolerance: CGFloat = 0.5
+    static let viewportAnchorTolerance: CGFloat = 0.1
     static let fastFlickVelocity: CGFloat = 3
     static let longFlickDistance: CGFloat = 2
     static let precisionDragMinimumDuration: TimeInterval = 0.35
@@ -51,6 +52,14 @@ enum CalendarScrollPolicy {
             return false
         }
         return abs(currentHeight - previousHeight) > viewportResizeTolerance
+    }
+
+    static func viewportHasSettled(
+        reportedRow: CGFloat,
+        at anchorRow: Int
+    ) -> Bool {
+        reportedRow.isFinite
+            && abs(reportedRow - CGFloat(anchorRow)) <= viewportAnchorTolerance
     }
 
     static func destination(

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 extension TodoItem.Priority {
@@ -37,6 +38,34 @@ struct TaskTagLabel: View {
     }
 }
 
+/// Native macOS menus do not reliably preserve custom SwiftUI shape fills.
+/// Supplying a non-template bitmap keeps each tag's original color in the menu.
+private struct TaskTagMenuDot: View {
+    let tag: TaskTag
+
+    var body: some View {
+        Image(nsImage: image)
+            .renderingMode(.original)
+            .accessibilityHidden(true)
+    }
+
+    private var image: NSImage {
+        let color = tag.color
+        let image = NSImage(size: NSSize(width: 9, height: 9), flipped: false) { rect in
+            NSColor(
+                srgbRed: color.red,
+                green: color.green,
+                blue: color.blue,
+                alpha: 1
+            ).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+}
+
 struct TaskTagPicker: View {
     @EnvironmentObject private var store: TodoStore
     @Binding var selection: UUID?
@@ -59,12 +88,15 @@ struct TaskTagPicker: View {
                     Button {
                         selection = tag.id
                     } label: {
-                        HStack {
-                            TaskTagDot(tag: tag, size: 9)
-                            Text(tag.name)
-                            if selection == tag.id {
-                                Image(systemName: "checkmark")
+                        Label {
+                            HStack {
+                                Text(tag.name)
+                                if selection == tag.id {
+                                    Image(systemName: "checkmark")
+                                }
                             }
+                        } icon: {
+                            TaskTagMenuDot(tag: tag)
                         }
                     }
                 }

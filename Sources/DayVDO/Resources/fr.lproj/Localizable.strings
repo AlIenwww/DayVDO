@@ -129,6 +129,7 @@
 "从前一天延续" = "Suite de la veille";
 
 "延续至次日" = "Se poursuit le lendemain";
+"正在进行" = "En cours";
 
 "拖动调整时长" = "Faites glisser pour ajuster la durée";
 
@@ -155,3 +156,16 @@
 "取消日期将清除这个待办的全部时间安排。" = "Retirer la date effacera tous les créneaux de cette tâche.";
 
 "可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Conservez les heures à la nouvelle date ou effacez les créneaux pour replanifier.";
+
+"未开始" = "Non commencée";
+"进行中" = "En cours";
+"标记为未开始" = "Marquer comme non commencée";
+"标记为进行中" = "Marquer comme en cours";
+"日期范围" = "Plage de dates";
+"设置日期范围" = "Définir une plage";
+"记录任务，并选择它的开始日和截止日。" = "Décrivez la tâche et choisissez ses dates de début et d’échéance.";
+"截止日期不能早于开始日期。" = "L’échéance ne peut pas précéder la date de début.";
+"逾期" = "En retard";
+"任务日期" = "Date de la tâche";
+"结束日期不能早于任务日期。" = "La date de fin ne peut pas précéder la date de la tâche.";
+"记录任务，并按需要设置日期。" = "Décrivez la tâche et définissez des dates si besoin.";

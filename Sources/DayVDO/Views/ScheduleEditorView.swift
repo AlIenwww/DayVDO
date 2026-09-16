@@ -93,13 +93,9 @@ struct ScheduleEditorView: View {
                 TextField(L10n.string("备注"), text: $notes, axis: .vertical).lineLimit(2...5)
             }
             Divider()
-            if draft.todoID == nil {
-                DatePicker(L10n.string("开始日期"), selection: Binding(
-                    get: { draft.startDay.date() }, set: { draft.startDay = LocalDay($0) }
-                ), displayedComponents: .date)
-            } else {
-                LabeledContent(L10n.string("开始日期"), value: draft.startDay.date().formatted(date: .abbreviated, time: .omitted))
-            }
+            DatePicker(L10n.string("开始日期"), selection: Binding(
+                get: { draft.startDay.date() }, set: { draft.startDay = LocalDay($0) }
+            ), displayedComponents: .date)
             HStack {
                 Text(L10n.string("开始时间"))
                 Spacer()
@@ -162,7 +158,15 @@ struct ScheduleDetailsView: View {
             let notes = SchedulePresentation.notes(schedule, store: store)
             if !notes.isEmpty { Text(notes).textSelection(.enabled) }
             if let todo = store.items.first(where: { $0.id == schedule.todoID }) {
-                Button(L10n.string(todo.isCompleted ? "标记为未完成" : "标记为已完成")) { store.toggle(todo) }
+                Button {
+                    _ = store.toggle(todo)
+                } label: {
+                    HStack(spacing: 6) {
+                        TodoStatusIcon(status: todo.status)
+                        Text(L10n.string(todo.status.title))
+                    }
+                }
+                .contextMenu { TodoStatusMenuItems(item: todo) }
                 Button(L10n.string("编辑原待办")) { editTodo(todo) }
             }
             HStack {

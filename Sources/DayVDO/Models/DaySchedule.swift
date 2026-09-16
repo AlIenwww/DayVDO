@@ -73,6 +73,10 @@ enum DayPlanningPolicy {
         return min(1440, estimated - scheduled)
     }
 
+    static func isInProgress(_ placement: Placement, at minute: Int, onCurrentDay: Bool) -> Bool {
+        onCurrentDay && placement.interval.contains(minute)
+    }
+
     /// Connected overlap groups have stable, equal-width columns. Touching edges do not overlap.
     static func placements(_ schedules: [DaySchedule], on day: LocalDay) -> [Placement] {
         let sorted = schedules.compactMap { schedule -> (UUID, Range<Int>)? in

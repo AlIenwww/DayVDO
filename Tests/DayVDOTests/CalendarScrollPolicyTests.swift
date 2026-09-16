@@ -17,6 +17,15 @@ final class CalendarScrollPolicyTests: XCTestCase {
         )
     }
 
+    func testViewportResizeAnchorRejectsTransientGeometryUntilSettled() {
+        XCTAssertFalse(
+            CalendarScrollPolicy.viewportHasSettled(reportedRow: -23, at: 12)
+        )
+        XCTAssertTrue(
+            CalendarScrollPolicy.viewportHasSettled(reportedRow: 12.05, at: 12)
+        )
+    }
+
     func testStationaryGestureDoesNotChooseANewDestination() {
         XCTAssertEqual(
             destination(start: 12, current: 12.005, duration: 0.2, velocity: 0),

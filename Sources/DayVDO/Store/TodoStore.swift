@@ -62,7 +62,7 @@ final class TodoStore: ObservableObject {
     }
 
     private struct Snapshot: Codable, Sendable, Equatable {
-        static let currentVersion = 3
+        static let currentVersion = 4
 
         var version: Int
         var items: [TodoItem]
@@ -110,6 +110,7 @@ final class TodoStore: ObservableObject {
             tags = try container.decodeIfPresent([TaskTag].self, forKey: .tags) ?? []
             schedules = try container.decodeIfPresent([DaySchedule].self, forKey: .schedules) ?? []
             guard schedules.allSatisfy(\.isValid),
+                  items.allSatisfy(\.hasValidDateRange),
                   Set(schedules.map(\.id)).count == schedules.count,
                   Set(items.map(\.id)).count == items.count else {
                 throw DecodingError.dataCorruptedError(forKey: .schedules, in: container, debugDescription: "Invalid schedule or duplicate identifier")
@@ -134,7 +135,6 @@ final class TodoStore: ObservableObject {
 
     private let fileURL: URL
     private let persistenceWriter: PersistenceWriter
-    private var itemsByDay: [LocalDay: [TodoItem]] = [:]
     private var itemsByProject: [UUID: [TodoItem]] = [:]
     private var projectSummaries: [UUID: ProjectSummary] = [:]
     private var projectsByID: [UUID: TodoProject] = [:]
@@ -191,7 +191,7 @@ final class TodoStore: ObservableObject {
     }
 
     var todayItems: [TodoItem] {
-        itemsByDay[LocalDay(.now, timeZone: Calendar.current.timeZone)] ?? []
+        allItems(on: LocalDay(.now, timeZone: Calendar.current.timeZone))
     }
 
     var visibleItems: [TodoItem] {
@@ -216,7 +216,29 @@ final class TodoStore: ObservableObject {
     }
 
     func allItems(on day: LocalDay) -> [TodoItem] {
-        itemsByDay[day] ?? []
+        allItems(on: day, today: LocalDay(.now, timeZone: Calendar.current.timeZone))
+    }
+
+    func allItems(on day: LocalDay, today: LocalDay) -> [TodoItem] {
+        items.filter {
+            TaskDateRangePolicy.isVisible(
+                $0,
+                on: day,
+                today: today,
+                includeCompleted: true,
+                timeZone: Calendar.current.timeZone
+            )
+        }.sorted(by: Self.areInIncreasingOrder)
+    }
+
+    func planningItems(on day: LocalDay, today: LocalDay) -> [TodoItem] {
+        let scheduledIDs = Set(schedules(on: day).compactMap(\.todoID))
+        var result = allItems(on: day, today: today)
+        let includedIDs = Set(result.map(\.id))
+        result.append(contentsOf: items.filter {
+            scheduledIDs.contains($0.id) && !includedIDs.contains($0.id)
+        })
+        return result.sorted(by: Self.areInIncreasingOrder)
     }
 
     func schedules(on day: LocalDay) -> [DaySchedule] {
@@ -224,7 +246,10 @@ final class TodoStore: ObservableObject {
     }
 
     func schedules(for todoID: UUID) -> [DaySchedule] {
-        schedules.filter { $0.todoID == todoID }.sorted { $0.startMinute < $1.startMinute }
+        schedules.filter { $0.todoID == todoID }.sorted {
+            if $0.startDay != $1.startDay { return $0.startDay < $1.startDay }
+            return $0.startMinute < $1.startMinute
+        }
     }
 
     func scheduledMinutes(for todoID: UUID) -> Int {
@@ -235,7 +260,7 @@ final class TodoStore: ObservableObject {
     func upsertSchedule(_ schedule: DaySchedule) -> Bool {
         guard schedule.isValid else { return false }
         if let id = schedule.todoID {
-            guard items.first(where: { $0.id == id })?.dueDay == schedule.startDay else { return false }
+            guard items.contains(where: { $0.id == id }) else { return false }
         }
         var normalized = schedule
         if case .independent(let title, let notes) = normalized.content {
@@ -256,24 +281,52 @@ final class TodoStore: ObservableObject {
     }
 
     func items(on date: Date) -> [TodoItem] {
-        let dayItems = itemsByDay[LocalDay(date, timeZone: Calendar.current.timeZone)] ?? []
-        return settings.showCompleted ? dayItems : dayItems.filter { !$0.isCompleted }
+        let timeZone = Calendar.current.timeZone
+        let day = LocalDay(date, timeZone: timeZone)
+        let today = LocalDay(.now, timeZone: timeZone)
+        return items.filter {
+            TaskDateRangePolicy.isVisible(
+                $0,
+                on: day,
+                today: today,
+                includeCompleted: settings.showCompleted,
+                timeZone: timeZone
+            )
+        }.sorted(by: Self.areInIncreasingOrder)
     }
 
-    enum ScheduleDateChange { case move, clear }
-
-    func needsScheduleDateDecision(_ item: TodoItem) -> Bool {
-        items.first(where: { $0.id == item.id })?.dueDay != item.dueDay
-            && schedules.contains { $0.todoID == item.id }
+    func calendarItems(on date: Date) -> [TodoItem] {
+        let timeZone = Calendar.current.timeZone
+        let day = LocalDay(date, timeZone: timeZone)
+        let today = LocalDay(.now, timeZone: timeZone)
+        return items.filter {
+            TaskDateRangePolicy.isVisibleInCalendar(
+                $0,
+                on: day,
+                today: today,
+                includeCompleted: settings.showCompleted,
+                timeZone: timeZone
+            )
+        }.sorted(by: Self.areInIncreasingOrder)
     }
 
     @discardableResult
-    func upsert(_ item: TodoItem, scheduleDateChange: ScheduleDateChange? = nil) -> Bool {
+    func upsert(_ item: TodoItem) -> Bool {
         var copy = item
         copy.title = copy.normalizedTitle
-        guard !copy.title.isEmpty, copy.estimatedMinutes.map({ $0 > 0 }) ?? true else { return false }
-        let changesScheduledDate = needsScheduleDateDecision(copy)
-        guard !changesScheduledDate || scheduleDateChange != nil else { return false }
+        guard !copy.title.isEmpty,
+              copy.estimatedMinutes.map({ $0 > 0 }) ?? true,
+              copy.hasValidDateRange else { return false }
+
+        if copy.status == .completed {
+            copy.completedAt = copy.completedAt ?? .now
+            if copy.previousIncompleteStatus == .completed {
+                copy.previousIncompleteStatus = .notStarted
+            }
+        } else {
+            copy.previousIncompleteStatus = copy.status
+            copy.completedAt = nil
+        }
 
         let isEditing = items.contains { $0.id == copy.id }
 
@@ -298,15 +351,6 @@ final class TodoStore: ObservableObject {
         }
 
         return performUndoable(L10n.string(isEditing ? "编辑待办" : "添加待办")) {
-            if changesScheduledDate {
-                if scheduleDateChange == .move, let day = copy.dueDay {
-                    for index in schedules.indices where schedules[index].todoID == copy.id {
-                        schedules[index].startDay = day
-                    }
-                } else {
-                    schedules.removeAll { $0.todoID == copy.id }
-                }
-            }
             if let index = items.firstIndex(where: { $0.id == copy.id }) {
                 items[index] = copy
             } else {
@@ -408,13 +452,38 @@ final class TodoStore: ObservableObject {
 
     @discardableResult
     func toggle(_ item: TodoItem) -> Bool {
+        guard let current = items.first(where: { $0.id == item.id }) else { return false }
+        let nextStatus: TodoItem.Status = current.isCompleted
+            ? current.previousIncompleteStatus
+            : .completed
+        return setStatus(nextStatus, for: current)
+    }
+
+    @discardableResult
+    func setStatus(_ status: TodoItem.Status, for item: TodoItem) -> Bool {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return false }
-        let completing = !items[index].isCompleted
-        return performUndoable(
-            L10n.string(completing ? "标记为已完成" : "标记为未完成")
-        ) {
-            items[index].isCompleted = completing
-            items[index].completedAt = completing ? .now : nil
+        let current = items[index]
+        guard current.status != status else { return false }
+
+        let actionName: String
+        switch status {
+        case .notStarted: actionName = L10n.string("标记为未开始")
+        case .inProgress: actionName = L10n.string("标记为进行中")
+        case .completed: actionName = L10n.string("标记为已完成")
+        }
+
+        return performUndoable(actionName) {
+            if status == .completed {
+                if items[index].status != .completed {
+                    items[index].previousIncompleteStatus = items[index].status
+                }
+                items[index].status = .completed
+                items[index].completedAt = .now
+            } else {
+                items[index].status = status
+                items[index].previousIncompleteStatus = status
+                items[index].completedAt = nil
+            }
         }
     }
 
@@ -657,7 +726,7 @@ final class TodoStore: ObservableObject {
         let validItems = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
         schedules = snapshot.schedules.filter { schedule in
             guard let id = schedule.todoID else { return true }
-            return validItems[id]?.dueDay == schedule.startDay
+            return validItems[id] != nil
         }
         settings = preservingSettings ? currentSettings : snapshot.settings
         isLoading = false
@@ -731,15 +800,11 @@ final class TodoStore: ObservableObject {
     }
 
     private func rebuildIndexes() {
-        var dayIndex: [LocalDay: [TodoItem]] = [:]
         var projectIndex: [UUID: [TodoItem]] = [:]
         var summaries: [UUID: ProjectSummary] = [:]
         var usageCounts: [UUID: Int] = [:]
 
         for item in items {
-            if let dueDay = item.dueDay {
-                dayIndex[dueDay, default: []].append(item)
-            }
             if let projectID = item.projectID {
                 projectIndex[projectID, default: []].append(item)
                 summaries[projectID, default: ProjectSummary()].total += 1
@@ -756,10 +821,6 @@ final class TodoStore: ObservableObject {
                 usageCounts[tagID, default: 0] += 1
             }
         }
-        for key in dayIndex.keys {
-            dayIndex[key]?.sort(by: Self.areInIncreasingOrder)
-        }
-        itemsByDay = dayIndex
         itemsByProject = projectIndex
         projectSummaries = summaries
         projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })

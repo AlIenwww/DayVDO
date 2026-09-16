@@ -48,6 +48,20 @@ final class DayPlanningTests: XCTestCase {
         XCTAssertEqual(DayPlanningPolicy.snapped(484), 485)
     }
 
+    func testInProgressUsesCurrentDayAndHalfOpenScheduleInterval() {
+        let placement = DayPlanningPolicy.Placement(
+            id: UUID(),
+            interval: 540..<600,
+            column: 0,
+            columnCount: 1
+        )
+        XCTAssertFalse(DayPlanningPolicy.isInProgress(placement, at: 539, onCurrentDay: true))
+        XCTAssertTrue(DayPlanningPolicy.isInProgress(placement, at: 540, onCurrentDay: true))
+        XCTAssertTrue(DayPlanningPolicy.isInProgress(placement, at: 599, onCurrentDay: true))
+        XCTAssertFalse(DayPlanningPolicy.isInProgress(placement, at: 600, onCurrentDay: true))
+        XCTAssertFalse(DayPlanningPolicy.isInProgress(placement, at: 570, onCurrentDay: false))
+    }
+
     func testDragSnapsToLegalGridAtDayAndDurationBoundaries() {
         XCTAssertEqual(DayPlanningPolicy.snapped(1442, within: 0...1439), 1435)
         XCTAssertEqual(DayPlanningPolicy.snapped(-20, within: 0...1439), 0)
@@ -107,6 +121,31 @@ final class DayPlanningTests: XCTestCase {
         XCTAssertNotEqual(details.id, editor.id)
     }
 
+    @MainActor
+    func testIndependentScheduleCanBeEditedWithoutAReferencedTodo() {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let original = DaySchedule(
+            startDay: friday, startMinute: 540, durationMinutes: 30,
+            content: .independent(title: "Draft plan", notes: "First note")
+        )
+        XCTAssertTrue(store.upsertSchedule(original))
+        XCTAssertNil(original.todoID)
+
+        var edited = original
+        edited.startDay = friday.adding(days: 1)
+        edited.startMinute = 600
+        edited.durationMinutes = 75
+        edited.content = .independent(title: "  Revised plan  ", notes: "Updated note")
+        XCTAssertTrue(store.upsertSchedule(edited))
+        XCTAssertEqual(store.schedules.count, 1)
+        XCTAssertEqual(store.schedules.first?.id, original.id)
+        XCTAssertEqual(store.schedules.first?.startDay, edited.startDay)
+        XCTAssertEqual(store.schedules.first?.startMinute, 600)
+        XCTAssertEqual(store.schedules.first?.durationMinutes, 75)
+        XCTAssertEqual(store.schedules.first?.content, .independent(title: "Revised plan", notes: "Updated note"))
+    }
+
     func testMidnightFollowsOnlyTodayAndCalendarArithmeticIgnoresDST() {
         let tomorrow = friday.adding(days: 1)
         XCTAssertEqual(DayPlanningPolicy.followedDay(selected: friday, previousToday: friday, today: tomorrow), tomorrow)
@@ -118,37 +157,44 @@ final class DayPlanningTests: XCTestCase {
     }
 
     @MainActor
-    func testScheduleDateConstraintMoveClearAndSingleUndo() async throws {
+    func testScheduleDateIsIndependentFromTaskRangeAndUndo() async throws {
         let (store, url) = makeStore()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         var todo = TodoItem(title: "Task", dueDate: friday.date(), estimatedMinutes: 90)
         store.upsert(todo)
         let block = DaySchedule(startDay: friday, startMinute: 1380, durationMinutes: 120, content: .todo(todo.id))
         XCTAssertTrue(store.upsertSchedule(block))
-        var invalid = block; invalid.startDay = friday.adding(days: 1)
-        XCTAssertFalse(store.upsertSchedule(invalid))
+        var anotherDay = block
+        anotherDay.id = UUID()
+        anotherDay.startDay = friday.adding(days: 4)
+        XCTAssertTrue(store.upsertSchedule(anotherDay))
         let undo = UndoManager(); undo.groupsByEvent = false; store.undoManager = undo
+        todo.startDay = friday.adding(days: 1)
         todo.dueDay = friday.adding(days: 2)
-        XCTAssertTrue(store.needsScheduleDateDecision(todo))
-        XCTAssertFalse(store.upsert(todo))
         undo.beginUndoGrouping()
-        XCTAssertTrue(store.upsert(todo, scheduleDateChange: .move))
+        XCTAssertTrue(store.upsert(todo))
         undo.endUndoGrouping()
-        XCTAssertEqual(store.schedules.first?.startDay, todo.dueDay)
-        XCTAssertEqual(store.schedules.first?.startMinute, 1380)
-        XCTAssertEqual(store.schedules.first?.durationMinutes, 120)
+        XCTAssertEqual(store.schedules, [block, anotherDay])
+        XCTAssertEqual(store.items.first?.startDay, friday.adding(days: 1))
+        XCTAssertEqual(store.items.first?.dueDay, friday.adding(days: 2))
         undo.undo()
+        XCTAssertEqual(store.items.first?.startDay, friday)
         XCTAssertEqual(store.items.first?.dueDay, friday)
-        XCTAssertEqual(store.schedules.first, block)
+        XCTAssertEqual(store.schedules, [block, anotherDay])
         undo.redo()
-        XCTAssertEqual(store.schedules.first?.startDay, todo.dueDay)
+        XCTAssertEqual(store.items.first?.startDay, friday.adding(days: 1))
+        XCTAssertEqual(store.schedules, [block, anotherDay])
+        todo.startDay = nil
         todo.dueDay = nil
         undo.beginUndoGrouping()
-        XCTAssertTrue(store.upsert(todo, scheduleDateChange: .clear))
+        XCTAssertTrue(store.upsert(todo))
         undo.endUndoGrouping()
-        XCTAssertTrue(store.schedules.isEmpty)
+        XCTAssertNil(store.items.first?.startDay)
+        XCTAssertNil(store.items.first?.dueDay)
+        XCTAssertEqual(store.schedules, [block, anotherDay])
         undo.undo()
-        XCTAssertEqual(store.schedules.count, 1)
+        XCTAssertEqual(store.items.first?.startDay, friday.adding(days: 1))
+        XCTAssertEqual(store.schedules, [block, anotherDay])
         _ = await store.flushPersistence()
     }
 
@@ -203,7 +249,7 @@ final class DayPlanningTests: XCTestCase {
     }
 
     @MainActor
-    func testV2MigrationAndV3RoundTrip() async throws {
+    func testV2MigrationAndV4RoundTrip() async throws {
         let (initial, url) = makeStore()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         initial.upsert(TodoItem(title: "Legacy", dueDate: friday.date()))
@@ -213,6 +259,9 @@ final class DayPlanningTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: object).write(to: url)
         let store = TodoStore(fileURL: url)
         XCTAssertNil(store.items.first?.estimatedMinutes)
+        XCTAssertEqual(store.items.first?.status, .notStarted)
+        XCTAssertEqual(store.items.first?.startDay, friday)
+        XCTAssertEqual(store.items.first?.dueDay, friday)
         XCTAssertTrue(store.schedules.isEmpty)
         var item = try XCTUnwrap(store.items.first)
         item.estimatedMinutes = 93; store.upsert(item)
@@ -222,6 +271,73 @@ final class DayPlanningTests: XCTestCase {
         let reopened = TodoStore(fileURL: url)
         XCTAssertEqual(reopened.schedules, [block])
         XCTAssertEqual(reopened.items.first?.estimatedMinutes, 93)
+        XCTAssertEqual(reopened.items.first?.startDay, friday)
+        XCTAssertEqual(reopened.items.first?.status, .notStarted)
+    }
+
+    @MainActor
+    func testVersionsOneThroughThreeMigrateStatusesRangesAndRelationshipsWithoutLosingSchedules() throws {
+        let project = TodoProject(title: "Legacy project")
+        let completionDate = friday.adding(days: 1).date()
+        let active = TodoItem(title: "Active", dueDate: friday.date(), projectID: project.id)
+        let completed = TodoItem(
+            title: "Completed",
+            dueDate: friday.adding(days: 1).date(),
+            isCompleted: true,
+            completedAt: completionDate,
+            projectID: project.id
+        )
+        let schedule = DaySchedule(
+            startDay: friday.adding(days: 5),
+            startMinute: 615,
+            durationMinutes: 45,
+            content: .todo(active.id)
+        )
+
+        for version in 1...3 {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("DayVDO-v\(version)-migration-\(UUID()).json")
+            defer { try? FileManager.default.removeItem(at: url) }
+
+            let legacyItems = try [active, completed].map { item -> [String: Any] in
+                var object = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: JSONEncoder().encode(item))
+                        as? [String: Any]
+                )
+                object.removeValue(forKey: "startDate")
+                object.removeValue(forKey: "status")
+                object.removeValue(forKey: "previousIncompleteStatus")
+                return object
+            }
+            var snapshot: [String: Any] = [
+                "version": version,
+                "items": legacyItems,
+                "projects": [try JSONSerialization.jsonObject(with: JSONEncoder().encode(project))],
+                "tags": [],
+                "settings": try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppSettings()))
+            ]
+            if version == 3 {
+                snapshot["schedules"] = [
+                    try JSONSerialization.jsonObject(with: JSONEncoder().encode(schedule))
+                ]
+            }
+            try JSONSerialization.data(withJSONObject: snapshot).write(to: url)
+
+            let migrated = TodoStore(fileURL: url)
+            XCTAssertEqual(migrated.items.count, 2)
+            XCTAssertEqual(migrated.items.first(where: { $0.id == active.id })?.status, .notStarted)
+            XCTAssertEqual(migrated.items.first(where: { $0.id == active.id })?.startDay, friday)
+            XCTAssertEqual(migrated.items.first(where: { $0.id == active.id })?.dueDay, friday)
+            let migratedCompleted = try XCTUnwrap(
+                migrated.items.first(where: { $0.id == completed.id })
+            )
+            XCTAssertEqual(migratedCompleted.status, .completed)
+            XCTAssertEqual(migratedCompleted.previousIncompleteStatus, .notStarted)
+            XCTAssertEqual(migratedCompleted.completedAt, completionDate)
+            XCTAssertEqual(migratedCompleted.projectID, project.id)
+            XCTAssertEqual(migrated.projects.map(\.id), [project.id])
+            XCTAssertEqual(migrated.schedules, version == 3 ? [schedule] : [])
+        }
     }
 
     @MainActor

@@ -30,6 +30,7 @@ struct AllTodosView: View {
     @ObservedObject var expansionState: ProjectExpansionState
     @State private var visualExpandedProjectIDs: Set<UUID> = []
     @State private var renderedProjectIDs: Set<UUID> = []
+    @State private var pendingCollapseTokens: [UUID: UUID] = [:]
     @State private var projectPendingDeletion: TodoProject?
     @State private var hoveredProjectID: UUID?
     @State private var dropTargetItemID: UUID?
@@ -65,7 +66,9 @@ struct AllTodosView: View {
                 )
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    // Project rows have widely different, animated heights. Keep
+                    // their measurements stable when scrolling back over a collapse.
+                    VStack(spacing: 0) {
                         ForEach(topLevelEntries) { entry in
                             switch entry {
                             case .project(let project):
@@ -77,6 +80,11 @@ struct AllTodosView: View {
                     }
                     .padding(.top, 10)
                     .frame(maxWidth: .infinity)
+                }
+                .onScrollPhaseChange { _, newPhase in
+                    if newPhase == .interacting {
+                        finishPendingProjectCollapses()
+                    }
                 }
             }
         }
@@ -241,7 +249,6 @@ struct AllTodosView: View {
                 .clipped()
                 .allowsHitTesting(expanded)
                 .accessibilityHidden(!expanded)
-                .animation(projectDisclosureAnimation, value: expanded)
                 .padding(.leading, TopLevelTodoRowMetrics.listHorizontalInset)
                 .padding(.trailing, TopLevelTodoRowMetrics.listHorizontalInset)
             }
@@ -348,26 +355,15 @@ struct AllTodosView: View {
             || focusedProjectAddButtonID == project.id
 
         return HStack(spacing: TopLevelTodoRowMetrics.columnSpacing) {
-            Button {
-                setProjectExpanded(
-                    project.id,
-                    !visualExpandedProjectIDs.contains(project.id),
-                    animated: true
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+                .frame(
+                    width: TopLevelTodoRowMetrics.disclosureWidth,
+                    height: 18
                 )
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .rotationEffect(.degrees(expanded ? 90 : 0))
-                    .frame(
-                        width: TopLevelTodoRowMetrics.disclosureWidth,
-                        height: 18
-                    )
-                    .contentShape(Rectangle())
-                    .animation(projectDisclosureAnimation, value: expanded)
-            }
-            .buttonStyle(.plain)
-            .disabled(isExpansionForced)
-            .accessibilityLabel(L10n.string(isExpanded(project) ? "收起项目" : "展开项目"))
+                .animation(projectDisclosureAnimation, value: expanded)
+                .accessibilityHidden(true)
 
             ZStack(alignment: .bottomTrailing) {
                 Image(systemName: "folder.fill")
@@ -458,6 +454,22 @@ struct AllTodosView: View {
         .padding(.vertical, TopLevelTodoRowMetrics.verticalPadding)
         .textCase(nil)
         .contentShape(Rectangle())
+        .overlay(alignment: .leading) {
+            Button {
+                setProjectExpanded(
+                    project.id,
+                    !visualExpandedProjectIDs.contains(project.id),
+                    animated: true
+                )
+            } label: {
+                Color.clear
+                    .frame(width: 64, height: 52)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isExpansionForced)
+            .accessibilityLabel(L10n.string(isExpanded(project) ? "收起项目" : "展开项目"))
+        }
         .onHover { isHovering in
             guard isHovering != (hoveredProjectID == project.id) else { return }
             withAnimation(.easeOut(duration: 0.1)) {
@@ -555,11 +567,13 @@ struct AllTodosView: View {
         expansionState.setExpanded(expanded, for: projectID)
 
         if expanded {
+            pendingCollapseTokens.removeValue(forKey: projectID)
             renderedProjectIDs.insert(projectID)
             let update = { _ = visualExpandedProjectIDs.insert(projectID) }
             if animated {
                 Task { @MainActor in
                     await Task.yield()
+                    guard expansionState.isExpanded(projectID) else { return }
                     withAnimation(projectDisclosureAnimation, update)
                 }
             } else {
@@ -569,13 +583,18 @@ struct AllTodosView: View {
         }
 
         if animated {
+            let token = UUID()
+            pendingCollapseTokens[projectID] = token
             withAnimation(projectDisclosureAnimation) {
                 _ = visualExpandedProjectIDs.remove(projectID)
             }
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(180))
-                if !visualExpandedProjectIDs.contains(projectID), !isExpansionForced {
+                if pendingCollapseTokens[projectID] == token,
+                   !visualExpandedProjectIDs.contains(projectID),
+                   !isExpansionForced {
                     renderedProjectIDs.remove(projectID)
+                    pendingCollapseTokens.removeValue(forKey: projectID)
                 }
             }
         } else {
@@ -584,6 +603,7 @@ struct AllTodosView: View {
             withTransaction(transaction) {
                 visualExpandedProjectIDs.remove(projectID)
                 renderedProjectIDs.remove(projectID)
+                pendingCollapseTokens.removeValue(forKey: projectID)
             }
         }
     }
@@ -621,16 +641,30 @@ struct AllTodosView: View {
         let completedIDs = Set(store.projects.filter(store.projectIsCompleted).map(\.id))
         expansionState.synchronize(projectIDs: projectIDs, completedIDs: completedIDs)
         let desired = expansionState.expandedIDs
+        for projectID in desired {
+            pendingCollapseTokens.removeValue(forKey: projectID)
+        }
         renderedProjectIDs.formUnion(desired)
 
         let removed = visualExpandedProjectIDs.subtracting(desired)
         let update = { visualExpandedProjectIDs = desired }
         if animated {
+            let tokens = Dictionary(uniqueKeysWithValues: removed.map { ($0, UUID()) })
+            pendingCollapseTokens.merge(tokens) { _, new in new }
             withAnimation(projectDisclosureAnimation, update)
             if !removed.isEmpty {
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(180))
-                    renderedProjectIDs.subtract(removed.subtracting(visualExpandedProjectIDs))
+                    let stillPending = Set(tokens.compactMap { projectID, token in
+                        pendingCollapseTokens[projectID] == token
+                            && !visualExpandedProjectIDs.contains(projectID)
+                            ? projectID
+                            : nil
+                    })
+                    renderedProjectIDs.subtract(stillPending)
+                    for projectID in stillPending {
+                        pendingCollapseTokens.removeValue(forKey: projectID)
+                    }
                 }
             }
         } else {
@@ -639,6 +673,22 @@ struct AllTodosView: View {
             withTransaction(transaction) {
                 update()
                 renderedProjectIDs = desired
+                pendingCollapseTokens.removeAll()
+            }
+        }
+    }
+
+    private func finishPendingProjectCollapses() {
+        let collapsedIDs = Set(pendingCollapseTokens.keys)
+            .subtracting(visualExpandedProjectIDs)
+        guard !collapsedIDs.isEmpty else { return }
+
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            renderedProjectIDs.subtract(collapsedIDs)
+            for projectID in collapsedIDs {
+                pendingCollapseTokens.removeValue(forKey: projectID)
             }
         }
     }

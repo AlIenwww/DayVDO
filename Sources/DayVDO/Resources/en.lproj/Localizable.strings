@@ -211,6 +211,7 @@
 "从前一天延续" = "Continued from previous day";
 
 "延续至次日" = "Continues next day";
+"正在进行" = "In progress";
 
 "拖动调整时长" = "Drag to resize";
 
@@ -237,3 +238,16 @@
 "取消日期将清除这个待办的全部时间安排。" = "Removing the date will clear all time blocks for this task.";
 
 "可以保留各段钟点迁移到新日期，或清除安排后重新规划。" = "Keep the times on the new date, or clear the blocks to plan again.";
+
+"未开始" = "Not Started";
+"进行中" = "In Progress";
+"标记为未开始" = "Mark as Not Started";
+"标记为进行中" = "Mark as In Progress";
+"日期范围" = "Date Range";
+"设置日期范围" = "Set Date Range";
+"记录任务，并选择它的开始日和截止日。" = "Describe the task and choose its start date and deadline.";
+"截止日期不能早于开始日期。" = "The deadline cannot be earlier than the start date.";
+"逾期" = "Overdue";
+"任务日期" = "Task date";
+"结束日期不能早于任务日期。" = "The end date cannot be earlier than the task date.";
+"记录任务，并按需要设置日期。" = "Describe the task and set dates if needed.";
