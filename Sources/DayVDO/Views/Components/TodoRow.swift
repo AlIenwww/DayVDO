@@ -23,6 +23,7 @@ struct TodoRow: View {
     let item: TodoItem
     var showsDate = true
     var showsProject = true
+    var showsOverdue = false
     var presentation: TodoRowPresentation = .standard
     let onEdit: () -> Void
 
@@ -55,13 +56,19 @@ struct TodoRow: View {
             .contextMenu { TodoStatusMenuItems(item: item) }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.title)
-                    .font(.body.weight(.medium))
-                    .strikethrough(item.isCompleted)
-                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.title)
+                        .font(.body.weight(.medium))
+                        .strikethrough(item.isCompleted)
+                        .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(1)
+
+                    if isOverdue {
+                        OverdueBadge()
+                    }
+                }
 
                 if presentation == .topLevel {
                     if hasTopLevelMetadata {
@@ -134,6 +141,12 @@ struct TodoRow: View {
         } else {
             _ = store.delete(item)
         }
+    }
+
+    private var isOverdue: Bool {
+        guard showsOverdue else { return false }
+        let today = LocalDay(.now)
+        return TaskDateRangePolicy.isOverdue(item, on: today, today: today)
     }
 
     private var hasTopLevelMetadata: Bool {

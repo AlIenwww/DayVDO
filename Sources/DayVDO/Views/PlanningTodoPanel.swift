@@ -178,13 +178,7 @@ private struct PlanningTodoRow: View {
                         .foregroundStyle(item.isCompleted ? .secondary : .primary)
                         .layoutPriority(1)
                     if isOverdue {
-                        Text(L10n.string("逾期"))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.red.opacity(0.1), in: Capsule())
-                            .fixedSize()
+                        OverdueBadge()
                     }
                 }
                 if let project = store.project(withID: item.projectID) {

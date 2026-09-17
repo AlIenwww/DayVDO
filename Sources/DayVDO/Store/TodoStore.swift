@@ -27,6 +27,7 @@ final class TodoStore: ObservableObject {
         }
     }
     @Published private(set) var schedules: [DaySchedule] = []
+    @Published private(set) var contentRevision: UInt64 = 0
 
     @Published private(set) var persistenceIssue: PersistenceIssue?
     @Published private(set) var isReadOnly = false
@@ -136,6 +137,7 @@ final class TodoStore: ObservableObject {
     private let fileURL: URL
     private let persistenceWriter: PersistenceWriter
     private var itemsByProject: [UUID: [TodoItem]] = [:]
+    private var itemsByID: [UUID: TodoItem] = [:]
     private var projectSummaries: [UUID: ProjectSummary] = [:]
     private var projectsByID: [UUID: TodoProject] = [:]
     private var tagsByID: [UUID: TaskTag] = [:]
@@ -436,6 +438,11 @@ final class TodoStore: ObservableObject {
     func tag(withID id: UUID?) -> TaskTag? {
         guard let id else { return nil }
         return tagsByID[id]
+    }
+
+    func item(withID id: UUID?) -> TodoItem? {
+        guard let id else { return nil }
+        return itemsByID[id]
     }
 
     func tagUsageCount(_ tag: TaskTag) -> Int {
@@ -822,10 +829,12 @@ final class TodoStore: ObservableObject {
             }
         }
         itemsByProject = projectIndex
+        itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
         projectSummaries = summaries
         projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
         tagsByID = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
         tagUsageCounts = usageCounts
+        contentRevision &+= 1
     }
 
     static func areInIncreasingOrder(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {

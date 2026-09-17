@@ -90,6 +90,7 @@ private struct TimelinePopoverHarness: View {
         DayTimelineView(
             day: day,
             hourHeight: .constant(90),
+            restoredScrollMinute: .constant(nil),
             now: day.date(),
             presentation: $request,
             create: { _, _ in },

@@ -3,6 +3,26 @@ import XCTest
 
 final class TodoStoreTests: XCTestCase {
     @MainActor
+    func testRuntimeRevisionAndIdentifierIndexFollowMutations() {
+        let store = TodoStore(fileURL: temporaryStoreURL())
+        let initialRevision = store.contentRevision
+        var item = TodoItem(title: "索引", dueDate: .now)
+
+        XCTAssertTrue(store.upsert(item))
+        XCTAssertGreaterThan(store.contentRevision, initialRevision)
+        XCTAssertEqual(store.item(withID: item.id)?.title, "索引")
+
+        let insertedRevision = store.contentRevision
+        item.title = "已更新"
+        XCTAssertTrue(store.upsert(item))
+        XCTAssertGreaterThan(store.contentRevision, insertedRevision)
+        XCTAssertEqual(store.item(withID: item.id)?.title, "已更新")
+
+        XCTAssertTrue(store.delete(item))
+        XCTAssertNil(store.item(withID: item.id))
+    }
+
+    @MainActor
     func testDayIndexTracksInsertMoveAndDelete() {
         let calendar = Calendar.current
         let firstDay = calendar.date(from: DateComponents(year: 2026, month: 8, day: 28, hour: 9))!

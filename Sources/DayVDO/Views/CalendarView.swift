@@ -11,6 +11,8 @@ struct CalendarView: View {
     @State private var isDatePickerPresented = false
     @State private var datePickerSelection = Date.now
     @Binding var isInspectorPresented: Bool
+    @ObservedObject var windowCache: CalendarWindowCache
+    let timelineSession: CalendarTimelineSession
 
     private var calendar: Calendar {
         AppCalendar.make(
@@ -29,21 +31,21 @@ struct CalendarView: View {
         VStack(spacing: 0) {
             calendarToolbar
             weekdayHeader
-            GeometryReader { viewport in
-                CalendarTimeline(
-                    calendar: calendar,
-                    displayedMonth: currentMonth,
-                    selectedDate: selectedDate,
-                    navigationRequest: navigationRequest,
-                    store: store,
-                    onSelectDate: { selectedDate = $0 },
-                    onVisibleMonthChange: { currentMonth = $0 }
-                )
-                .id(CalendarViewportIdentity(
-                    firstWeekday: calendar.firstWeekday,
-                    height: viewport.size.height
-                ))
-            }
+            CalendarTimeline(
+                calendar: calendar,
+                displayedMonth: currentMonth,
+                selectedDate: selectedDate,
+                navigationRequest: navigationRequest,
+                store: store,
+                windowCache: windowCache,
+                session: timelineSession,
+                onSelectDate: { selectedDate = $0 },
+                onVisibleMonthChange: { currentMonth = $0 }
+            )
+            .id(CalendarViewportIdentity(
+                firstWeekday: calendar.firstWeekday,
+                timeZoneIdentifier: calendar.timeZone.identifier
+            ))
         }
         .background(.background)
         .inspector(isPresented: $isInspectorPresented) {
@@ -240,9 +242,9 @@ private struct CalendarDetailTodoRow: View {
     let edit: (TodoItem) -> Void
 
     var body: some View {
-        if let item = store.items.first(where: { $0.id == id }) {
+        if let item = store.item(withID: id) {
             TodoRow(item: item, showsDate: false) {
-                if let latest = store.items.first(where: { $0.id == id }) {
+                if let latest = store.item(withID: id) {
                     edit(latest)
                 }
             }
@@ -252,7 +254,7 @@ private struct CalendarDetailTodoRow: View {
 
 private struct CalendarViewportIdentity: Hashable {
     let firstWeekday: Int
-    let height: CGFloat
+    let timeZoneIdentifier: String
 }
 
 private struct CalendarNavigationRequest {
@@ -274,6 +276,8 @@ private struct CalendarTimeline: View {
     let selectedDate: Date
     let navigationRequest: CalendarNavigationRequest?
     let store: TodoStore
+    @ObservedObject var windowCache: CalendarWindowCache
+    let session: CalendarTimelineSession
     let onSelectDate: (Date) -> Void
     let onVisibleMonthChange: (Date) -> Void
 
@@ -298,6 +302,8 @@ private struct CalendarTimeline: View {
         selectedDate: Date,
         navigationRequest: CalendarNavigationRequest?,
         store: TodoStore,
+        windowCache: CalendarWindowCache,
+        session: CalendarTimelineSession,
         onSelectDate: @escaping (Date) -> Void,
         onVisibleMonthChange: @escaping (Date) -> Void
     ) {
@@ -306,11 +312,16 @@ private struct CalendarTimeline: View {
         self.selectedDate = selectedDate
         self.navigationRequest = navigationRequest
         self.store = store
+        self.windowCache = windowCache
+        self.session = session
         self.onSelectDate = onSelectDate
         self.onVisibleMonthChange = onVisibleMonthChange
 
         let month = calendar.dateInterval(of: .month, for: displayedMonth)?.start ?? displayedMonth
-        let initialTop = CalendarMonthGrid.dates(containing: month, calendar: calendar).first ?? month
+        let restoredTop = session.topWeek?.date(timeZone: calendar.timeZone)
+        let initialTop = restoredTop
+            ?? CalendarMonthGrid.dates(containing: month, calendar: calendar).first
+            ?? month
         _timelineAnchorWeek = State(initialValue: initialTop)
         _lastReportedMonth = State(initialValue: month)
     }
@@ -330,6 +341,7 @@ private struct CalendarTimeline: View {
                                         displayedMonth: displayedMonth,
                                         selectedDate: selectedDate,
                                         calendar: calendar,
+                                        snapshot: windowCache.snapshot,
                                         onSelectDate: onSelectDate
                                     )
                                 } else {
@@ -437,6 +449,11 @@ private struct CalendarTimeline: View {
                     lastNavigationID = navigationRequest.id
                     navigate(to: navigationRequest.date)
                 }
+                .task { prepareSnapshot() }
+                .onChange(of: loadedWeekRange) { _, _ in prepareSnapshot() }
+                .onChange(of: timelineAnchorWeek) { _, _ in prepareSnapshot() }
+                .onChange(of: store.contentRevision) { _, _ in prepareSnapshot() }
+                .onChange(of: store.settings.showCompleted) { _, _ in prepareSnapshot() }
             }
         }
     }
@@ -517,6 +534,10 @@ private struct CalendarTimeline: View {
             lastMovementDirection = movementDirection
         }
         latestWeekOffset = rowPosition
+        session.topWeek = LocalDay(
+            week(at: clampedTopRow(Int(rowPosition.rounded()))),
+            timeZone: calendar.timeZone
+        )
         gestureTracker.update(to: rowPosition)
 
         let centerDayOffset = Int(((rowPosition + 3) * 7).rounded())
@@ -695,6 +716,29 @@ private struct CalendarTimeline: View {
     private func clampedTopRow(_ row: Int) -> Int {
         let maximumTopRow = Self.virtualWeekRange.upperBound - Self.visibleWeekCount + 1
         return min(max(row, Self.virtualWeekRange.lowerBound), maximumTopRow)
+    }
+
+    private func prepareSnapshot() {
+        let firstDate = week(at: loadedWeekRange.lowerBound)
+        guard let lastDate = calendar.date(
+            byAdding: .day,
+            value: (loadedWeekRange.count * 7) - 1,
+            to: firstDate
+        ) else { return }
+        let firstDay = LocalDay(firstDate, timeZone: calendar.timeZone)
+        let lastDay = LocalDay(lastDate, timeZone: calendar.timeZone)
+        windowCache.prepare(CalendarWindowRequest(
+            key: CalendarWindowSnapshot.Key(
+                revision: store.contentRevision,
+                firstDay: firstDay,
+                lastDay: lastDay,
+                timeZoneIdentifier: calendar.timeZone.identifier,
+                firstWeekday: calendar.firstWeekday,
+                showCompleted: store.settings.showCompleted
+            ),
+            items: store.items,
+            tags: store.tags
+        ))
     }
 }
 
@@ -938,6 +982,7 @@ private struct CalendarWeekRow: View {
     let displayedMonth: Date
     let selectedDate: Date
     let calendar: Calendar
+    let snapshot: CalendarWindowSnapshot?
     let onSelectDate: (Date) -> Void
 
     var body: some View {
@@ -949,6 +994,9 @@ private struct CalendarWeekRow: View {
                     displayedMonth: displayedMonth,
                     selectedDate: selectedDate,
                     calendar: calendar,
+                    items: snapshot?.items(
+                        on: LocalDay(date, timeZone: calendar.timeZone)
+                    ) ?? [],
                     onSelectDate: onSelectDate
                 )
             }
@@ -962,16 +1010,14 @@ private struct CalendarWeekRow: View {
 }
 
 private struct CalendarDayCell: View {
-    @EnvironmentObject private var store: TodoStore
-
     let date: Date
     let displayedMonth: Date
     let selectedDate: Date
     let calendar: Calendar
+    let items: [CalendarWindowSnapshot.Item]
     let onSelectDate: (Date) -> Void
 
     var body: some View {
-        let items = store.calendarItems(on: date)
         let selected = calendar.isDate(date, inSameDayAs: selectedDate)
         let today = calendar.isDateInToday(date)
         let belongsToMonth = calendar.isDate(date, equalTo: displayedMonth, toGranularity: .month)
@@ -990,7 +1036,7 @@ private struct CalendarDayCell: View {
                     .background(selected ? Color.accentColor : Color.clear, in: Circle())
 
                 ForEach(items.prefix(2)) { item in
-                    let itemColor = store.tag(withID: item.tagID)?.color.color ?? Color.accentColor
+                    let itemColor = item.tagColor?.color ?? Color.accentColor
                     HStack(spacing: 3) {
                         if item.status == .inProgress {
                             Image(systemName: item.status.symbolName)
@@ -998,7 +1044,7 @@ private struct CalendarDayCell: View {
                                 .foregroundStyle(.orange)
                                 .accessibilityHidden(true)
                         }
-                        if item.projectID != nil {
+                        if item.hasProject {
                             Image(systemName: "folder.fill")
                                 .font(.system(size: 7))
                                 .foregroundStyle(.secondary)

@@ -169,3 +169,12 @@
 "任务日期" = "Fecha de la tarea";
 "结束日期不能早于任务日期。" = "La fecha de fin no puede ser anterior a la fecha de la tarea.";
 "记录任务，并按需要设置日期。" = "Describe la tarea y define las fechas si es necesario.";
+"筛选待办" = "Filtrar tareas";
+"清除全部" = "Borrar todo";
+"移除所有筛选条件" = "Eliminar todos los filtros";
+"状态" = "Estado";
+"已启用 %lld 类筛选" = "%lld categorías de filtro activas";
+"未启用筛选" = "No hay filtros activos";
+"已选择" = "Seleccionado";
+"未选择" = "No seleccionado";
+"已逾期" = "Vencidas";

@@ -38,6 +38,19 @@ struct TaskTagLabel: View {
     }
 }
 
+struct OverdueBadge: View {
+    var body: some View {
+        Text(L10n.string("逾期"))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.red)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.red.opacity(0.1), in: Capsule())
+            .fixedSize()
+            .accessibilityLabel(L10n.string("已逾期"))
+    }
+}
+
 /// Native macOS menus do not reliably preserve custom SwiftUI shape fills.
 /// Supplying a non-template bitmap keeps each tag's original color in the menu.
 private struct TaskTagMenuDot: View {

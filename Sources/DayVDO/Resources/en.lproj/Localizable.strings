@@ -251,3 +251,12 @@
 "任务日期" = "Task date";
 "结束日期不能早于任务日期。" = "The end date cannot be earlier than the task date.";
 "记录任务，并按需要设置日期。" = "Describe the task and set dates if needed.";
+"筛选待办" = "Filter Todos";
+"清除全部" = "Clear All";
+"移除所有筛选条件" = "Remove all filter conditions";
+"状态" = "Status";
+"已启用 %lld 类筛选" = "%lld filter categories enabled";
+"未启用筛选" = "No filters enabled";
+"已选择" = "Selected";
+"未选择" = "Not selected";
+"已逾期" = "Overdue";

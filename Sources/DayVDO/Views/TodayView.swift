@@ -6,11 +6,12 @@ struct TodayView: View {
     @EnvironmentObject private var store: TodoStore
     @Binding var editingItem: TodoItem?
     @Binding var selectedDay: LocalDay
+    @Binding var hourHeight: CGFloat
+    @Binding var timelineScrollMinute: CGFloat?
     @State private var now = Date.now
     @State private var previousToday = LocalDay(.now)
     @State private var isPickingDate = false
     @State private var showsTodoPanel = false
-    @State private var hourHeight: CGFloat = 90
     @State private var scheduleDraft: DaySchedule?
     @State private var schedulePopover: SchedulePopoverRequest?
     @State private var queuedTodo: TodoItem?
@@ -35,7 +36,10 @@ struct TodayView: View {
                 ZStack(alignment: .trailing) {
                     HStack(spacing: 0) {
                         DayTimelineView(
-                            day: selectedDay, hourHeight: $hourHeight, now: now,
+                            day: selectedDay,
+                            hourHeight: $hourHeight,
+                            restoredScrollMinute: $timelineScrollMinute,
+                            now: now,
                             obscuredWidth: narrow && showsTodoPanel ? min(280, max(220, geometry.size.width * 0.55)) : 0,
                             presentation: $schedulePopover,
                             create: { minute, duration in

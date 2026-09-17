@@ -38,12 +38,16 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var searchFocusRequest = 0
     @State private var allTodosQuery = ""
-    @State private var allTodosFilter = AllTodosFilter.all
-    @State private var allTodosTagFilter = AllTodosTagFilter.all
+    @State private var allTodosFilter = AllTodosFilterState()
+    @State private var allTodosScrollPosition = ScrollPosition(y: 0)
+    @State private var todayHourHeight: CGFloat = 90
+    @State private var todayScrollMinute: CGFloat?
     @State private var calendarSelectedDate = Date.now
     @State private var calendarCurrentMonth = Date.now
     @State private var calendarInspectorPresented = false
     @StateObject private var projectExpansionState = ProjectExpansionState()
+    @StateObject private var calendarWindowCache = CalendarWindowCache()
+    @StateObject private var calendarTimelineSession = CalendarTimelineSession()
     @State private var isRecoveryPromptPresented = false
     @State private var isConfirmingEmptyRecovery = false
     @State private var showsLoadingIndicator = false
@@ -65,7 +69,12 @@ struct ContentView: View {
             Group {
                 switch selection ?? .today {
                 case .today:
-                    TodayView(editingItem: $editingItem, selectedDay: $planningDay)
+                    TodayView(
+                        editingItem: $editingItem,
+                        selectedDay: $planningDay,
+                        hourHeight: $todayHourHeight,
+                        timelineScrollMinute: $todayScrollMinute
+                    )
                 case .all:
                     AllTodosView(
                         editingItem: $editingItem,
@@ -73,7 +82,7 @@ struct ContentView: View {
                         searchFocusRequest: searchFocusRequest,
                         query: $allTodosQuery,
                         filter: $allTodosFilter,
-                        tagFilter: $allTodosTagFilter,
+                        scrollPosition: $allTodosScrollPosition,
                         expansionState: projectExpansionState
                     )
                 case .calendar:
@@ -82,12 +91,16 @@ struct ContentView: View {
                         columnVisibility: $columnVisibility,
                         selectedDate: $calendarSelectedDate,
                         currentMonth: $calendarCurrentMonth,
-                        isInspectorPresented: $calendarInspectorPresented
+                        isInspectorPresented: $calendarInspectorPresented,
+                        windowCache: calendarWindowCache,
+                        timelineSession: calendarTimelineSession
                     )
                 case .settings:
                     SettingsView()
                 }
             }
+            .transition(.identity)
+            .animation(nil, value: selection)
             .disabled(!store.canModify)
             .overlay {
                 if showsLoadingIndicator && store.isInitialLoading {
@@ -173,9 +186,6 @@ struct ContentView: View {
                 isEditing: store.projects.contains { $0.id == project.id }
             ) { store.upsertProject($0) }
         }
-        .onChange(of: selection) { old, new in
-            if new == .today && old != .today { planningDay = LocalDay(.now) }
-        }
         .onAppear {
             store.undoManager = undoManager
             if case .recoveryRequired = store.persistenceIssue {
@@ -189,6 +199,12 @@ struct ContentView: View {
             }
         }
         .onChange(of: store.isInitialLoading) { _, _ in updateLoadingIndicator() }
+        .task(id: calendarPrewarmTrigger) {
+            guard !store.isInitialLoading else { return }
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            prewarmCalendarWindow()
+        }
         .alert(L10n.string("无法读取待办数据"), isPresented: $isRecoveryPromptPresented) {
             if case .recoveryRequired(let hasBackup, _) = store.persistenceIssue, hasBackup {
                 Button(L10n.string("恢复最近备份")) { store.restoreLatestBackup() }
@@ -208,6 +224,41 @@ struct ContentView: View {
         } message: {
             Text(L10n.string("现有损坏文件会被保留，但当前内容将替换为空白数据。"))
         }
+    }
+
+    private var calendarPrewarmTrigger: CalendarPrewarmTrigger {
+        CalendarPrewarmTrigger(
+            revision: store.contentRevision,
+            showCompleted: store.settings.showCompleted,
+            startsOnMonday: store.settings.startWeekOnMonday,
+            timeZoneIdentifier: TimeZone.autoupdatingCurrent.identifier
+        )
+    }
+
+    private func prewarmCalendarWindow() {
+        let calendar = AppCalendar.make(
+            locale: L10n.locale,
+            startsOnMonday: store.settings.startWeekOnMonday
+        )
+        let month = calendar.dateInterval(of: .month, for: calendarCurrentMonth)?.start
+            ?? calendarCurrentMonth
+        guard let monthWeek = CalendarMonthGrid.dates(containing: month, calendar: calendar).first,
+              let firstDate = calendar.date(byAdding: .weekOfYear, value: -12, to: monthWeek),
+              let lastDate = calendar.date(byAdding: .day, value: 209, to: firstDate) else { return }
+        let firstDay = LocalDay(firstDate, timeZone: calendar.timeZone)
+        let lastDay = LocalDay(lastDate, timeZone: calendar.timeZone)
+        calendarWindowCache.prepare(CalendarWindowRequest(
+            key: CalendarWindowSnapshot.Key(
+                revision: store.contentRevision,
+                firstDay: firstDay,
+                lastDay: lastDay,
+                timeZoneIdentifier: calendar.timeZone.identifier,
+                firstWeekday: calendar.firstWeekday,
+                showCompleted: store.settings.showCompleted
+            ),
+            items: store.items,
+            tags: store.tags
+        ))
     }
 
     @ViewBuilder
@@ -268,4 +319,11 @@ struct ContentView: View {
             }
         }
     }
+}
+
+private struct CalendarPrewarmTrigger: Hashable {
+    var revision: UInt64
+    var showCompleted: Bool
+    var startsOnMonday: Bool
+    var timeZoneIdentifier: String
 }

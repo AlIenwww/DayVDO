@@ -169,3 +169,12 @@
 "任务日期" = "Aufgabendatum";
 "结束日期不能早于任务日期。" = "Das Enddatum darf nicht vor dem Aufgabendatum liegen.";
 "记录任务，并按需要设置日期。" = "Beschreibe die Aufgabe und lege bei Bedarf Daten fest.";
+"筛选待办" = "Aufgaben filtern";
+"清除全部" = "Alle löschen";
+"移除所有筛选条件" = "Alle Filterbedingungen entfernen";
+"状态" = "Status";
+"已启用 %lld 类筛选" = "%lld Filterkategorien aktiv";
+"未启用筛选" = "Keine Filter aktiv";
+"已选择" = "Ausgewählt";
+"未选择" = "Nicht ausgewählt";
+"已逾期" = "Überfällig";

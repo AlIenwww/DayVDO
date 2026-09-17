@@ -23,6 +23,7 @@ struct DayTimelineView: View {
     @EnvironmentObject private var store: TodoStore
     let day: LocalDay
     @Binding var hourHeight: CGFloat
+    @Binding var restoredScrollMinute: CGFloat?
     let now: Date
     var obscuredWidth: CGFloat = 0
     @Binding var presentation: SchedulePopoverRequest?
@@ -50,8 +51,6 @@ struct DayTimelineView: View {
     @State private var pendingDrop: UUID?
     @State private var cancellation = TimelineDragCancellation()
     @FocusState private var isFocused: Bool
-    private let ticker = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
-    private let zoomTicker = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
     private let gutter: CGFloat = 54
 
     private struct Interaction {
@@ -157,9 +156,13 @@ struct DayTimelineView: View {
                 scrollOffset = value.offset
                 viewportHeight = value.height
             }
-            .onAppear { viewportWidth = geometry.size.width; locate() }
+            .onAppear {
+                viewportWidth = geometry.size.width
+                restorePositionOrLocate()
+            }
             .onChange(of: geometry.size.width) { _, width in viewportWidth = width }
             .onDisappear {
+                restoredScrollMinute = scrollOffset / max(pixelsPerMinute, 0.001)
                 cancel()
                 magnificationBase = nil
                 magnificationAnchor = nil
@@ -172,6 +175,7 @@ struct DayTimelineView: View {
                 zoomTarget = nil
                 selectedID = nil
                 presentation = nil
+                restoredScrollMinute = nil
                 locate()
             }
             .onChange(of: displayed) { _, latest in
@@ -183,11 +187,26 @@ struct DayTimelineView: View {
                 }
             }
             .onChange(of: scrollOffset) { _, _ in dismissOffscreenPopover() }
-            .onReceive(ticker) { _ in
-                finishCancellationIfReleased()
-                autoScroll()
+            .onScrollPhaseChange { _, newPhase in
+                if newPhase == .idle {
+                    restoredScrollMinute = scrollOffset / max(pixelsPerMinute, 0.001)
+                }
             }
-            .onReceive(zoomTicker) { _ in advanceZoom() }
+            .task(id: needsInteractionTicks) {
+                guard needsInteractionTicks else { return }
+                while !Task.isCancelled {
+                    finishCancellationIfReleased()
+                    autoScroll()
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+            .task(id: needsZoomTicks) {
+                guard needsZoomTicks else { return }
+                while !Task.isCancelled {
+                    advanceZoom()
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+            }
             .simultaneousGesture(
                 MagnificationGesture()
                     .onChanged { scale in
@@ -243,7 +262,7 @@ struct DayTimelineView: View {
             .onKeyPress(.downArrow) { selectAdjacent(1); return .handled }
             .onKeyPress(.space) {
                 guard let schedule = store.schedules.first(where: { $0.id == selectedID }),
-                      let todo = store.items.first(where: { $0.id == schedule.todoID }) else { return .ignored }
+                      let todo = store.item(withID: schedule.todoID) else { return .ignored }
                 store.toggle(todo); return .handled
             }
             .onKeyPress(.return) {
@@ -455,7 +474,16 @@ struct DayTimelineView: View {
         if next == target, magnificationBase == nil {
             zoomTarget = nil
             magnificationAnchor = nil
+            restoredScrollMinute = scrollOffset / max(pixelsPerMinute, 0.001)
         }
+    }
+
+    private var needsInteractionTicks: Bool {
+        interaction != nil || externalActive || cancellation.isSuppressed
+    }
+
+    private var needsZoomTicks: Bool {
+        zoomTarget != nil && magnificationAnchor != nil
     }
 
     private func applyZoom(
@@ -641,6 +669,16 @@ struct DayTimelineView: View {
         let components = Calendar.current.dateComponents([.hour, .minute], from: now)
         let minute = day == LocalDay(now) ? max(0, (components.hour ?? 0) * 60 + (components.minute ?? 0) - 60) : 480
         position.scrollTo(y: CGFloat(minute) * pixelsPerMinute)
+    }
+
+    private func restorePositionOrLocate() {
+        guard let restoredScrollMinute else {
+            locate()
+            return
+        }
+        let target = max(0, restoredScrollMinute * pixelsPerMinute)
+        scrollOffset = target
+        position.scrollTo(y: target)
     }
     private func cancelExternal() {
         externalActive = false; externalTodoID = nil; externalMinute = nil; pointerY = nil; activityChanged(pendingDrop != nil || interaction != nil)

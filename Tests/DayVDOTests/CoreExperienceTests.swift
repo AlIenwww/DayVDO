@@ -273,15 +273,19 @@ final class CoreExperienceTests: XCTestCase {
     }
 
     func testExplicitCompletedFilterOverridesGlobalHiddenPreference() {
+        let completed = TodoItem(title: "已完成", status: .completed)
+        var explicitCompleted = AllTodosFilterState()
+        explicitCompleted.statuses = [.completed]
+
         XCTAssertTrue(
-            AllTodosFilter.completed.includes(
-                isCompleted: true,
+            explicitCompleted.includes(
+                completed,
                 showCompletedPreference: false
             )
         )
         XCTAssertFalse(
-            AllTodosFilter.all.includes(
-                isCompleted: true,
+            AllTodosFilterState().includes(
+                completed,
                 showCompletedPreference: false
             )
         )

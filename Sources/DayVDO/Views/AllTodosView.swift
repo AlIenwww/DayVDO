@@ -20,13 +20,18 @@ struct AllTodosView: View {
         }
     }
 
+    private struct PresentationSnapshot {
+        var topLevelEntries: [TopLevelEntry]
+        var childrenByProject: [UUID: [TodoItem]]
+    }
+
     @EnvironmentObject private var store: TodoStore
     @Binding var editingItem: TodoItem?
     @Binding var editingProject: TodoProject?
     let searchFocusRequest: Int
     @Binding var query: String
-    @Binding var filter: AllTodosFilter
-    @Binding var tagFilter: AllTodosTagFilter
+    @Binding var filter: AllTodosFilterState
+    @Binding var scrollPosition: ScrollPosition
     @ObservedObject var expansionState: ProjectExpansionState
     @State private var visualExpandedProjectIDs: Set<UUID> = []
     @State private var renderedProjectIDs: Set<UUID> = []
@@ -35,26 +40,14 @@ struct AllTodosView: View {
     @State private var hoveredProjectID: UUID?
     @State private var dropTargetItemID: UUID?
     @State private var isSearchPresented = false
+    @State private var isFilterPresented = false
     @FocusState private var focusedProjectAddButtonID: UUID?
     @FocusState private var focusedEntryID: String?
 
-    private var topLevelEntries: [TopLevelEntry] {
-        let projectEntries = store.projects
-            .filter(projectMatchesCurrentView)
-            .map(TopLevelEntry.project)
-        let todoEntries = store.items
-            .filter { $0.projectID == nil && itemMatches($0) }
-            .map(TopLevelEntry.todo)
-
-        return (projectEntries + todoEntries).sorted {
-            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
-            return $0.id > $1.id
-        }
-    }
-
     var body: some View {
+        let presentation = makePresentationSnapshot()
         Group {
-            if topLevelEntries.isEmpty {
+            if presentation.topLevelEntries.isEmpty {
                 EmptyStateView(
                     title: L10n.string(hasActiveFiltering ? "没有找到结果" : "还没有待办"),
                     message: L10n.string(
@@ -69,10 +62,13 @@ struct AllTodosView: View {
                     // Project rows have widely different, animated heights. Keep
                     // their measurements stable when scrolling back over a collapse.
                     VStack(spacing: 0) {
-                        ForEach(topLevelEntries) { entry in
+                        ForEach(presentation.topLevelEntries) { entry in
                             switch entry {
                             case .project(let project):
-                                projectRow(project)
+                                projectRow(
+                                    project,
+                                    children: presentation.childrenByProject[project.id] ?? []
+                                )
                             case .todo(let item):
                                 topLevelTodoRow(item)
                             }
@@ -81,6 +77,7 @@ struct AllTodosView: View {
                     .padding(.top, 10)
                     .frame(maxWidth: .infinity)
                 }
+                .scrollPosition($scrollPosition)
                 .onScrollPhaseChange { _, newPhase in
                     if newPhase == .interacting {
                         finishPendingProjectCollapses()
@@ -97,70 +94,34 @@ struct AllTodosView: View {
         )
         .toolbar {
             ToolbarItem {
-                ViewThatFits(in: .horizontal) {
-                    Picker(L10n.string("筛选"), selection: $filter) {
-                        ForEach(AllTodosFilter.allCases) { Text(L10n.string($0.rawValue)).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: statusFilterWidth)
-
-                    Menu {
-                        ForEach(AllTodosFilter.allCases) { option in
-                            Button {
-                                filter = option
-                            } label: {
-                                Label(
-                                    L10n.string(option.rawValue),
-                                    systemImage: filter == option ? "checkmark" : "line.3.horizontal.decrease"
-                                )
-                            }
-                        }
-                    } label: {
-                        Label(L10n.string(filter.rawValue), systemImage: "line.3.horizontal.decrease")
-                    }
-                }
-            }
-            ToolbarItem {
-                Menu {
-                    Button {
-                        tagFilter = .all
-                    } label: {
-                        Label(
-                            L10n.string("全部标签"),
-                            systemImage: tagFilter == .all ? "checkmark" : "tag"
-                        )
-                    }
-                    Button {
-                        tagFilter = .untagged
-                    } label: {
-                        Label(
-                            L10n.string("无标签"),
-                            systemImage: tagFilter == .untagged ? "checkmark" : "tag.slash"
-                        )
-                    }
-
-                    if !store.sortedTags.isEmpty {
-                        Divider()
-                        ForEach(store.sortedTags) { tag in
-                            Button {
-                                tagFilter = .tag(tag.id)
-                            } label: {
-                                HStack {
-                                    TaskTagDot(tag: tag)
-                                    Text(tag.name)
-                                    if tagFilter == .tag(tag.id) {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Button {
+                    isFilterPresented.toggle()
                 } label: {
-                    Label(tagFilterTitle, systemImage: "tag")
-                        .lineLimit(1)
-                        .frame(maxWidth: tagFilterWidth)
+                    HStack(spacing: 6) {
+                        Image(systemName: "line.3.horizontal.decrease")
+                        Text(L10n.string("筛选"))
+                            .lineLimit(1)
+                        if filter.isActive {
+                            Text("\(filter.activeCategoryCount)")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 17, minHeight: 17)
+                                .background(Color.accentColor, in: Circle())
+                        }
+                    }
+                    .foregroundStyle(filter.isActive ? Color.accentColor : Color.primary)
+                    .frame(width: 104)
                 }
-                .help(L10n.string("按标签筛选"))
+                .help(L10n.string("筛选待办"))
+                .accessibilityLabel(L10n.string("筛选待办"))
+                .accessibilityValue(
+                    filter.isActive
+                        ? L10n.format("已启用 %lld 类筛选", filter.activeCategoryCount)
+                        : L10n.string("未启用筛选")
+                )
+                .popover(isPresented: $isFilterPresented, arrowEdge: .top) {
+                    AllTodosFilterPopover(filter: $filter)
+                }
             }
         }
         .onAppear { synchronizeProjectExpansion(animated: false) }
@@ -169,12 +130,13 @@ struct AllTodosView: View {
             await Task.yield()
             isSearchPresented = true
         }
-        .onChange(of: store.projects) { _, _ in synchronizeProjectExpansion(animated: true) }
+        .onChange(of: store.projects) { _, projects in
+            sanitizeFilter(projectIDs: Set(projects.map(\.id)), tagIDs: Set(store.tags.map(\.id)))
+            synchronizeProjectExpansion(animated: true)
+        }
         .onChange(of: store.items) { _, _ in synchronizeProjectExpansion(animated: true) }
         .onChange(of: store.tags) { _, tags in
-            if case .tag(let id) = tagFilter, !tags.contains(where: { $0.id == id }) {
-                tagFilter = .all
-            }
+            sanitizeFilter(projectIDs: Set(store.projects.map(\.id)), tagIDs: Set(tags.map(\.id)))
         }
         .confirmationDialog(
             L10n.format("删除项目“%@”？", projectPendingDeletion?.title ?? ""),
@@ -200,21 +162,9 @@ struct AllTodosView: View {
         }
     }
 
-    private var statusFilterWidth: CGFloat {
-        LocalizedControlSizing.segmentedWidth(
-            for: AllTodosFilter.allCases.map { L10n.string($0.rawValue) }
-        )
-    }
-
-    private var tagFilterWidth: CGFloat {
-        LocalizedControlSizing.menuLabelWidth(
-            for: [tagFilterTitle, L10n.string("全部标签"), L10n.string("无标签")]
-        )
-    }
-
     private func topLevelTodoRow(_ item: TodoItem) -> some View {
         VStack(spacing: 0) {
-            TodoRow(item: item, presentation: .topLevel) {
+            TodoRow(item: item, showsOverdue: true, presentation: .topLevel) {
                 editingItem = item
             }
             .padding(.horizontal, TopLevelTodoRowMetrics.listHorizontalInset)
@@ -234,7 +184,7 @@ struct AllTodosView: View {
         }
     }
 
-    private func projectRow(_ project: TodoProject) -> some View {
+    private func projectRow(_ project: TodoProject, children: [TodoItem]) -> some View {
         let expanded = isExpanded(project)
 
         return VStack(spacing: 0) {
@@ -243,9 +193,10 @@ struct AllTodosView: View {
 
             if expanded || renderedProjectIDs.contains(project.id) {
                 CollapsibleProjectRowLayout(progress: expanded ? 1 : 0) {
-                    projectChildrenContent(project)
+                    projectChildrenContent(project, children: children)
                 }
                 .opacity(expanded ? 1 : 0)
+                .animation(projectDisclosureAnimation, value: expanded)
                 .clipped()
                 .allowsHitTesting(expanded)
                 .accessibilityHidden(!expanded)
@@ -281,9 +232,7 @@ struct AllTodosView: View {
     }
 
     @ViewBuilder
-    private func projectChildrenContent(_ project: TodoProject) -> some View {
-        let children = filteredChildren(in: project)
-
+    private func projectChildrenContent(_ project: TodoProject, children: [TodoItem]) -> some View {
         if children.isEmpty {
             Text(L10n.string(hasActiveFiltering ? "没有匹配的子任务" : "还没有子任务"))
                 .font(.callout)
@@ -317,7 +266,9 @@ struct AllTodosView: View {
                         style: .continuous
                     )
 
-                    TodoRow(item: item, showsProject: false) { editingItem = item }
+                    TodoRow(item: item, showsProject: false, showsOverdue: true) {
+                        editingItem = item
+                    }
                         .padding(.horizontal, 10)
                         .background(Color.secondary.opacity(0.055), in: shape)
                         .overlay { shape.stroke(Color.secondary.opacity(0.12), lineWidth: 0.5) }
@@ -365,25 +316,13 @@ struct AllTodosView: View {
                 .animation(projectDisclosureAnimation, value: expanded)
                 .accessibilityHidden(true)
 
-            ZStack(alignment: .bottomTrailing) {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(completed ? Color.accentColor : .secondary)
-
-                if completed {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .padding(1)
-                        .background(.background, in: Circle())
-                        .transition(.symbolEffect(.appear))
-                }
-            }
-            .frame(
-                width: TopLevelTodoRowMetrics.statusWidth,
-                height: TopLevelTodoRowMetrics.statusWidth
-            )
-            .accessibilityHidden(true)
+            ProjectFolderIcon(completed: completed)
+                .equatable()
+                .frame(
+                    width: TopLevelTodoRowMetrics.statusWidth,
+                    height: TopLevelTodoRowMetrics.statusWidth
+                )
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(project.title)
@@ -451,6 +390,7 @@ struct AllTodosView: View {
             .animation(.easeOut(duration: 0.1), value: showsAddButton)
             .help(L10n.string("添加子任务"))
         }
+        .frame(minHeight: 38, alignment: .center)
         .padding(.vertical, TopLevelTodoRowMetrics.verticalPadding)
         .textCase(nil)
         .contentShape(Rectangle())
@@ -516,19 +456,57 @@ struct AllTodosView: View {
         return store.items(in: project).filter { item in
             let matchesQuery = query.isEmpty || projectMatches || itemMatchesQuery(item)
             let matchesFilter = filter.includes(
-                isCompleted: item.isCompleted,
-                showCompletedPreference: store.settings.showCompleted
+                item,
+                showCompletedPreference: store.settings.showCompleted,
+                matchesSearch: matchesQuery
             )
-            return matchesQuery && matchesFilter && matchesTag(item.tagID)
+            return matchesFilter
         }
     }
 
-    private func itemMatches(_ item: TodoItem) -> Bool {
-        let matchesFilter = filter.includes(
-            isCompleted: item.isCompleted,
-            showCompletedPreference: store.settings.showCompleted
+    private func makePresentationSnapshot() -> PresentationSnapshot {
+        var childrenByProject: [UUID: [TodoItem]] = [:]
+        var projectEntries: [TopLevelEntry] = []
+
+        for project in store.projects {
+            let needsChildren = hasActiveFiltering
+                || isExpanded(project)
+                || renderedProjectIDs.contains(project.id)
+            let children = needsChildren ? filteredChildren(in: project) : []
+            if needsChildren { childrenByProject[project.id] = children }
+
+            let isVisible: Bool
+            if !hasActiveFiltering {
+                isVisible = store.settings.showCompleted || !store.projectIsCompleted(project)
+            } else if !children.isEmpty {
+                isVisible = true
+            } else {
+                isVisible = !filter.isActive
+                    && projectMatchesQuery(project)
+                    && (store.settings.showCompleted || !store.projectIsCompleted(project))
+            }
+            if isVisible { projectEntries.append(.project(project)) }
+        }
+
+        let todoEntries = store.items.lazy
+            .filter { $0.projectID == nil && itemMatches($0) }
+            .map(TopLevelEntry.todo)
+        let entries = (projectEntries + todoEntries).sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id > $1.id
+        }
+        return PresentationSnapshot(
+            topLevelEntries: entries,
+            childrenByProject: childrenByProject
         )
-        return matchesFilter && matchesTag(item.tagID) && (query.isEmpty || itemMatchesQuery(item))
+    }
+
+    private func itemMatches(_ item: TodoItem) -> Bool {
+        return filter.includes(
+            item,
+            showCompletedPreference: store.settings.showCompleted,
+            matchesSearch: query.isEmpty || itemMatchesQuery(item)
+        )
     }
 
     private func itemMatchesQuery(_ item: TodoItem) -> Bool {
@@ -541,21 +519,6 @@ struct AllTodosView: View {
         project.title.localizedStandardContains(query)
             || project.notes.localizedStandardContains(query)
             || store.tag(withID: project.tagID)?.name.localizedStandardContains(query) == true
-    }
-
-    private func projectMatchesCurrentView(_ project: TodoProject) -> Bool {
-        let isCompleted = store.projectIsCompleted(project)
-        let matchesFilter = filter.includes(
-            isCompleted: isCompleted,
-            showCompletedPreference: store.settings.showCompleted
-        )
-        guard matchesFilter else { return false }
-        let projectMatches = matchesTag(project.tagID)
-            && (query.isEmpty || projectMatchesQuery(project))
-        let childMatches = store.items(in: project).contains { item in
-            matchesTag(item.tagID) && (query.isEmpty || projectMatchesQuery(project) || itemMatchesQuery(item))
-        }
-        return projectMatches || childMatches
     }
 
     private func isExpanded(_ project: TodoProject) -> Bool {
@@ -574,7 +537,7 @@ struct AllTodosView: View {
                 Task { @MainActor in
                     await Task.yield()
                     guard expansionState.isExpanded(projectID) else { return }
-                    withAnimation(projectDisclosureAnimation, update)
+                    update()
                 }
             } else {
                 update()
@@ -585,9 +548,7 @@ struct AllTodosView: View {
         if animated {
             let token = UUID()
             pendingCollapseTokens[projectID] = token
-            withAnimation(projectDisclosureAnimation) {
-                _ = visualExpandedProjectIDs.remove(projectID)
-            }
+            visualExpandedProjectIDs.remove(projectID)
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(180))
                 if pendingCollapseTokens[projectID] == token,
@@ -612,28 +573,18 @@ struct AllTodosView: View {
         .easeInOut(duration: 0.16)
     }
 
-    private func matchesTag(_ tagID: UUID?) -> Bool {
-        switch tagFilter {
-        case .all: true
-        case .untagged: tagID == nil
-        case .tag(let id): tagID == id
-        }
-    }
-
-    private var tagFilterTitle: String {
-        switch tagFilter {
-        case .all: L10n.string("全部标签")
-        case .untagged: L10n.string("无标签")
-        case .tag(let id): store.tag(withID: id)?.name ?? L10n.string("全部标签")
-        }
-    }
-
     private var hasActiveFiltering: Bool {
-        !query.isEmpty || filter != .all || tagFilter != .all
+        !query.isEmpty || filter.isActive
     }
 
     private var isExpansionForced: Bool {
-        !query.isEmpty || tagFilter != .all
+        !query.isEmpty || filter.isActive
+    }
+
+    private func sanitizeFilter(projectIDs: Set<UUID>, tagIDs: Set<UUID>) {
+        var sanitized = filter
+        sanitized.sanitize(projectIDs: projectIDs, tagIDs: tagIDs)
+        if sanitized != filter { filter = sanitized }
     }
 
     private func synchronizeProjectExpansion(animated: Bool) {
@@ -651,7 +602,7 @@ struct AllTodosView: View {
         if animated {
             let tokens = Dictionary(uniqueKeysWithValues: removed.map { ($0, UUID()) })
             pendingCollapseTokens.merge(tokens) { _, new in new }
-            withAnimation(projectDisclosureAnimation, update)
+            update()
             if !removed.isEmpty {
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(180))
@@ -690,6 +641,304 @@ struct AllTodosView: View {
             for projectID in collapsedIDs {
                 pendingCollapseTokens.removeValue(forKey: projectID)
             }
+        }
+    }
+}
+
+private struct ProjectFolderIcon: View, Equatable {
+    let completed: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(completed ? Color.accentColor : .secondary)
+
+            if completed {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(1)
+                    .background(.background, in: Circle())
+            }
+        }
+    }
+}
+
+private struct AllTodosFilterPopover: View {
+    @EnvironmentObject private var store: TodoStore
+    @Environment(\.dismiss) private var dismiss
+    @Binding var filter: AllTodosFilterState
+
+    private let gridColumns = [
+        GridItem(.adaptive(minimum: 136), spacing: 8)
+    ]
+
+    private var sortedProjects: [TodoProject] {
+        store.projects.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(L10n.string("筛选"))
+                    .font(.headline)
+                Spacer()
+                Button(L10n.string("清除全部")) { filter.clear() }
+                    .buttonStyle(.borderless)
+                    .disabled(!filter.isActive)
+                    .accessibilityHint(L10n.string("移除所有筛选条件"))
+            }
+
+            Divider()
+
+            filterSection(L10n.string("状态")) {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
+                    ForEach(TodoItem.Status.allCases) { status in
+                        filterChoice(
+                            title: L10n.string(status.title),
+                            symbol: status.symbolName,
+                            color: status.color,
+                            isSelected: filter.statuses.contains(status)
+                        ) {
+                            toggle(status, at: \.statuses)
+                        }
+                    }
+
+                    filterChoice(
+                        title: L10n.string("已逾期"),
+                        symbol: "exclamationmark.circle.fill",
+                        color: .red,
+                        isSelected: filter.overdueOnly
+                    ) {
+                        filter.overdueOnly.toggle()
+                    }
+                }
+            }
+
+            filterSection(L10n.string("所属项目")) {
+                ScrollView {
+                    LazyVStack(spacing: 3) {
+                        filterListChoice(
+                            title: L10n.string("无归类"),
+                            symbol: "tray",
+                            isSelected: filter.includesUnassignedProject
+                        ) {
+                            filter.includesUnassignedProject.toggle()
+                        }
+
+                        ForEach(sortedProjects) { project in
+                            filterListChoice(
+                                title: project.title,
+                                symbol: "folder",
+                                isSelected: filter.projectIDs.contains(project.id)
+                            ) {
+                                toggle(project.id, at: \.projectIDs)
+                            }
+                        }
+                    }
+                }
+                .scrollIndicators(sortedProjects.count > 3 ? .visible : .hidden)
+                .frame(height: listHeight(itemCount: sortedProjects.count + 1))
+            }
+
+            filterSection(L10n.string("标签")) {
+                ScrollView {
+                    LazyVStack(spacing: 3) {
+                        filterListChoice(
+                            title: L10n.string("无标签"),
+                            symbol: "tag.slash",
+                            isSelected: filter.includesUntagged
+                        ) {
+                            filter.includesUntagged.toggle()
+                        }
+
+                        ForEach(store.sortedTags) { tag in
+                            filterListChoice(
+                                title: tag.name,
+                                isSelected: filter.tagIDs.contains(tag.id),
+                                leading: { TaskTagDot(tag: tag, size: 9) }
+                            ) {
+                                toggle(tag.id, at: \.tagIDs)
+                            }
+                        }
+                    }
+                }
+                .scrollIndicators(store.sortedTags.count > 3 ? .visible : .hidden)
+                .frame(height: listHeight(itemCount: store.sortedTags.count + 1))
+            }
+
+            filterSection(L10n.string("重要度")) {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
+                    ForEach(TodoItem.Priority.allCases) { priority in
+                        filterChoice(
+                            title: L10n.string(priority.title),
+                            symbol: priority.symbolName,
+                            color: priority.swiftUIColor,
+                            isSelected: filter.priorities.contains(priority)
+                        ) {
+                            toggle(priority, at: \.priorities)
+                        }
+                    }
+                }
+            }
+
+            filterSection(L10n.string("紧急度")) {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
+                    ForEach(TodoItem.Urgency.allCases) { urgency in
+                        filterChoice(
+                            title: L10n.string(urgency.title),
+                            symbol: urgency.symbolName,
+                            color: urgency.filterColor,
+                            isSelected: filter.urgencies.contains(urgency)
+                        ) {
+                            toggle(urgency, at: \.urgencies)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+        .onExitCommand { dismiss() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.string("筛选待办"))
+    }
+
+    private func filterSection<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func filterChoice(
+        title: String,
+        symbol: String,
+        color: Color,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: symbol)
+                    .foregroundStyle(color)
+                    .frame(width: 15)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 2)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 9)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.07),
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(
+                        isSelected ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.14),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .accessibilityValue(L10n.string(isSelected ? "已选择" : "未选择"))
+    }
+
+    private func filterListChoice(
+        title: String,
+        symbol: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        filterListChoice(
+            title: title,
+            isSelected: isSelected,
+            leading: {
+                Image(systemName: symbol)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 15)
+                    .accessibilityHidden(true)
+            },
+            action: action
+        )
+    }
+
+    private func filterListChoice<Leading: View>(
+        title: String,
+        isSelected: Bool,
+        @ViewBuilder leading: () -> Leading,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                leading()
+                Text(title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.1) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .accessibilityValue(L10n.string(isSelected ? "已选择" : "未选择"))
+    }
+
+    private func toggle<Value: Hashable>(
+        _ value: Value,
+        at keyPath: WritableKeyPath<AllTodosFilterState, Set<Value>>
+    ) {
+        var updated = filter
+        if updated[keyPath: keyPath].contains(value) {
+            updated[keyPath: keyPath].remove(value)
+        } else {
+            updated[keyPath: keyPath].insert(value)
+        }
+        filter = updated
+    }
+
+    private func listHeight(itemCount: Int) -> CGFloat {
+        min(CGFloat(max(itemCount, 1)) * 31, 112)
+    }
+}
+
+private extension TodoItem.Urgency {
+    var filterColor: Color {
+        switch self {
+        case .none: .secondary
+        case .canWait: .green
+        case .today: .blue
+        case .mustToday: .red
         }
     }
 }
