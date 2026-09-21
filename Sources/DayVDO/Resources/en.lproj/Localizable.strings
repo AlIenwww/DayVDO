@@ -260,3 +260,37 @@
 "已选择" = "Selected";
 "未选择" = "Not selected";
 "已逾期" = "Overdue";
+
+"周" = "Week";
+
+"月" = "Month";
+
+"日历视图" = "Calendar view";
+
+"上一周" = "Previous week";
+
+"下一周" = "Next week";
+
+"无日期" = "No date";
+
+"调整开始日期" = "Adjust start date";
+
+"调整结束日期" = "Adjust end date";
+
+"调整开始时间" = "Adjust start time";
+
+"调整结束时间" = "Adjust end time";
+
+"修改日期将删除时间安排" = "Changing dates removes scheduled sessions";
+
+"删除安排并修改日期" = "Remove sessions and change dates";
+
+"内容已变化，请重试。" = "The content has changed. Please try again.";
+
+"原日期：%@\n新日期：%@\n将删除此待办的全部 %lld 段时间安排。" = "Previous dates: %@\nNew dates: %@\nAll %lld scheduled sessions for this task will be removed.";
+
+"调整待办与时间线分区" = "Resize todo and timeline areas";
+
+"拷贝" = "Copy";
+
+"粘贴" = "Paste";

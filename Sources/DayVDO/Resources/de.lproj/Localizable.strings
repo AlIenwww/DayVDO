@@ -178,3 +178,37 @@
 "已选择" = "Ausgewählt";
 "未选择" = "Nicht ausgewählt";
 "已逾期" = "Überfällig";
+
+"周" = "Woche";
+
+"月" = "Monat";
+
+"日历视图" = "Kalenderansicht";
+
+"上一周" = "Vorherige Woche";
+
+"下一周" = "Nächste Woche";
+
+"无日期" = "Ohne Datum";
+
+"调整开始日期" = "Startdatum ändern";
+
+"调整结束日期" = "Enddatum ändern";
+
+"调整开始时间" = "Startzeit ändern";
+
+"调整结束时间" = "Endzeit ändern";
+
+"修改日期将删除时间安排" = "Datumsänderungen entfernen geplante Zeitblöcke";
+
+"删除安排并修改日期" = "Zeitblöcke entfernen und Datum ändern";
+
+"内容已变化，请重试。" = "Der Inhalt hat sich geändert. Bitte erneut versuchen.";
+
+"原日期：%@\n新日期：%@\n将删除此待办的全部 %lld 段时间安排。" = "Bisheriges Datum: %@\nNeues Datum: %@\nAlle %lld geplanten Zeitblöcke dieser Aufgabe werden entfernt.";
+
+"调整待办与时间线分区" = "Aufgaben- und Zeitleistenbereiche anpassen";
+
+"拷贝" = "Kopieren";
+
+"粘贴" = "Einfügen";

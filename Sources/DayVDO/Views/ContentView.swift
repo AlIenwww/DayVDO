@@ -42,10 +42,14 @@ struct ContentView: View {
     @State private var allTodosScrollPosition = ScrollPosition(y: 0)
     @State private var todayHourHeight: CGFloat = 90
     @State private var todayScrollMinute: CGFloat?
+    @State private var calendarWeekHourHeight: CGFloat = 90
+    @State private var calendarWeekScrollMinute: CGFloat?
     @State private var calendarSelectedDate = Date.now
     @State private var calendarCurrentMonth = Date.now
     @State private var calendarInspectorPresented = false
     @StateObject private var projectExpansionState = ProjectExpansionState()
+    @StateObject private var allTodosPresentationCache = AllTodosView.PresentationCache()
+    @StateObject private var calendarWeekCache = CalendarWindowCache()
     @StateObject private var calendarWindowCache = CalendarWindowCache()
     @StateObject private var calendarTimelineSession = CalendarTimelineSession()
     @State private var isRecoveryPromptPresented = false
@@ -59,6 +63,9 @@ struct ContentView: View {
                     Label(L10n.string(destination.title), systemImage: destination.symbol)
                 }
             }
+            // Native List can retain row labels when only the locale changes.
+            // Recreate the sidebar, keeping the selected destination in its binding.
+            .id(store.settings.language)
             .navigationTitle("DayVDO")
             .navigationSplitViewColumnWidth(
                 min: 180,
@@ -83,7 +90,8 @@ struct ContentView: View {
                         query: $allTodosQuery,
                         filter: $allTodosFilter,
                         scrollPosition: $allTodosScrollPosition,
-                        expansionState: projectExpansionState
+                        expansionState: projectExpansionState,
+                        presentationCache: allTodosPresentationCache
                     )
                 case .calendar:
                     CalendarView(
@@ -91,8 +99,11 @@ struct ContentView: View {
                         columnVisibility: $columnVisibility,
                         selectedDate: $calendarSelectedDate,
                         currentMonth: $calendarCurrentMonth,
+                        weekHourHeight: $calendarWeekHourHeight,
+                        weekScrollMinute: $calendarWeekScrollMinute,
                         isInspectorPresented: $calendarInspectorPresented,
                         windowCache: calendarWindowCache,
+                        weekCache: calendarWeekCache,
                         timelineSession: calendarTimelineSession
                     )
                 case .settings:
@@ -116,7 +127,7 @@ struct ContentView: View {
                         Button {
                             editingItem = TodoItem(
                                 title: "",
-                                dueDate: selection == .today ? planningDay.date() : nil,
+                                dueDate: selection == .today ? planningDay.date() : (selection == .calendar ? calendarSelectedDate : nil),
                                 priority: store.settings.defaultPriority
                             )
                         } label: {
@@ -155,7 +166,7 @@ struct ContentView: View {
                     guard store.canModify else { return }
                     editingItem = TodoItem(
                         title: "",
-                        dueDate: selection == .today ? planningDay.date() : nil,
+                        dueDate: selection == .today ? planningDay.date() : (selection == .calendar ? calendarSelectedDate : nil),
                         priority: store.settings.defaultPriority
                     )
                 },
@@ -242,7 +253,8 @@ struct ContentView: View {
         )
         let month = calendar.dateInterval(of: .month, for: calendarCurrentMonth)?.start
             ?? calendarCurrentMonth
-        guard let monthWeek = CalendarMonthGrid.dates(containing: month, calendar: calendar).first,
+        guard let monthWeek = calendarTimelineSession.topWeek?.date(timeZone: calendar.timeZone)
+                ?? CalendarMonthGrid.dates(containing: month, calendar: calendar).first,
               let firstDate = calendar.date(byAdding: .weekOfYear, value: -12, to: monthWeek),
               let lastDate = calendar.date(byAdding: .day, value: 209, to: firstDate) else { return }
         let firstDay = LocalDay(firstDate, timeZone: calendar.timeZone)

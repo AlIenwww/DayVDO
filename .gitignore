@@ -7,3 +7,12 @@ dist/
 *.xccheckout
 *.xcscmblueprint
 xcuserdata/
+
+# Python caches and local virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local JetBrains IDE settings
+.idea/

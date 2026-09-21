@@ -79,6 +79,15 @@ struct DayVDOApp: App {
     @StateObject private var store: TodoStore
 
     init() {
+        if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+           let isolatedURL = AppDataLocation.isolatedTestingURL(
+               bundleIdentifier: Bundle.main.bundleIdentifier,
+               enabled: Bundle.main.object(forInfoDictionaryKey: "DayVDOIsolatedTesting") as? Bool == true,
+               applicationSupport: support
+           ) {
+            _store = StateObject(wrappedValue: TodoStore(fileURL: isolatedURL))
+            return
+        }
         #if DEBUG
         // A test-only bundle may opt into an explicit data file. This remains
         // isolated even when a UI automation tool relaunches it without its environment.

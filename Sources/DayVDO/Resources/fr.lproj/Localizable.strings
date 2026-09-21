@@ -178,3 +178,37 @@
 "已选择" = "Sélectionné";
 "未选择" = "Non sélectionné";
 "已逾期" = "En retard";
+
+"周" = "Semaine";
+
+"月" = "Mois";
+
+"日历视图" = "Vue du calendrier";
+
+"上一周" = "Semaine précédente";
+
+"下一周" = "Semaine suivante";
+
+"无日期" = "Sans date";
+
+"调整开始日期" = "Modifier la date de début";
+
+"调整结束日期" = "Modifier la date de fin";
+
+"调整开始时间" = "Modifier l’heure de début";
+
+"调整结束时间" = "Modifier l’heure de fin";
+
+"修改日期将删除时间安排" = "Changer les dates supprime les créneaux planifiés";
+
+"删除安排并修改日期" = "Supprimer les créneaux et changer les dates";
+
+"内容已变化，请重试。" = "Le contenu a changé. Veuillez réessayer.";
+
+"原日期：%@\n新日期：%@\n将删除此待办的全部 %lld 段时间安排。" = "Anciennes dates : %@\nNouvelles dates : %@\nLes %lld créneaux de cette tâche seront supprimés.";
+
+"调整待办与时间线分区" = "Redimensionner les zones des tâches et de la chronologie";
+
+"拷贝" = "Copier";
+
+"粘贴" = "Coller";

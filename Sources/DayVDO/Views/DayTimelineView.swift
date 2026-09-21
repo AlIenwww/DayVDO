@@ -689,7 +689,7 @@ struct DayTimelineView: View {
     }
 }
 
-private struct TimelineControlScrollMonitor: NSViewRepresentable {
+struct TimelineControlScrollMonitor: NSViewRepresentable {
     var zoom: (CGFloat, Bool) -> Void
 
     func makeNSView(context: Context) -> ControlScrollView {

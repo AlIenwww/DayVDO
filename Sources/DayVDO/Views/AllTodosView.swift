@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AllTodosView: View {
-    private enum TopLevelEntry: Identifiable {
+    enum TopLevelEntry: Identifiable {
         case project(TodoProject)
         case todo(TodoItem)
 
@@ -20,9 +20,34 @@ struct AllTodosView: View {
         }
     }
 
-    private struct PresentationSnapshot {
+    struct PresentationSnapshot {
         var topLevelEntries: [TopLevelEntry]
         var childrenByProject: [UUID: [TodoItem]]
+    }
+
+    @MainActor
+    final class PresentationCache: ObservableObject {
+        struct Key: Equatable {
+            var revision: UInt64
+            var query: String
+            var filter: AllTodosFilterState
+            var showCompleted: Bool
+            var expanded: Set<UUID>
+            var rendered: Set<UUID>
+            var today: LocalDay
+            var locale: String
+        }
+
+        private var key: Key?
+        private var snapshot: PresentationSnapshot?
+
+        func value(for key: Key, build: () -> PresentationSnapshot) -> PresentationSnapshot {
+            if self.key == key, let snapshot { return snapshot }
+            let result = build()
+            self.key = key
+            snapshot = result
+            return result
+        }
     }
 
     @EnvironmentObject private var store: TodoStore
@@ -33,6 +58,7 @@ struct AllTodosView: View {
     @Binding var filter: AllTodosFilterState
     @Binding var scrollPosition: ScrollPosition
     @ObservedObject var expansionState: ProjectExpansionState
+    let presentationCache: PresentationCache
     @State private var visualExpandedProjectIDs: Set<UUID> = []
     @State private var renderedProjectIDs: Set<UUID> = []
     @State private var pendingCollapseTokens: [UUID: UUID] = [:]
@@ -44,8 +70,36 @@ struct AllTodosView: View {
     @FocusState private var focusedProjectAddButtonID: UUID?
     @FocusState private var focusedEntryID: String?
 
+    init(
+        editingItem: Binding<TodoItem?>,
+        editingProject: Binding<TodoProject?>,
+        searchFocusRequest: Int,
+        query: Binding<String>,
+        filter: Binding<AllTodosFilterState>,
+        scrollPosition: Binding<ScrollPosition>,
+        expansionState: ProjectExpansionState,
+        presentationCache: PresentationCache
+    ) {
+        _editingItem = editingItem
+        _editingProject = editingProject
+        self.searchFocusRequest = searchFocusRequest
+        _query = query
+        _filter = filter
+        _scrollPosition = scrollPosition
+        self.expansionState = expansionState
+        self.presentationCache = presentationCache
+        // Restore the expanded rows before the first layout, not in a second pass.
+        _visualExpandedProjectIDs = State(initialValue: expansionState.expandedIDs)
+        _renderedProjectIDs = State(initialValue: expansionState.expandedIDs)
+    }
+
     var body: some View {
-        let presentation = makePresentationSnapshot()
+        let presentation = presentationCache.value(for: .init(
+            revision: store.contentRevision, query: query, filter: filter,
+            showCompleted: store.settings.showCompleted,
+            expanded: visualExpandedProjectIDs, rendered: renderedProjectIDs,
+            today: LocalDay(.now), locale: L10n.locale.identifier
+        ), build: makePresentationSnapshot)
         Group {
             if presentation.topLevelEntries.isEmpty {
                 EmptyStateView(
@@ -595,10 +649,14 @@ struct AllTodosView: View {
         for projectID in desired {
             pendingCollapseTokens.removeValue(forKey: projectID)
         }
-        renderedProjectIDs.formUnion(desired)
+        if !desired.isSubset(of: renderedProjectIDs) {
+            renderedProjectIDs.formUnion(desired)
+        }
 
         let removed = visualExpandedProjectIDs.subtracting(desired)
-        let update = { visualExpandedProjectIDs = desired }
+        let update = {
+            if visualExpandedProjectIDs != desired { visualExpandedProjectIDs = desired }
+        }
         if animated {
             let tokens = Dictionary(uniqueKeysWithValues: removed.map { ($0, UUID()) })
             pendingCollapseTokens.merge(tokens) { _, new in new }
@@ -623,8 +681,8 @@ struct AllTodosView: View {
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 update()
-                renderedProjectIDs = desired
-                pendingCollapseTokens.removeAll()
+                if renderedProjectIDs != desired { renderedProjectIDs = desired }
+                if !pendingCollapseTokens.isEmpty { pendingCollapseTokens.removeAll() }
             }
         }
     }

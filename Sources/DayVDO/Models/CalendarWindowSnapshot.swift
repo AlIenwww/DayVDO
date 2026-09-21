@@ -2,7 +2,7 @@ import Combine
 import Foundation
 
 struct CalendarWindowSnapshot: Equatable, Sendable {
-    struct Key: Equatable, Sendable {
+    struct Key: Hashable, Sendable {
         var revision: UInt64
         var firstDay: LocalDay
         var lastDay: LocalDay
@@ -13,6 +13,8 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
 
     struct Item: Identifiable, Equatable, Sendable {
         var id: UUID
+        var startDay: LocalDay
+        var dueDay: LocalDay
         var title: String
         var status: TodoItem.Status
         var hasProject: Bool
@@ -22,10 +24,16 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
     }
 
     var key: Key
+    var rangedItems: [Item]
     var itemsByDay: [LocalDay: [Item]]
+    var itemsByWeek: [LocalDay: [Item]] = [:]
 
     func items(on day: LocalDay) -> [Item] {
         itemsByDay[day] ?? []
+    }
+
+    func items(inWeek week: LocalDay) -> [Item] {
+        itemsByWeek[week] ?? []
     }
 
     static func build(
@@ -38,6 +46,7 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
             .filter { key.showCompleted || !$0.isCompleted }
             .sorted(by: areInIncreasingOrder)
         var result: [LocalDay: [Item]] = [:]
+        var ranged: [Item] = []
 
         for item in sortedItems {
             guard let itemStart = item.startDay,
@@ -49,11 +58,14 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
 
             let summary = Item(
                 id: item.id,
+                startDay: itemStart,
+                dueDay: itemEnd,
                 title: item.title,
                 status: item.status,
                 hasProject: item.projectID != nil,
                 tagColor: item.tagID.flatMap { colorsByTag[$0] }
             )
+            ranged.append(summary)
             var day = first
             while day <= last {
                 result[day, default: []].append(summary)
@@ -61,7 +73,23 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
             }
         }
 
-        return CalendarWindowSnapshot(key: key, itemsByDay: result)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: key.timeZoneIdentifier) ?? .autoupdatingCurrent
+        calendar.firstWeekday = key.firstWeekday
+        var weeks: [LocalDay: [Item]] = [:]
+        for item in ranged {
+            let first = max(item.startDay, key.firstDay)
+            let last = min(item.dueDay, key.lastDay)
+            let date = first.date(timeZone: calendar.timeZone)
+            let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+            var week = LocalDay(start, timeZone: calendar.timeZone)
+            while week <= last {
+                weeks[week, default: []].append(item)
+                week = week.adding(days: 7)
+            }
+        }
+        return CalendarWindowSnapshot(key: key, rangedItems: ranged,
+                                      itemsByDay: result, itemsByWeek: weeks)
     }
 
     private static func areInIncreasingOrder(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {
@@ -72,7 +100,9 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
         case let (left?, right?) where left != right: return left < right
         case (_?, nil): return true
         case (nil, _?): return false
-        default: return lhs.createdAt < rhs.createdAt
+        default:
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.id.uuidString < rhs.id.uuidString
         }
     }
 }

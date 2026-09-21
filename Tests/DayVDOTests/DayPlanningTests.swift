@@ -157,44 +157,27 @@ final class DayPlanningTests: XCTestCase {
     }
 
     @MainActor
-    func testScheduleDateIsIndependentFromTaskRangeAndUndo() async throws {
+    func testScheduleMovementKeepsTaskDatesAndUndo() async throws {
         let (store, url) = makeStore()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        var todo = TodoItem(title: "Task", dueDate: friday.date(), estimatedMinutes: 90)
-        store.upsert(todo)
+        let todo = TodoItem(title: "Task", dueDate: friday.date(), estimatedMinutes: 90)
+        XCTAssertTrue(store.upsert(todo))
         let block = DaySchedule(startDay: friday, startMinute: 1380, durationMinutes: 120, content: .todo(todo.id))
         XCTAssertTrue(store.upsertSchedule(block))
-        var anotherDay = block
-        anotherDay.id = UUID()
-        anotherDay.startDay = friday.adding(days: 4)
-        XCTAssertTrue(store.upsertSchedule(anotherDay))
         let undo = UndoManager(); undo.groupsByEvent = false; store.undoManager = undo
-        todo.startDay = friday.adding(days: 1)
-        todo.dueDay = friday.adding(days: 2)
+        var moved = block
+        moved.startDay = friday.adding(days: 4)
         undo.beginUndoGrouping()
-        XCTAssertTrue(store.upsert(todo))
+        XCTAssertTrue(store.upsertSchedule(moved))
         undo.endUndoGrouping()
-        XCTAssertEqual(store.schedules, [block, anotherDay])
-        XCTAssertEqual(store.items.first?.startDay, friday.adding(days: 1))
-        XCTAssertEqual(store.items.first?.dueDay, friday.adding(days: 2))
+        XCTAssertEqual(store.items.first, todo)
+        XCTAssertEqual(store.schedules, [moved])
         undo.undo()
-        XCTAssertEqual(store.items.first?.startDay, friday)
-        XCTAssertEqual(store.items.first?.dueDay, friday)
-        XCTAssertEqual(store.schedules, [block, anotherDay])
+        XCTAssertEqual(store.items.first, todo)
+        XCTAssertEqual(store.schedules, [block])
         undo.redo()
-        XCTAssertEqual(store.items.first?.startDay, friday.adding(days: 1))
-        XCTAssertEqual(store.schedules, [block, anotherDay])
-        todo.startDay = nil
-        todo.dueDay = nil
-        undo.beginUndoGrouping()
-        XCTAssertTrue(store.upsert(todo))
-        undo.endUndoGrouping()
-        XCTAssertNil(store.items.first?.startDay)
-        XCTAssertNil(store.items.first?.dueDay)
-        XCTAssertEqual(store.schedules, [block, anotherDay])
-        undo.undo()
-        XCTAssertEqual(store.items.first?.startDay, friday.adding(days: 1))
-        XCTAssertEqual(store.schedules, [block, anotherDay])
+        XCTAssertEqual(store.items.first, todo)
+        XCTAssertEqual(store.schedules, [moved])
         _ = await store.flushPersistence()
     }
 

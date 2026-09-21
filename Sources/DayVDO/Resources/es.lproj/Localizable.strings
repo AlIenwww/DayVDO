@@ -178,3 +178,37 @@
 "已选择" = "Seleccionado";
 "未选择" = "No seleccionado";
 "已逾期" = "Vencidas";
+
+"周" = "Semana";
+
+"月" = "Mes";
+
+"日历视图" = "Vista de calendario";
+
+"上一周" = "Semana anterior";
+
+"下一周" = "Semana siguiente";
+
+"无日期" = "Sin fecha";
+
+"调整开始日期" = "Ajustar fecha de inicio";
+
+"调整结束日期" = "Ajustar fecha de fin";
+
+"调整开始时间" = "Ajustar hora de inicio";
+
+"调整结束时间" = "Ajustar hora de fin";
+
+"修改日期将删除时间安排" = "Cambiar las fechas elimina las sesiones programadas";
+
+"删除安排并修改日期" = "Eliminar sesiones y cambiar fechas";
+
+"内容已变化，请重试。" = "El contenido ha cambiado. Inténtalo de nuevo.";
+
+"原日期：%@\n新日期：%@\n将删除此待办的全部 %lld 段时间安排。" = "Fechas anteriores: %@\nFechas nuevas: %@\nSe eliminarán las %lld sesiones programadas de esta tarea.";
+
+"调整待办与时间线分区" = "Ajustar áreas de tareas y cronología";
+
+"拷贝" = "Copiar";
+
+"粘贴" = "Pegar";

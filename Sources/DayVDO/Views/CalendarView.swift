@@ -7,11 +7,17 @@ struct CalendarView: View {
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var selectedDate: Date
     @Binding var currentMonth: Date
+    @AppStorage("calendarDisplayMode") private var displayMode = CalendarDisplayMode.month.rawValue
+    @StateObject private var selection = CalendarTodoSelection()
+    @State private var dateChange: TodoStore.DateChangeConfirmation?
+    @Binding var weekHourHeight: CGFloat
+    @Binding var weekScrollMinute: CGFloat?
     @State private var navigationRequest: CalendarNavigationRequest?
     @State private var isDatePickerPresented = false
     @State private var datePickerSelection = Date.now
     @Binding var isInspectorPresented: Bool
     @ObservedObject var windowCache: CalendarWindowCache
+    let weekCache: CalendarWindowCache
     let timelineSession: CalendarTimelineSession
 
     private var calendar: Calendar {
@@ -30,29 +36,74 @@ struct CalendarView: View {
     var body: some View {
         VStack(spacing: 0) {
             calendarToolbar
-            weekdayHeader
-            CalendarTimeline(
-                calendar: calendar,
-                displayedMonth: currentMonth,
-                selectedDate: selectedDate,
-                navigationRequest: navigationRequest,
-                store: store,
-                windowCache: windowCache,
-                session: timelineSession,
-                onSelectDate: { selectedDate = $0 },
-                onVisibleMonthChange: { currentMonth = $0 }
-            )
-            .id(CalendarViewportIdentity(
-                firstWeekday: calendar.firstWeekday,
-                timeZoneIdentifier: calendar.timeZone.identifier
-            ))
+            if displayMode == CalendarDisplayMode.week.rawValue {
+                CalendarWeekView(
+                    calendar: calendar, selectedDate: $selectedDate,
+                    hourHeight: $weekHourHeight, scrollMinute: $weekScrollMinute,
+                    windowCache: weekCache,
+                    createTodo: createTodo, changeTodo: changeTodo,
+                    editTodo: { editingItem = $0 },
+                    showMore: { day in selectedDate = day.date(); isInspectorPresented = true }
+                )
+            } else {
+                weekdayHeader
+                CalendarTimeline(
+                    calendar: calendar,
+                    displayedMonth: currentMonth,
+                    selectedDate: selectedDate,
+                    navigationRequest: navigationRequest,
+                    store: store,
+                    windowCache: windowCache,
+                    session: timelineSession,
+                    onSelectDate: { selectedDate = $0 },
+                    onVisibleMonthChange: { currentMonth = $0 },
+                    createTodo: createTodo, changeTodo: changeTodo,
+                    editTodo: { editingItem = $0 },
+                    showMore: { day in selectedDate = day.date(); isInspectorPresented = true }
+                )
+                .id(CalendarViewportIdentity(
+                    firstWeekday: calendar.firstWeekday,
+                    timeZoneIdentifier: calendar.timeZone.identifier
+                ))
+            }
         }
+        .environmentObject(selection)
+        .onAppear { selection.day = LocalDay(selectedDate) }
+        .onChange(of: selectedDate) { _, date in selection.day = LocalDay(date) }
+        .onChange(of: editingItem) { _, item in
+            if item == nil { selection.draft = nil }
+        }
+        .onChange(of: store.contentRevision) { _, _ in
+            if let draft = selection.draft, store.item(withID: draft.id) != nil { selection.draft = nil }
+            if let id = selection.selectedID, store.item(withID: id) == nil { selection.selectedID = nil }
+        }
+        .confirmationDialog(L10n.format("删除“%@”？", selection.pendingDelete?.title ?? ""),
+            isPresented: Binding(get: { selection.pendingDelete != nil }, set: { if !$0 { selection.pendingDelete = nil } }),
+            titleVisibility: .visible) {
+                Button(L10n.string("删除"), role: .destructive) {
+                    if let item = selection.pendingDelete { _ = store.delete(item) }
+                    selection.pendingDelete = nil; selection.selectedID = nil
+                }
+                Button(L10n.string("取消"), role: .cancel) { selection.pendingDelete = nil }
+            } message: { Text(L10n.string("删除后可以从“编辑”菜单撤销。")) }
         .background(.background)
+        .dateChangeConfirmation($dateChange) { _ in }
+        .onChange(of: displayMode) { _, _ in
+            currentMonth = monthStart(for: selectedDate)
+            timelineSession.topWeek = nil
+            navigate(to: selectedDate)
+        }
         .inspector(isPresented: $isInspectorPresented) {
             dayDetail
                 .inspectorColumnWidth(min: 230, ideal: 300, max: 360)
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { createTodo(LocalDay(selectedDate), LocalDay(selectedDate)) } label: {
+                    Label(L10n.string("新建待办…"), systemImage: "plus")
+                }
+                .help(L10n.string("新建待办 (⌘N)"))
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     let willPresentInspector = !isInspectorPresented
@@ -80,42 +131,67 @@ struct CalendarView: View {
     }
 
     private var calendarToolbar: some View {
-        HStack(spacing: 8) {
-            Button {
-                datePickerSelection = selectedDate
-                isDatePickerPresented.toggle()
-            } label: {
-                HStack(spacing: 6) {
-                    Text(currentMonth.formatted(.dateTime.year().month(.wide).locale(L10n.locale)))
-                        .font(.title2.weight(.semibold))
-                        .contentTransition(.numericText())
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .contentShape(Rectangle())
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                calendarDateButton.fixedSize()
+                Spacer(minLength: 8)
+                calendarNavigationControls.fixedSize()
             }
-            .buttonStyle(.plain)
-            .help(L10n.string("选择日期"))
-            .popover(isPresented: $isDatePickerPresented, arrowEdge: .top) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(L10n.string("跳转到日期"))
-                        .font(.headline)
-                    BorderlessCalendarPicker(
-                        selection: $datePickerSelection,
-                        startsOnMonday: store.settings.startWeekOnMonday
-                    )
-                        .fixedSize()
-                }
-                .padding(16)
-                .onChange(of: datePickerSelection) { _, newDate in
-                    selectedDate = newDate
-                    navigate(to: newDate)
-                    isDatePickerPresented = false
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                calendarDateButton
+                HStack { Spacer(minLength: 0); calendarNavigationControls }
             }
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(minHeight: 54)
+    }
 
-            Spacer()
+    private var calendarDateButton: some View {
+        Button {
+            datePickerSelection = selectedDate
+            isDatePickerPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Text((displayMode == CalendarDisplayMode.week.rawValue ? selectedDate : currentMonth).formatted(.dateTime.year().month(.wide).locale(L10n.locale)))
+                    .font(.title2.weight(.semibold))
+                    .contentTransition(.numericText())
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L10n.string("选择日期"))
+        .popover(isPresented: $isDatePickerPresented, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L10n.string("跳转到日期"))
+                    .font(.headline)
+                BorderlessCalendarPicker(
+                    selection: $datePickerSelection,
+                    startsOnMonday: store.settings.startWeekOnMonday
+                )
+                    .fixedSize()
+            }
+            .padding(16)
+            .onChange(of: datePickerSelection) { _, newDate in
+                selectedDate = newDate
+                navigate(to: newDate)
+                isDatePickerPresented = false
+            }
+        }
+
+    }
+
+    private var calendarNavigationControls: some View {
+        HStack(spacing: 8) {
+            Picker(L10n.string("日历视图"), selection: $displayMode) {
+                Text(L10n.string("周")).tag(CalendarDisplayMode.week.rawValue)
+                Text(L10n.string("月")).tag(CalendarDisplayMode.month.rawValue)
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: L10n.prefersCompactControls ? 108 : 168)
 
             Button(L10n.string("今天")) {
                 let today = Date.now
@@ -128,18 +204,15 @@ struct CalendarView: View {
             } label: {
                 Image(systemName: "chevron.left")
             }
-            .help(L10n.string("上个月"))
+            .help(L10n.string(displayMode == CalendarDisplayMode.week.rawValue ? "上一周" : "上个月"))
 
             Button {
                 moveMonth(by: 1)
             } label: {
                 Image(systemName: "chevron.right")
             }
-            .help(L10n.string("下个月"))
+            .help(L10n.string(displayMode == CalendarDisplayMode.week.rawValue ? "下一周" : "下个月"))
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 20)
-        .frame(height: 54)
     }
 
     private var weekdayHeader: some View {
@@ -226,11 +299,31 @@ struct CalendarView: View {
         calendar.dateInterval(of: .month, for: date)?.start ?? date
     }
 
+    private func createTodo(_ start: LocalDay, _ end: LocalDay) {
+        let draft = TodoItem(title: "", startDate: start.date(), dueDate: end.date(),
+                             priority: store.settings.defaultPriority)
+        selection.draft = draft
+        editingItem = draft
+    }
+
+    private func changeTodo(_ proposed: TodoItem) {
+        guard var latest = store.item(withID: proposed.id) else { return }
+        latest.startDay = proposed.startDay; latest.dueDay = proposed.dueDay
+        if let request = store.dateChangeConfirmation(for: latest) { dateChange = request }
+        else { _ = store.upsert(latest) }
+    }
+
     private func navigate(to date: Date) {
+        selection.selectedID = nil
+        if displayMode == CalendarDisplayMode.week.rawValue { selectedDate = date }
         navigationRequest = CalendarNavigationRequest(date: date)
     }
 
     private func moveMonth(by value: Int) {
+        if displayMode == CalendarDisplayMode.week.rawValue {
+            selectedDate = LocalDay(selectedDate).adding(days: value * 7).date()
+            return
+        }
         guard let target = calendar.date(byAdding: .month, value: value, to: currentMonth) else { return }
         navigate(to: target)
     }
@@ -280,6 +373,11 @@ private struct CalendarTimeline: View {
     let session: CalendarTimelineSession
     let onSelectDate: (Date) -> Void
     let onVisibleMonthChange: (Date) -> Void
+    let createTodo: (LocalDay, LocalDay) -> Void
+    let changeTodo: (TodoItem) -> Void
+    let editTodo: (TodoItem) -> Void
+    let showMore: (LocalDay) -> Void
+    @StateObject private var dateInteraction = CalendarDateInteraction()
 
     @State private var timelineAnchorWeek: Date
     @State private var loadedWeekRange = Self.initialLoadedWeekRange
@@ -305,7 +403,11 @@ private struct CalendarTimeline: View {
         windowCache: CalendarWindowCache,
         session: CalendarTimelineSession,
         onSelectDate: @escaping (Date) -> Void,
-        onVisibleMonthChange: @escaping (Date) -> Void
+        onVisibleMonthChange: @escaping (Date) -> Void,
+        createTodo: @escaping (LocalDay, LocalDay) -> Void,
+        changeTodo: @escaping (TodoItem) -> Void,
+        editTodo: @escaping (TodoItem) -> Void,
+        showMore: @escaping (LocalDay) -> Void
     ) {
         self.calendar = calendar
         self.displayedMonth = displayedMonth
@@ -316,6 +418,8 @@ private struct CalendarTimeline: View {
         self.session = session
         self.onSelectDate = onSelectDate
         self.onVisibleMonthChange = onVisibleMonthChange
+        self.createTodo = createTodo; self.changeTodo = changeTodo
+        self.editTodo = editTodo; self.showMore = showMore
 
         let month = calendar.dateInterval(of: .month, for: displayedMonth)?.start ?? displayedMonth
         let restoredTop = session.topWeek?.date(timeZone: calendar.timeZone)
@@ -336,13 +440,14 @@ private struct CalendarTimeline: View {
                         ForEach(Self.virtualWeekRange, id: \.self) { weekOffset in
                             Group {
                                 if loadedWeekRange.contains(weekOffset) {
-                                    CalendarWeekRow(
-                                        weekStart: week(at: weekOffset),
-                                        displayedMonth: displayedMonth,
-                                        selectedDate: selectedDate,
-                                        calendar: calendar,
-                                        snapshot: windowCache.snapshot,
-                                        onSelectDate: onSelectDate
+                                    CalendarDateWeekRow(
+                                        interaction: dateInteraction,
+                                        week: LocalDay(week(at: weekOffset), timeZone: calendar.timeZone),
+                                        selected: LocalDay(selectedDate, timeZone: calendar.timeZone),
+                                        month: calendar.component(.month, from: displayedMonth),
+                                        items: windowCache.snapshot?.items(inWeek: LocalDay(week(at: weekOffset), timeZone: calendar.timeZone)) ?? [],
+                                        select: { onSelectDate($0.date()) }, showMore: showMore,
+                                        edit: editTodo
                                     )
                                 } else {
                                     Color.clear.accessibilityHidden(true)
@@ -355,6 +460,19 @@ private struct CalendarTimeline: View {
                     .scrollTargetLayout()
                     .padding(.horizontal, 12)
                     .background(CalendarScrollIndicatorHider())
+                }
+                .scrollDisabled(dateInteraction.drag != nil || dateInteraction.suppressed)
+                .onPreferenceChange(CalendarWeekFrames.self) { dateInteraction.frames = $0 }
+                .onAppear { dateInteraction.viewport = geometry.size }
+                .onChange(of: geometry.size) { _, size in if dateInteraction.drag != nil { dateInteraction.cancel() }; dateInteraction.viewport = size }
+                .onPreferenceChange(CalendarDateHitRegions.self) { regions in
+                    let updated = regions.keys.sorted().flatMap { regions[$0] ?? [] }
+                    if dateInteraction.hitRegions != updated { dateInteraction.hitRegions = updated }
+                }
+                .overlay {
+                    CalendarDateInput(interaction: dateInteraction, store: store,
+                        select: { onSelectDate($0.date()) }, showMore: showMore,
+                        create: createTodo, change: changeTodo, edit: editTodo)
                 }
                 .scrollPosition(id: $topWeekOffset, anchor: .top)
                 .task {
@@ -456,6 +574,8 @@ private struct CalendarTimeline: View {
                 .onChange(of: store.settings.showCompleted) { _, _ in prepareSnapshot() }
             }
         }
+        .coordinateSpace(name: "calendarDateViewport")
+        .onDisappear { dateInteraction.release() }
     }
 
     private func viewportGeometryChanged(
@@ -973,149 +1093,6 @@ private final class ScrollIndicatorProbeView: NSView {
                 return
             }
             ancestor = view.superview
-        }
-    }
-}
-
-private struct CalendarWeekRow: View {
-    let weekStart: Date
-    let displayedMonth: Date
-    let selectedDate: Date
-    let calendar: Calendar
-    let snapshot: CalendarWindowSnapshot?
-    let onSelectDate: (Date) -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<7, id: \.self) { column in
-                let date = calendar.date(byAdding: .day, value: column, to: weekStart) ?? weekStart
-                CalendarDayCell(
-                    date: date,
-                    displayedMonth: displayedMonth,
-                    selectedDate: selectedDate,
-                    calendar: calendar,
-                    items: snapshot?.items(
-                        on: LocalDay(date, timeZone: calendar.timeZone)
-                    ) ?? [],
-                    onSelectDate: onSelectDate
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay {
-            CalendarGridLines(columns: 7, rows: 1)
-                .allowsHitTesting(false)
-        }
-    }
-}
-
-private struct CalendarDayCell: View {
-    let date: Date
-    let displayedMonth: Date
-    let selectedDate: Date
-    let calendar: Calendar
-    let items: [CalendarWindowSnapshot.Item]
-    let onSelectDate: (Date) -> Void
-
-    var body: some View {
-        let selected = calendar.isDate(date, inSameDayAs: selectedDate)
-        let today = calendar.isDateInToday(date)
-        let belongsToMonth = calendar.isDate(date, equalTo: displayedMonth, toGranularity: .month)
-
-        Button {
-            onSelectDate(date)
-        } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("\(calendar.component(.day, from: date))")
-                    .font(.caption.weight(today || selected ? .semibold : .regular))
-                    .foregroundStyle(
-                        selected ? Color.white :
-                            (today ? Color.accentColor : (belongsToMonth ? Color.primary : Color.secondary))
-                    )
-                    .frame(width: 23, height: 23)
-                    .background(selected ? Color.accentColor : Color.clear, in: Circle())
-
-                ForEach(items.prefix(2)) { item in
-                    let itemColor = item.tagColor?.color ?? Color.accentColor
-                    HStack(spacing: 3) {
-                        if item.status == .inProgress {
-                            Image(systemName: item.status.symbolName)
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundStyle(.orange)
-                                .accessibilityHidden(true)
-                        }
-                        if item.hasProject {
-                            Image(systemName: "folder.fill")
-                                .font(.system(size: 7))
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(item.title)
-                            .strikethrough(item.isCompleted)
-                            .lineLimit(1)
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                    .padding(.horizontal, 4)
-                    .padding(.leading, 3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        itemColor.opacity(item.isCompleted ? 0.05 : 0.13),
-                        in: RoundedRectangle(cornerRadius: 3)
-                    )
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(itemColor.opacity(item.isCompleted ? 0.45 : 0.9))
-                            .frame(width: 2)
-                            .padding(.vertical, 2)
-                    }
-                }
-
-                if items.count > 2 {
-                    Text(L10n.format("另有 %lld 项", items.count - 2))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(6)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(selected ? Color.accentColor.opacity(0.06) : Color.clear)
-            .contentShape(Rectangle())
-            .opacity(belongsToMonth ? 1 : 0.55)
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .accessibilityLabel(
-            date.formatted(.dateTime.year().month(.wide).day().locale(L10n.locale))
-        )
-        .accessibilityValue(L10n.format("%lld 项待办", items.count))
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityHint(today ? L10n.string("今天") : "")
-    }
-}
-
-private struct CalendarGridLines: View {
-    let columns: Int
-    let rows: Int
-
-    var body: some View {
-        GeometryReader { geometry in
-            Path { path in
-                for column in 0...columns {
-                    let x = geometry.size.width * CGFloat(column) / CGFloat(columns)
-                    path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
-                }
-                for row in 0...rows {
-                    let y = geometry.size.height * CGFloat(row) / CGFloat(rows)
-                    path.move(to: CGPoint(x: 0, y: y))
-                    path.addLine(to: CGPoint(x: geometry.size.width, y: y))
-                }
-            }
-            .stroke(Color.secondary.opacity(0.22), lineWidth: 0.5)
         }
     }
 }

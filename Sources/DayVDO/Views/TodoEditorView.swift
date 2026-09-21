@@ -9,6 +9,7 @@ struct TodoEditorView: View {
     @State private var isShowingStartDatePicker = false
     @State private var isShowingDeadlinePicker = false
     @State private var isEstimateValid = true
+    @State private var dateChange: TodoStore.DateChangeConfirmation?
     @FocusState private var titleIsFocused: Bool
 
     let isEditing: Bool
@@ -244,6 +245,7 @@ struct TodoEditorView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
+        .dateChangeConfirmation($dateChange) { _ in dismiss() }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
         .task {
@@ -255,6 +257,10 @@ struct TodoEditorView: View {
     private func save() {
         let candidate = dateInput.applying(to: draft)
         guard dateInput.isValid, candidate.hasValidDateRange else { return }
+        if let request = store.dateChangeConfirmation(for: candidate) {
+            dateChange = request
+            return
+        }
         if onSave(candidate) || (store.canModify && store.items.contains(candidate)) {
             dismiss()
         }

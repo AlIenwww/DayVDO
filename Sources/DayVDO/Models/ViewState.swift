@@ -114,11 +114,14 @@ final class ProjectExpansionState: ObservableObject {
 
     func synchronize(projectIDs: Set<UUID>, completedIDs: Set<UUID>) {
         let newlyCompletedProjects = completedIDs.subtracting(self.completedIDs)
-        expandedIDs.subtract(newlyCompletedProjects)
-        expandedIDs.formIntersection(projectIDs)
-        knownIDs.formUnion(projectIDs)
-        knownIDs.formIntersection(projectIDs)
-        self.completedIDs = completedIDs.intersection(projectIDs)
+        let nextExpanded = expandedIDs.subtracting(newlyCompletedProjects).intersection(projectIDs)
+        let nextKnown = projectIDs
+        let nextCompleted = completedIDs.intersection(projectIDs)
+        guard nextExpanded != expandedIDs || nextKnown != knownIDs
+                || nextCompleted != self.completedIDs else { return }
+        if nextExpanded != expandedIDs { expandedIDs = nextExpanded }
+        knownIDs = nextKnown
+        self.completedIDs = nextCompleted
         persist()
     }
 

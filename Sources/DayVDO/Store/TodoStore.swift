@@ -312,8 +312,35 @@ final class TodoStore: ObservableObject {
         }.sorted(by: Self.areInIncreasingOrder)
     }
 
+    /// A confirmation authorizes exactly the displayed item and schedule versions.
+    struct DateChangeConfirmation: Equatable {
+        let original: TodoItem
+        let candidate: TodoItem
+        let schedules: [DaySchedule]
+    }
+
+    func dateChangeConfirmation(for candidate: TodoItem) -> DateChangeConfirmation? {
+        guard let original = item(withID: candidate.id),
+              original.startDay != candidate.startDay || original.dueDay != candidate.dueDay else { return nil }
+        let linked = schedules(for: candidate.id)
+        guard !linked.isEmpty else { return nil }
+        return DateChangeConfirmation(original: original, candidate: candidate, schedules: linked)
+    }
+
+    @discardableResult
+    func confirmDateChange(_ request: DateChangeConfirmation) -> Bool {
+        guard item(withID: request.original.id) == request.original,
+              schedules(for: request.original.id) == request.schedules else { return false }
+        return saveItem(request.candidate, removingSchedules: true)
+    }
+
     @discardableResult
     func upsert(_ item: TodoItem) -> Bool {
+        guard dateChangeConfirmation(for: item) == nil else { return false }
+        return saveItem(item, removingSchedules: false)
+    }
+
+    private func saveItem(_ item: TodoItem, removingSchedules: Bool) -> Bool {
         var copy = item
         copy.title = copy.normalizedTitle
         guard !copy.title.isEmpty,
@@ -353,6 +380,7 @@ final class TodoStore: ObservableObject {
         }
 
         return performUndoable(L10n.string(isEditing ? "编辑待办" : "添加待办")) {
+            if removingSchedules { schedules.removeAll { $0.todoID == copy.id } }
             if let index = items.firstIndex(where: { $0.id == copy.id }) {
                 items[index] = copy
             } else {
