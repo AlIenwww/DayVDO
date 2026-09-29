@@ -8,6 +8,7 @@ struct CalendarWeekView: View {
     @Binding var hourHeight: CGFloat
     @Binding var scrollMinute: CGFloat?
     @ObservedObject var windowCache: CalendarWindowCache
+    let presentationCache: CalendarWeekPresentationCache
     var createTodo: (LocalDay, LocalDay) -> Void
     var changeTodo: (TodoItem) -> Void
     var editTodo: (TodoItem) -> Void
@@ -107,7 +108,9 @@ struct CalendarWeekView: View {
                     .environmentObject(store).environmentObject(selection).environment(\.colorScheme, colorScheme).environment(\.locale, locale)
                 } bottom: {
                     CalendarWeekTimeline(week: week, hourHeight: $hourHeight,
-                                         scrollMinute: $scrollMinute, editTodo: editTodo)
+                                         scrollMinute: $scrollMinute,
+                                         presentationCache: presentationCache,
+                                         editTodo: editTodo)
                         .environmentObject(store).environmentObject(selection).environment(\.colorScheme, colorScheme).environment(\.locale, locale)
                 }
             }

@@ -2,16 +2,66 @@ import AppKit
 import Combine
 import SwiftUI
 
+@MainActor
+final class CalendarWeekPresentationCache: ObservableObject {
+    struct Key: Equatable {
+        var week: LocalDay
+        var revision: UInt64
+        var showCompleted: Bool
+    }
+
+    struct Snapshot {
+        var schedulesByID: [UUID: DaySchedule]
+        var placementsByDay: [LocalDay: [DayPlanningPolicy.Placement]]
+    }
+
+    private var key: Key?
+    private var snapshot: Snapshot?
+
+    func value(
+        for key: Key,
+        schedules: [DaySchedule],
+        preview: DaySchedule?,
+        isCompletedTodo: (UUID) -> Bool
+    ) -> Snapshot {
+        if preview == nil, self.key == key, let snapshot { return snapshot }
+
+        let visible = schedules.compactMap { schedule -> DaySchedule? in
+            let current = schedule.id == preview?.id ? (preview ?? schedule) : schedule
+            let lastDay = current.startDay.adding(days: (current.endMinute - 1) / 1440)
+            guard current.startDay <= key.week.adding(days: 6), lastDay >= key.week else { return nil }
+            if !key.showCompleted, let id = current.todoID, isCompletedTodo(id) {
+                return nil
+            }
+            return current
+        }
+        let byID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        var placements: [LocalDay: [DayPlanningPolicy.Placement]] = [:]
+        for offset in 0..<7 {
+            let day = key.week.adding(days: offset)
+            placements[day] = DayPlanningPolicy.placements(visible, on: day)
+        }
+        let result = Snapshot(schedulesByID: byID, placementsByDay: placements)
+        if preview == nil {
+            self.key = key
+            snapshot = result
+        }
+        return result
+    }
+}
+
 struct CalendarWeekTimeline: View {
     @EnvironmentObject private var store: TodoStore
     let week: LocalDay
     @Binding var hourHeight: CGFloat
     @Binding var scrollMinute: CGFloat?
+    let presentationCache: CalendarWeekPresentationCache
     var editTodo: (TodoItem) -> Void
     @State private var hasRestoredScroll = false
     @State private var now = Date.now
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
-    @State private var position = ScrollPosition(y: 0)
+    @State private var position = ScrollPosition()
+    @State private var initialScrollMinute: CGFloat
     @State private var offset: CGFloat = 0
     @State private var size = CGSize.zero
     @State private var drag: Interaction?
@@ -28,6 +78,16 @@ struct CalendarWeekTimeline: View {
     private let gutter: CGFloat = 54
     private var ppm: CGFloat { hourHeight / 60 }
 
+    init(week: LocalDay, hourHeight: Binding<CGFloat>, scrollMinute: Binding<CGFloat?>,
+         presentationCache: CalendarWeekPresentationCache, editTodo: @escaping (TodoItem) -> Void) {
+        self.week = week
+        _hourHeight = hourHeight
+        _scrollMinute = scrollMinute
+        self.presentationCache = presentationCache
+        self.editTodo = editTodo
+        _initialScrollMinute = State(initialValue: scrollMinute.wrappedValue ?? 480)
+    }
+
     private struct Interaction {
         var original: DaySchedule?
         var mode: WeekSchedulePolicy.Mode
@@ -37,13 +97,6 @@ struct CalendarWeekTimeline: View {
         var creationStart: Int
     }
     private struct Creation { var day: LocalDay; var range: Range<Int> }
-    private var displayed: [DaySchedule] {
-        store.schedules.map { $0.id == preview?.id ? preview! : $0 }.filter { schedule in
-            guard let todo = store.item(withID: schedule.todoID) else { return true }
-            return store.settings.showCompleted || !todo.isCompleted
-        }
-    }
-
     var body: some View {
         GeometryReader { geometry in
             ScrollView(.vertical) {
@@ -51,20 +104,22 @@ struct CalendarWeekTimeline: View {
                     .frame(height: hourHeight * 24 + 24)
             }
             .scrollPosition($position)
+            .defaultScrollAnchor(UnitPoint(x: 0, y: CalendarScrollPolicy.initialAnchor(
+                offset: initialScrollMinute * ppm, contentHeight: hourHeight * 24 + 24,
+                viewportHeight: geometry.size.height
+            )), for: .initialOffset)
             .scrollDisabled(drag != nil || suppressed)
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, value in
                 offset = value
+                if !hasRestoredScroll, geometry.size.height > 0 {
+                    let target = min(max(0, initialScrollMinute * ppm),
+                                     max(0, hourHeight * 24 + 24 - geometry.size.height))
+                    if abs(value - target) <= 1 { hasRestoredScroll = true }
+                }
                 if hasRestoredScroll { scrollMinute = value / ppm }
             }
             .onAppear {
                 size = geometry.size
-            }
-            .task {
-                let minute = scrollMinute ?? 480
-                await Task.yield()
-                guard !Task.isCancelled else { return }
-                position.scrollTo(y: minute * ppm)
-                hasRestoredScroll = true
             }
             .onChange(of: geometry.size) { _, value in
                 if drag != nil { cancel() }
@@ -110,8 +165,16 @@ struct CalendarWeekTimeline: View {
 
     private func timeline(width: CGFloat) -> some View {
         let columnWidth = max(1, (width - gutter) / 7)
-        let schedules = displayed
-        let schedulesByID = Dictionary(uniqueKeysWithValues: schedules.map { ($0.id, $0) })
+        let presentation = presentationCache.value(
+            for: .init(
+                week: week,
+                revision: store.contentRevision,
+                showCompleted: store.settings.showCompleted
+            ),
+            schedules: store.schedules,
+            preview: preview,
+            isCompletedTodo: { store.item(withID: $0)?.isCompleted == true }
+        )
         return ZStack(alignment: .topLeading) {
             grid(width: width)
             Color.clear.contentShape(Rectangle())
@@ -120,9 +183,9 @@ struct CalendarWeekTimeline: View {
                 .gesture(gesture(nil, mode: .move))
             ForEach(0..<7, id: \.self) { column in
                 let day = week.adding(days: column)
-                let placements = DayPlanningPolicy.placements(schedules, on: day)
+                let placements = presentation.placementsByDay[day] ?? []
                 ForEach(placements) { placement in
-                    if let schedule = schedulesByID[placement.id] {
+                    if let schedule = presentation.schedulesByID[placement.id] {
                         block(schedule, placement: placement, day: day)
                             .frame(width: max(1, columnWidth / CGFloat(placement.columnCount) - 3),
                                    height: CGFloat(placement.interval.count) * ppm)

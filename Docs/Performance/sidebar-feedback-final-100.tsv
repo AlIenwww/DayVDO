@@ -1,0 +1,122 @@
+click	483760.103736	-	-
+selection	483760.116022625	all	12.287
+feedback-window	483760.12377095834	all	20.035
+note	483760.1239490834	feedback-detail=-
+detail-update	483760.14067075006	all	36.935
+detail-update	483760.16060575005	all	56.870
+detail-update	483760.25490220834	all	151.166
+detail-draw	483760.5187509584	all	415.015
+click	483761.240136083	-	-
+selection	483761.24580375	calendar	5.668
+note	483761.24599512503	calendar-entry-preparation=ready
+feedback-window	483761.2552385417	calendar	15.102
+note	483761.25565675006	feedback-detail=-
+detail-update	483761.26220520836	calendar	22.069
+detail-update	483761.2908316667	calendar	50.696
+detail-update	483761.29676958336	calendar	56.634
+note	483761.322536125	month-init-cache=present
+calendar-layout	483761.3551926667	calendar	115.057
+detail-draw	483761.43562058336	calendar	195.485
+note	483761.5845715	month-positioned-items=100
+window-update	483761.6682514167	calendar	428.115
+click	483762.757653625	-	-
+selection	483762.7631068334	all	5.453
+feedback-window	483762.77199950005	all	14.346
+note	483762.7721464167	feedback-detail=-
+detail-update	483762.7751014167	all	17.448
+detail-update	483762.7817745417	all	24.121
+detail-update	483762.82611662504	all	68.463
+detail-draw	483762.9861902917	all	228.537
+window-update	483762.99285020836	all	235.197
+click	483763.711715166	-	-
+selection	483763.72312645835	calendar	11.411
+note	483763.72334637505	calendar-entry-preparation=ready
+feedback-window	483763.7283915417	calendar	16.676
+note	483763.72851441667	feedback-detail=-
+detail-update	483763.7304679584	calendar	18.753
+detail-update	483763.749987	calendar	38.272
+detail-update	483763.75650633336	calendar	44.791
+note	483763.7785555834	month-init-cache=present
+calendar-layout	483763.80202025	calendar	90.305
+detail-draw	483763.8716751667	calendar	159.960
+note	483764.01618933334	month-positioned-items=100
+window-update	483764.07559270837	calendar	363.878
+click	483765.07467025	-	-
+selection	483765.08020483336	all	5.535
+feedback-window	483765.08750837506	all	12.838
+note	483765.08770000003	feedback-detail=-
+detail-update	483765.09045270836	all	15.782
+detail-update	483765.09812833334	all	23.458
+detail-update	483765.14290437504	all	68.234
+detail-draw	483765.2955086667	all	220.838
+window-update	483765.3084332917	all	233.763
+click	483766.097973125	-	-
+selection	483766.1066039167	calendar	8.631
+note	483766.1067555	calendar-entry-preparation=ready
+feedback-window	483766.1114561667	calendar	13.483
+note	483766.1115638334	feedback-detail=-
+detail-update	483766.113563625	calendar	15.591
+detail-update	483766.1333637084	calendar	35.391
+detail-update	483766.13947825006	calendar	41.505
+note	483766.16126645834	month-init-cache=present
+calendar-layout	483766.1858659167	calendar	87.893
+detail-draw	483766.25660737505	calendar	158.634
+note	483766.4057204167	month-positioned-items=100
+window-update	483766.4753876667	calendar	377.415
+click	483768.606567625	-	-
+selection	483768.6132046667	all	6.637
+feedback-window	483768.61698850006	all	10.421
+note	483768.61708962504	feedback-detail=-
+detail-update	483768.6188542084	all	12.287
+detail-update	483768.62526162504	all	18.694
+detail-update	483768.6675297917	all	60.962
+detail-draw	483768.8108654167	all	204.298
+window-update	483768.870894375	all	264.327
+click	483769.594026791	-	-
+selection	483769.60790708335	calendar	13.880
+note	483769.6080705417	calendar-entry-preparation=ready
+feedback-window	483769.61326170835	calendar	19.235
+note	483769.61337475	feedback-detail=-
+detail-update	483769.6155545	calendar	21.528
+detail-update	483769.6381924167	calendar	44.166
+detail-update	483769.6500579167	calendar	56.031
+detail-draw	483769.84395137505	calendar	249.925
+window-update	483769.85639970837	calendar	262.373
+click	483770.541319083	-	-
+selection	483770.54646650003	all	5.147
+feedback-window	483770.55037812504	all	9.059
+note	483770.5504819584	feedback-detail=-
+detail-update	483770.55252120836	all	11.202
+detail-update	483770.5597445417	all	18.425
+detail-update	483770.6024149167	all	61.096
+detail-draw	483770.7459210417	all	204.602
+window-update	483770.80640945834	all	265.090
+click	483771.476049125	-	-
+selection	483771.4801704167	calendar	4.121
+note	483771.4803597917	calendar-entry-preparation=ready
+feedback-window	483771.4858055	calendar	9.756
+note	483771.48596733337	feedback-detail=-
+detail-update	483771.48955420835	calendar	13.505
+detail-update	483771.50905220833	calendar	33.003
+detail-update	483771.52062012505	calendar	44.571
+detail-draw	483771.7078702917	calendar	231.821
+window-update	483771.7554830417	calendar	279.434
+click	483772.414276916	-	-
+selection	483772.4307298334	all	16.453
+feedback-window	483772.43444900005	all	20.172
+note	483772.4345535417	feedback-detail=-
+detail-update	483772.43635462504	all	22.078
+detail-update	483772.441677	all	27.400
+detail-update	483772.48783195834	all	73.555
+detail-draw	483772.63679533335	all	222.518
+window-update	483772.688898625	all	274.622
+click	483773.357213958	-	-
+selection	483773.36315162503	calendar	5.938
+note	483773.363324625	calendar-entry-preparation=ready
+feedback-window	483773.3682906667	calendar	11.077
+note	483773.36846170836	feedback-detail=-
+detail-update	483773.3710350417	calendar	13.821
+detail-update	483773.3888616667	calendar	31.648
+detail-update	483773.39926845836	calendar	42.055
+detail-draw	483773.5732267917	calendar	216.013
+window-update	483773.62079450005	calendar	263.581

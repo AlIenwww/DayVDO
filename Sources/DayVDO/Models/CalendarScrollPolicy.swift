@@ -31,6 +31,17 @@ enum CalendarScrollDestination: Equatable {
 }
 
 enum CalendarScrollPolicy {
+    static func initialAnchor(offset: CGFloat, contentHeight: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+        let distance = contentHeight - viewportHeight
+        guard offset.isFinite, distance.isFinite, distance > 0 else { return 0 }
+        return min(1, max(0, offset / distance))
+    }
+
+    static func initialWeekAnchor(range: ClosedRange<Int>, visibleCount: Int) -> CGFloat {
+        initialAnchor(offset: CGFloat(-range.lowerBound),
+                      contentHeight: CGFloat(range.count), viewportHeight: CGFloat(visibleCount))
+    }
+
     static let stationaryThreshold: CGFloat = 0.01
     static let viewportResizeTolerance: CGFloat = 0.5
     static let viewportAnchorTolerance: CGFloat = 0.1
@@ -41,6 +52,17 @@ enum CalendarScrollPolicy {
     static let velocitySampleWindow: TimeInterval = 0.1
     static let directionalCachePadding = 4
     static let maximumPredictiveDistance = 12
+
+    static func weekOffset(from anchor: Date, to target: Date, calendar: Calendar) -> Int {
+        // Restored LocalDay values are at noon; month-grid anchors are at midnight.
+        // Count calendar days so that the time of day cannot truncate a full week.
+        let days = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: anchor),
+            to: calendar.startOfDay(for: target)
+        ).day ?? 0
+        return days / 7
+    }
 
     static func viewportHeightChanged(
         from previousHeight: CGFloat?,

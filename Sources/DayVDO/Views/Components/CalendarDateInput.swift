@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct CalendarDateHitRegion: Equatable {
@@ -52,7 +53,16 @@ struct CalendarDateInput: NSViewRepresentable {
         override var isFlipped: Bool { true }
         var selection: CalendarTodoSelection?
         var store: TodoStore?
-        var interaction: CalendarDateInteraction?
+        var interaction: CalendarDateInteraction? {
+            didSet {
+                guard oldValue !== interaction else { return }
+                regionsSubscription = interaction?.hitRegionsChanged.sink { [weak self] regions in
+                    self?.regions = regions
+                }
+                regions = interaction?.hitRegions ?? []
+            }
+        }
+        private var regionsSubscription: AnyCancellable?
         var regions: [CalendarDateHitRegion] = [] {
             didSet {
                 if oldValue != regions { window?.invalidateCursorRects(for: self) }

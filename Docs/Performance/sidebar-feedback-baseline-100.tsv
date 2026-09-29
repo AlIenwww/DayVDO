@@ -1,0 +1,54 @@
+click	482896.130491416	-	-
+selection	482896.16035975004	all	29.868
+detail-update	482896.2042745	all	73.783
+detail-update	482896.26545883337	all	134.967
+detail-draw	482896.4786992917	all	348.208
+feedback-window	482896.48346250004	all	352.971
+note	482896.48360283335	feedback-detail=all
+window-update	482896.4836564167	all	353.165
+click	482897.184812416	-	-
+selection	482897.199690125	calendar	14.878
+detail-update	482897.22944875003	calendar	44.636
+detail-update	482897.23628508335	calendar	51.473
+note	482897.2553591667	month-init-cache=present
+calendar-layout	482897.28160083335	calendar	96.788
+detail-draw	482897.370337	calendar	185.525
+feedback-window	482897.3727997084	calendar	187.987
+note	482897.3729233334	feedback-detail=calendar
+window-update	482897.37297020835	calendar	188.158
+click	482898.542905833	-	-
+selection	482898.55526975	all	12.364
+detail-update	482898.57190929167	all	29.003
+detail-update	482898.6158036667	all	72.898
+detail-draw	482898.771202875	all	228.297
+feedback-window	482898.7780606667	all	235.155
+note	482898.77824687504	feedback-detail=all
+window-update	482898.7783080417	all	235.402
+click	482899.554390666	-	-
+selection	482899.561312375	calendar	6.922
+detail-update	482899.58790025004	calendar	33.510
+detail-update	482899.5932100417	calendar	38.819
+note	482899.612667125	month-init-cache=present
+calendar-layout	482899.63214945834	calendar	77.759
+detail-draw	482899.72209125	calendar	167.701
+feedback-window	482899.72512383334	calendar	170.733
+note	482899.7252425	feedback-detail=calendar
+window-update	482899.7253022084	calendar	170.912
+click	482900.936557375	-	-
+selection	482900.945196625	all	8.639
+detail-update	482900.9602978334	all	23.740
+detail-update	482901.0055435	all	68.986
+detail-draw	482901.1623995417	all	225.842
+feedback-window	482901.1692032917	all	232.646
+note	482901.1693479167	feedback-detail=all
+window-update	482901.1694024167	all	232.845
+click	482901.922863666	-	-
+selection	482901.93763183337	calendar	14.768
+detail-update	482901.9585189167	calendar	35.655
+detail-update	482901.96395133337	calendar	41.088
+note	482901.983502625	month-init-cache=present
+calendar-layout	482902.00117958337	calendar	78.316
+detail-draw	482902.081317125	calendar	158.453
+feedback-window	482902.0841394167	calendar	161.276
+note	482902.08426570834	feedback-detail=calendar
+window-update	482902.0843140417	calendar	161.450

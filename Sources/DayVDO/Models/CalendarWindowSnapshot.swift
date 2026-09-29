@@ -9,6 +9,12 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
         var timeZoneIdentifier: String
         var firstWeekday: Int
         var showCompleted: Bool
+
+        func covers(_ other: Key) -> Bool {
+            revision == other.revision && timeZoneIdentifier == other.timeZoneIdentifier
+                && firstWeekday == other.firstWeekday && showCompleted == other.showCompleted
+                && firstDay <= other.firstDay && lastDay >= other.lastDay
+        }
     }
 
     struct Item: Identifiable, Equatable, Sendable {
@@ -27,6 +33,7 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
     var rangedItems: [Item]
     var itemsByDay: [LocalDay: [Item]]
     var itemsByWeek: [LocalDay: [Item]] = [:]
+    var dateLayoutsByWeek: [LocalDay: CalendarDateLayout] = [:]
 
     func items(on day: LocalDay) -> [Item] {
         itemsByDay[day] ?? []
@@ -43,12 +50,17 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
     ) -> CalendarWindowSnapshot {
         let colorsByTag = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0.color) })
         let sortedItems = items
-            .filter { key.showCompleted || !$0.isCompleted }
+            .filter {
+                guard key.showCompleted || !$0.isCompleted,
+                      let start = $0.startDay, let end = $0.dueDay, start <= end else { return false }
+                return start <= key.lastDay && end >= key.firstDay
+            }
             .sorted(by: areInIncreasingOrder)
         var result: [LocalDay: [Item]] = [:]
         var ranged: [Item] = []
 
         for item in sortedItems {
+            if Task.isCancelled { break }
             guard let itemStart = item.startDay,
                   let itemEnd = item.dueDay,
                   itemStart <= itemEnd else { continue }
@@ -68,6 +80,7 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
             ranged.append(summary)
             var day = first
             while day <= last {
+                if Task.isCancelled { break }
                 result[day, default: []].append(summary)
                 day = day.adding(days: 1)
             }
@@ -78,6 +91,7 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
         calendar.firstWeekday = key.firstWeekday
         var weeks: [LocalDay: [Item]] = [:]
         for item in ranged {
+            if Task.isCancelled { break }
             let first = max(item.startDay, key.firstDay)
             let last = min(item.dueDay, key.lastDay)
             let date = first.date(timeZone: calendar.timeZone)
@@ -88,8 +102,12 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
                 week = week.adding(days: 7)
             }
         }
+        let dateLayouts = Dictionary(uniqueKeysWithValues: weeks.map { week, items in
+            (week, CalendarDateLayout(segments: CalendarDatePolicy.segments(items, week: week)))
+        })
         return CalendarWindowSnapshot(key: key, rangedItems: ranged,
-                                      itemsByDay: result, itemsByWeek: weeks)
+                                      itemsByDay: result, itemsByWeek: weeks,
+                                      dateLayoutsByWeek: dateLayouts)
     }
 
     private static func areInIncreasingOrder(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {
@@ -119,37 +137,93 @@ final class CalendarWindowCache: ObservableObject {
 
     private var requestedKey: CalendarWindowSnapshot.Key?
     private var buildTask: Task<Void, Never>?
+    private var workerTask: Task<CalendarWindowSnapshot, Never>?
+    private struct Waiter {
+        let key: CalendarWindowSnapshot.Key
+        let continuation: CheckedContinuation<Bool, Never>
+        let timeout: Task<Void, Never>
+    }
+    private var waiters: [UUID: Waiter] = [:]
 
-    func prepare(_ request: CalendarWindowRequest) {
-        if requestedKey == request.key { return }
-        if snapshot?.key == request.key {
-            buildTask?.cancel()
-            buildTask = nil
-            requestedKey = request.key
+    func hasSnapshot(covering key: CalendarWindowSnapshot.Key) -> Bool {
+        snapshot?.key.covers(key) == true
+    }
+
+    func prepare(_ request: CalendarWindowRequest, priority: TaskPriority = .utility) {
+        if hasSnapshot(covering: request.key) {
+            if buildTask != nil, requestedKey?.covers(request.key) != true {
+                buildTask?.cancel()
+                workerTask?.cancel()
+                buildTask = nil
+                workerTask = nil
+            }
             return
         }
+        if buildTask != nil, requestedKey?.covers(request.key) == true { return }
         requestedKey = request.key
         buildTask?.cancel()
-        buildTask = Task(priority: .utility) { [weak self] in
-            let result = await Task.detached(priority: .utility) {
-                CalendarWindowSnapshot.build(
-                    key: request.key,
-                    items: request.items,
-                    tags: request.tags
-                )
-            }.value
+        workerTask?.cancel()
+        let worker = Task.detached(priority: priority) {
+            CalendarWindowSnapshot.build(key: request.key, items: request.items, tags: request.tags)
+        }
+        workerTask = worker
+        buildTask = Task(priority: priority) { [weak self] in
+            let result = await worker.value
             guard !Task.isCancelled,
+                  !worker.isCancelled,
                   let self,
                   self.requestedKey == request.key else { return }
             self.snapshot = result
             self.buildTask = nil
+            self.workerTask = nil
+            for (id, waiter) in self.waiters where result.key.covers(waiter.key) {
+                self.finishWaiting(id, ready: true)
+            }
         }
+    }
+
+    func waitForSnapshot(covering key: CalendarWindowSnapshot.Key,
+                         until deadline: ContinuousClock.Instant) async -> Bool {
+        if hasSnapshot(covering: key) { return true }
+        guard !Task.isCancelled, ContinuousClock.now < deadline else { return false }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(returning: false); return }
+                let timeout = Task { [weak self] in
+                    do { try await Task.sleep(until: deadline, clock: .continuous) }
+                    catch { return }
+                    self?.finishWaiting(id, ready: false)
+                }
+                waiters[id] = Waiter(key: key, continuation: continuation, timeout: timeout)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.finishWaiting(id, ready: false) }
+        }
+    }
+
+    private func finishWaiting(_ id: UUID, ready: Bool) {
+        guard let waiter = waiters.removeValue(forKey: id) else { return }
+        waiter.timeout.cancel()
+        waiter.continuation.resume(returning: ready)
     }
 
     func cancel() {
         buildTask?.cancel()
+        workerTask?.cancel()
         buildTask = nil
+        workerTask = nil
         requestedKey = nil
+        for id in Array(waiters.keys) { finishWaiting(id, ready: false) }
+    }
+}
+
+struct CalendarEntryPreparation: Sendable {
+    let cache: CalendarWindowCache
+    let key: CalendarWindowSnapshot.Key
+
+    @MainActor func wait(until deadline: ContinuousClock.Instant) async -> Bool {
+        await cache.waitForSnapshot(covering: key, until: deadline)
     }
 }
 

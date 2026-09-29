@@ -17,6 +17,7 @@ struct SettingsView: View {
                         Text(appearance.title).tag(appearance)
                     }
                 }
+                .id(store.settings.language)
             }
 
             Section(L10n.string("待办")) {
@@ -26,6 +27,7 @@ struct SettingsView: View {
                         Text(L10n.string(priority.title)).tag(priority)
                     }
                 }
+                .id(store.settings.language)
                 Toggle(L10n.string("删除前询问"), isOn: $store.settings.confirmBeforeDeleting)
             }
 
@@ -60,6 +62,6 @@ struct SettingsView: View {
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             // `swift run` launches a bare executable without an Info.plist. The
             // shipped app always takes the version from its bundle above.
-            ?? "0.6.0"
+            ?? "0.6.1"
     }
 }

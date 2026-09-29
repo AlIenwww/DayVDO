@@ -1,5 +1,33 @@
 import SwiftUI
 
+fileprivate final class ProjectHeightStorage: @unchecked Sendable {
+    // SwiftUI Layout callbacks are not main-actor isolated. The lock protects
+    // every read and write of the measured sizes.
+    private let lock = NSLock()
+    private var entries: [UUID: (width: CGFloat, size: CGSize)] = [:]
+
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeAll()
+    }
+
+    func size(for id: UUID, width: CGFloat) -> CGSize? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[id], abs(entry.width - width) < 0.5 else {
+            return nil
+        }
+        return entry.size
+    }
+
+    func record(_ size: CGSize, for id: UUID, width: CGFloat) {
+        lock.lock()
+        defer { lock.unlock() }
+        entries[id] = (width, size)
+    }
+}
+
 struct AllTodosView: View {
     enum TopLevelEntry: Identifiable {
         case project(TodoProject)
@@ -36,21 +64,53 @@ struct AllTodosView: View {
             var rendered: Set<UUID>
             var today: LocalDay
             var locale: String
+            var dynamicTypeSize: DynamicTypeSize
         }
 
         private var key: Key?
         private var snapshot: PresentationSnapshot?
+        private var heightContext: HeightContext?
+        fileprivate let heightStorage = ProjectHeightStorage()
+        private(set) var heightGeneration = 0
+
+        private struct HeightContext: Equatable {
+            var revision: UInt64
+            var query: String
+            var filter: AllTodosFilterState
+            var showCompleted: Bool
+            var today: LocalDay
+            var locale: String
+            var dynamicTypeSize: DynamicTypeSize
+
+            init(_ key: Key) {
+                revision = key.revision
+                query = key.query
+                filter = key.filter
+                showCompleted = key.showCompleted
+                today = key.today
+                locale = key.locale
+                dynamicTypeSize = key.dynamicTypeSize
+            }
+        }
 
         func value(for key: Key, build: () -> PresentationSnapshot) -> PresentationSnapshot {
+            let context = HeightContext(key)
+            if heightContext != context {
+                heightContext = context
+                heightStorage.clear()
+                heightGeneration &+= 1
+            }
             if self.key == key, let snapshot { return snapshot }
             let result = build()
             self.key = key
             snapshot = result
             return result
         }
+
     }
 
     @EnvironmentObject private var store: TodoStore
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var editingItem: TodoItem?
     @Binding var editingProject: TodoProject?
     let searchFocusRequest: Int
@@ -98,7 +158,8 @@ struct AllTodosView: View {
             revision: store.contentRevision, query: query, filter: filter,
             showCompleted: store.settings.showCompleted,
             expanded: visualExpandedProjectIDs, rendered: renderedProjectIDs,
-            today: LocalDay(.now), locale: L10n.locale.identifier
+            today: LocalDay(.now), locale: L10n.locale.identifier,
+            dynamicTypeSize: dynamicTypeSize
         ), build: makePresentationSnapshot)
         Group {
             if presentation.topLevelEntries.isEmpty {
@@ -113,9 +174,9 @@ struct AllTodosView: View {
                 )
             } else {
                 ScrollView {
-                    // Project rows have widely different, animated heights. Keep
-                    // their measurements stable when scrolling back over a collapse.
-                    VStack(spacing: 0) {
+                    // A project retains its measured natural height in the
+                    // presentation cache when this lazy stack unloads its row.
+                    LazyVStack(spacing: 0) {
                         ForEach(presentation.topLevelEntries) { entry in
                             switch entry {
                             case .project(let project):
@@ -246,7 +307,12 @@ struct AllTodosView: View {
                 .padding(.horizontal, TopLevelTodoRowMetrics.listHorizontalInset)
 
             if expanded || renderedProjectIDs.contains(project.id) {
-                CollapsibleProjectRowLayout(progress: expanded ? 1 : 0) {
+                CollapsibleProjectRowLayout(
+                    progress: expanded ? 1 : 0,
+                    projectID: project.id,
+                    heightCache: presentationCache.heightStorage,
+                    heightGeneration: presentationCache.heightGeneration
+                ) {
                     projectChildrenContent(project, children: children)
                 }
                 .opacity(expanded ? 1 : 0)
@@ -1005,9 +1071,13 @@ private struct CollapsibleProjectRowLayout: Layout, Animatable {
     struct Cache {
         var width: CGFloat?
         var naturalSize = CGSize.zero
+        var generation = -1
     }
 
     var progress: Double
+    let projectID: UUID
+    fileprivate let heightCache: ProjectHeightStorage
+    let heightGeneration: Int
 
     var animatableData: Double {
         get { progress }
@@ -1051,6 +1121,7 @@ private struct CollapsibleProjectRowLayout: Layout, Animatable {
     func updateCache(_ cache: inout Cache, subviews: Subviews) {
         cache.width = nil
         cache.naturalSize = .zero
+        cache.generation = -1
     }
 
     private func updateNaturalSizeIfNeeded(
@@ -1058,10 +1129,23 @@ private struct CollapsibleProjectRowLayout: Layout, Animatable {
         subview: LayoutSubview,
         cache: inout Cache
     ) {
+        if cache.generation != heightGeneration {
+            cache.width = nil
+            cache.naturalSize = .zero
+            cache.generation = heightGeneration
+        }
         guard cache.width != proposal.width || cache.naturalSize == .zero else { return }
         cache.width = proposal.width
+        if let width = proposal.width,
+           let measured = heightCache.size(for: projectID, width: width) {
+            cache.naturalSize = measured
+            return
+        }
         cache.naturalSize = subview.sizeThatFits(
             ProposedViewSize(width: proposal.width, height: nil)
         )
+        if let width = proposal.width {
+            heightCache.record(cache.naturalSize, for: projectID, width: width)
+        }
     }
 }

@@ -15,7 +15,7 @@ enum CalendarDatePolicy {
         }
     }
 
-    struct Segment: Identifiable, Equatable {
+    struct Segment: Identifiable, Equatable, Sendable {
         var item: CalendarWindowSnapshot.Item
         var firstColumn: Int
         var lastColumn: Int
@@ -49,6 +49,19 @@ enum CalendarDatePolicy {
             return Segment(item: item, firstColumn: first, lastColumn: last, lane: lane,
                            startsHere: item.startDay >= week, endsHere: item.dueDay <= weekEnd)
         }
+    }
+}
+
+struct CalendarDateLayout: Equatable, Sendable {
+    let segments: [CalendarDatePolicy.Segment]
+    let lanes: [[CalendarDatePolicy.Segment]]
+
+    init(segments: [CalendarDatePolicy.Segment]) {
+        self.segments = segments
+        var lanes = Array(repeating: [CalendarDatePolicy.Segment](),
+                          count: max(1, (segments.map(\.lane).max() ?? 0) + 1))
+        for segment in segments { lanes[segment.lane].append(segment) }
+        self.lanes = lanes
     }
 }
 

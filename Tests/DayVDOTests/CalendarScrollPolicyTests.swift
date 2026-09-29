@@ -2,6 +2,47 @@ import XCTest
 @testable import DayVDO
 
 final class CalendarScrollPolicyTests: XCTestCase {
+    func testRestoredNoonAnchorKeepsMonthNavigationOnTheCorrectWeek() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        calendar.firstWeekday = 2
+        let restored = LocalDay(year: 2026, month: 8, day: 31).date(timeZone: calendar.timeZone)
+
+        for (year, month, expected) in [(2026, 10, 4), (2026, 11, 8), (2026, 12, 13), (2027, 1, 17)] {
+            let date = try XCTUnwrap(calendar.date(from: DateComponents(year: year, month: month, day: 1)))
+            let target = try XCTUnwrap(CalendarMonthGrid.dates(containing: date, calendar: calendar).first)
+            XCTAssertEqual(CalendarScrollPolicy.weekOffset(from: restored, to: target, calendar: calendar), expected)
+            XCTAssertEqual(CalendarScrollPolicy.weekOffset(from: target, to: restored, calendar: calendar), -expected)
+        }
+    }
+
+    func testWeekOffsetIgnoresTimeOfDayAcrossDaylightSavingChanges() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        for (month, day) in [(3, 2), (10, 26)] {
+            let anchor = LocalDay(year: 2026, month: month, day: day).date(timeZone: calendar.timeZone)
+            let later = try XCTUnwrap(calendar.date(byAdding: .day, value: 14, to: anchor))
+            let target = calendar.startOfDay(for: later)
+            XCTAssertEqual(CalendarScrollPolicy.weekOffset(from: anchor, to: target, calendar: calendar), 2)
+            XCTAssertEqual(CalendarScrollPolicy.weekOffset(from: target, to: anchor, calendar: calendar), -2)
+        }
+    }
+
+    func testShortVirtualRunwayStillCoversTheVisibleWeeksNearRebaseEdges() {
+        let limits = -104...104
+        for top in [-52, 47] {
+            for direction in [CalendarScrollDirection.earlier, .later] {
+                let range = CalendarScrollPolicy.cacheWindow(
+                    around: top, direction: direction,
+                    cacheCount: 30, visibleCount: 6, limits: limits
+                )
+                XCTAssertEqual(range.count, 30)
+                XCTAssertTrue(range.contains(top))
+                XCTAssertTrue(range.contains(top + 5))
+            }
+        }
+    }
+
     func testViewportHeightChangesAreSeparatedFromScrollMovement() {
         XCTAssertFalse(
             CalendarScrollPolicy.viewportHeightChanged(from: nil, to: 100)

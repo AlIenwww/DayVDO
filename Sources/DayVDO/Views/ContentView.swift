@@ -31,7 +31,8 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject private var store: TodoStore
     @Environment(\.undoManager) private var undoManager
-    @State private var selection: SidebarDestination? = .today
+    @State private var pagePresentation = SidebarPagePresentation()
+    @AppStorage("calendarDisplayMode") private var calendarDisplayMode = CalendarDisplayMode.month.rawValue
     @State private var planningDay = LocalDay(.now)
     @State private var editingItem: TodoItem?
     @State private var editingProject: TodoProject?
@@ -50,6 +51,7 @@ struct ContentView: View {
     @StateObject private var projectExpansionState = ProjectExpansionState()
     @StateObject private var allTodosPresentationCache = AllTodosView.PresentationCache()
     @StateObject private var calendarWeekCache = CalendarWindowCache()
+    @StateObject private var calendarWeekPresentationCache = CalendarWeekPresentationCache()
     @StateObject private var calendarWindowCache = CalendarWindowCache()
     @StateObject private var calendarTimelineSession = CalendarTimelineSession()
     @State private var isRecoveryPromptPresented = false
@@ -58,10 +60,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            List(SidebarDestination.allCases, selection: $selection) { destination in
-                NavigationLink(value: destination) {
-                    Label(L10n.string(destination.title), systemImage: destination.symbol)
-                }
+            SidebarDestinationList(presentation: pagePresentation) {
+                pagePresentation.presentSelection(prepareCalendar: prepareCalendarForEntry)
             }
             // Native List can retain row labels when only the locale changes.
             // Recreate the sidebar, keeping the selected destination in its binding.
@@ -74,7 +74,7 @@ struct ContentView: View {
             )
         } detail: {
             Group {
-                switch selection ?? .today {
+                switch displayedDestination {
                 case .today:
                     TodayView(
                         editingItem: $editingItem,
@@ -104,6 +104,7 @@ struct ContentView: View {
                         isInspectorPresented: $calendarInspectorPresented,
                         windowCache: calendarWindowCache,
                         weekCache: calendarWeekCache,
+                        weekPresentationCache: calendarWeekPresentationCache,
                         timelineSession: calendarTimelineSession
                     )
                 case .settings:
@@ -111,7 +112,7 @@ struct ContentView: View {
                 }
             }
             .transition(.identity)
-            .animation(nil, value: selection)
+            .animation(nil, value: displayedDestination)
             .disabled(!store.canModify)
             .overlay {
                 if showsLoadingIndicator && store.isInitialLoading {
@@ -122,7 +123,7 @@ struct ContentView: View {
                 }
             }
             .toolbar {
-                if selection == .today {
+                if displayedDestination == .today {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             editingItem = TodoItem(
@@ -136,7 +137,7 @@ struct ContentView: View {
                         .disabled(!store.canModify)
                         .help(L10n.string("新建待办 (⌘N)"))
                     }
-                } else if selection == .all {
+                } else if displayedDestination == .all {
                     ToolbarItem(placement: .primaryAction) {
                         Menu {
                             Button(L10n.string("新建待办…"), systemImage: "checkmark.circle") {
@@ -159,6 +160,8 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .background { SidebarSelectionFeedbackWindow(feedback: pagePresentation.feedback) }
+        .onDisappear { pagePresentation.cancelPendingPresentation() }
         .focusedSceneValue(
             \.dayVDOCommandActions,
             DayVDOCommandActions(
@@ -213,7 +216,7 @@ struct ContentView: View {
         .task(id: calendarPrewarmTrigger) {
             guard !store.isInitialLoading else { return }
             try? await Task.sleep(for: .milliseconds(180))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, selection != .calendar else { return }
             prewarmCalendarWindow()
         }
         .alert(L10n.string("无法读取待办数据"), isPresented: $isRecoveryPromptPresented) {
@@ -237,29 +240,88 @@ struct ContentView: View {
         }
     }
 
+    private var selection: SidebarDestination? {
+        get { pagePresentation.selection }
+        nonmutating set { pagePresentation.selection = newValue }
+    }
+
+    private var displayedDestination: SidebarDestination { pagePresentation.displayedDestination }
+
     private var calendarPrewarmTrigger: CalendarPrewarmTrigger {
         CalendarPrewarmTrigger(
             revision: store.contentRevision,
             showCompleted: store.settings.showCompleted,
             startsOnMonday: store.settings.startWeekOnMonday,
-            timeZoneIdentifier: TimeZone.autoupdatingCurrent.identifier
+            timeZoneIdentifier: TimeZone.autoupdatingCurrent.identifier,
+            mode: calendarDisplayMode,
+            firstDay: calendarEntryRequest()?.key.firstDay
         )
     }
 
     private func prewarmCalendarWindow() {
+        _ = prepareCalendarWindow(priority: .utility)
+    }
+
+    private func prepareCalendarForEntry() -> CalendarEntryPreparation? {
+        prepareCalendarWindow(priority: .userInitiated)
+    }
+
+    private func prepareCalendarWindow(priority: TaskPriority) -> CalendarEntryPreparation? {
+        guard !store.isInitialLoading, let request = calendarEntryRequest() else { return nil }
+        let isWeek = calendarDisplayMode == CalendarDisplayMode.week.rawValue
+        let cache = isWeek ? calendarWeekCache : calendarWindowCache
+        cache.prepare(request, priority: priority)
+        if isWeek {
+            _ = calendarWeekPresentationCache.value(
+                for: .init(week: request.key.firstDay, revision: store.contentRevision,
+                           showCompleted: store.settings.showCompleted),
+                schedules: store.schedules, preview: nil,
+                isCompletedTodo: { store.item(withID: $0)?.isCompleted == true }
+            )
+        }
+        return CalendarEntryPreparation(cache: cache, key: request.key)
+    }
+
+    private func calendarEntryRequest() -> CalendarWindowRequest? {
+        if calendarDisplayMode == CalendarDisplayMode.week.rawValue {
+            let calendar = AppCalendar.make(
+                locale: L10n.locale, startsOnMonday: store.settings.startWeekOnMonday
+            )
+            let week = LocalDay(
+                calendar.dateInterval(of: .weekOfYear, for: calendarSelectedDate)?.start
+                    ?? calendarSelectedDate,
+                timeZone: calendar.timeZone
+            )
+            return CalendarWindowRequest(
+                key: CalendarWindowSnapshot.Key(
+                    revision: store.contentRevision, firstDay: week,
+                    lastDay: week.adding(days: 6),
+                    timeZoneIdentifier: calendar.timeZone.identifier,
+                    firstWeekday: calendar.firstWeekday,
+                    showCompleted: store.settings.showCompleted
+                ), items: store.items, tags: store.tags
+            )
+        } else {
+            return monthWindowRequest()
+        }
+    }
+
+    private func monthWindowRequest() -> CalendarWindowRequest? {
         let calendar = AppCalendar.make(
             locale: L10n.locale,
             startsOnMonday: store.settings.startWeekOnMonday
         )
         let month = calendar.dateInterval(of: .month, for: calendarCurrentMonth)?.start
             ?? calendarCurrentMonth
-        guard let monthWeek = calendarTimelineSession.topWeek?.date(timeZone: calendar.timeZone)
-                ?? CalendarMonthGrid.dates(containing: month, calendar: calendar).first,
-              let firstDate = calendar.date(byAdding: .weekOfYear, value: -12, to: monthWeek),
-              let lastDate = calendar.date(byAdding: .day, value: 209, to: firstDate) else { return }
-        let firstDay = LocalDay(firstDate, timeZone: calendar.timeZone)
+        let restoredTop = calendarTimelineSession.topWeek.map {
+            let date = $0.date(timeZone: calendar.timeZone)
+            return calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+        }
+        guard let monthWeek = restoredTop ?? CalendarMonthGrid.dates(containing: month, calendar: calendar).first,
+              let lastDate = calendar.date(byAdding: .day, value: 41, to: monthWeek) else { return nil }
+        let firstDay = LocalDay(monthWeek, timeZone: calendar.timeZone)
         let lastDay = LocalDay(lastDate, timeZone: calendar.timeZone)
-        calendarWindowCache.prepare(CalendarWindowRequest(
+        return CalendarWindowRequest(
             key: CalendarWindowSnapshot.Key(
                 revision: store.contentRevision,
                 firstDay: firstDay,
@@ -270,7 +332,7 @@ struct ContentView: View {
             ),
             items: store.items,
             tags: store.tags
-        ))
+        )
     }
 
     @ViewBuilder
@@ -333,9 +395,25 @@ struct ContentView: View {
     }
 }
 
+private struct SidebarDestinationList: View {
+    @Bindable var presentation: SidebarPagePresentation
+    let selectionChanged: () -> Void
+
+    var body: some View {
+        List(SidebarDestination.allCases, selection: $presentation.selection) { destination in
+            NavigationLink(value: destination) {
+                Label(L10n.string(destination.title), systemImage: destination.symbol)
+            }
+        }
+        .onChange(of: presentation.selection) { _, _ in selectionChanged() }
+    }
+}
+
 private struct CalendarPrewarmTrigger: Hashable {
     var revision: UInt64
     var showCompleted: Bool
     var startsOnMonday: Bool
     var timeZoneIdentifier: String
+    var mode: String
+    var firstDay: LocalDay?
 }

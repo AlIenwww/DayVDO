@@ -7,6 +7,23 @@ final class CalendarDateInputTests: XCTestCase {
     private let monday = LocalDay(year: 2026, month: 8, day: 31)
 
     @MainActor
+    func testGeometryChangesUpdateTheResponderWithoutInvalidatingDateRows() {
+        let (interaction, view) = grid()
+        var rowInvalidations = 0
+        let observation = interaction.objectWillChange.sink { rowInvalidations += 1 }
+        let regions = [CalendarDateHitRegion(frame: CGRect(x: 105, y: 31, width: 90, height: 15),
+            target: .item(UUID(), startsHere: true, endsHere: true))]
+        interaction.hitRegions = regions
+        XCTAssertEqual(view.regions, regions)
+        XCTAssertEqual(rowInvalidations, 0)
+        let replacement = CalendarDateInteraction()
+        view.interaction = replacement
+        interaction.hitRegions = []
+        XCTAssertEqual(view.regions, replacement.hitRegions)
+        withExtendedLifetime(observation) {}
+    }
+
+    @MainActor
     private func grid() -> (CalendarDateInteraction, CalendarDateInput.InputView) {
         let interaction = CalendarDateInteraction()
         interaction.viewport = CGSize(width: 700, height: 300)

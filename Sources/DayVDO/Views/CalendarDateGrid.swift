@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct CalendarWeekFrames: PreferenceKey {
@@ -18,7 +19,12 @@ final class CalendarDateInteraction: ObservableObject {
     }
     @Published var drag: Drag?
     @Published var suppressed = false
-    @Published var hitRegions: [CalendarDateHitRegion] = []
+    // Pointer geometry only updates the native responder. Publishing it as
+    // view state makes every date row lay out again after its first layout.
+    let hitRegionsChanged = PassthroughSubject<[CalendarDateHitRegion], Never>()
+    var hitRegions: [CalendarDateHitRegion] = [] {
+        didSet { if oldValue != hitRegions { hitRegionsChanged.send(hitRegions) } }
+    }
     let draftID = UUID()
     var frames: [LocalDay: CGRect] = [:]
     var viewport: CGSize = .zero
@@ -55,6 +61,8 @@ final class CalendarDateInteraction: ObservableObject {
 }
 
 struct CalendarDateWeekRow: View {
+    static let dateHeaderHeight: CGFloat = 31
+
     @EnvironmentObject private var selection: CalendarTodoSelection
     @EnvironmentObject private var store: TodoStore
     @ObservedObject var interaction: CalendarDateInteraction
@@ -64,6 +72,7 @@ struct CalendarDateWeekRow: View {
     let items: [CalendarWindowSnapshot.Item]
     var showsDates = true
     var maxLanes: Int? = nil
+    var preparedLayout: CalendarDateLayout? = nil
     var select: (LocalDay) -> Void
     var showMore: (LocalDay) -> Void
     var edit: (TodoItem) -> Void
@@ -95,11 +104,13 @@ struct CalendarDateWeekRow: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let header: CGFloat = showsDates ? 31 : 4
+            let header: CGFloat = showsDates ? Self.dateHeaderHeight : 4
             let capacity = maxLanes ?? max(1, Int((geometry.size.height - header - 19) / CalendarTodoBar.laneHeight))
             let previewID = interaction.drag.map { $0.item?.id ?? interaction.draftID } ?? draft?.id
-            let segments = CalendarDatePolicy.previewSegments(displayed, draft: draft,
-                previewID: previewID, week: week)
+            let layout = (interaction.drag == nil && draft == nil ? preparedLayout : nil)
+                ?? CalendarDateLayout(segments: CalendarDatePolicy.previewSegments(
+                    displayed, draft: draft, previewID: previewID, week: week))
+            let segments = layout.segments
             let columnWidth = geometry.size.width / 7
             let frame = geometry.frame(in: .named("calendarDateViewport"))
             let visible = segments.filter { $0.lane < capacity }
@@ -199,4 +210,5 @@ struct CalendarDateWeekRow: View {
             .accessibilityHidden(segment.id == draft?.id)
             .accessibilityAction { if let latest = store.item(withID: segment.id) { edit(latest) } }
     }
+
 }

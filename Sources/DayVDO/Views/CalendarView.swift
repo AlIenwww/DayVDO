@@ -18,6 +18,7 @@ struct CalendarView: View {
     @Binding var isInspectorPresented: Bool
     @ObservedObject var windowCache: CalendarWindowCache
     let weekCache: CalendarWindowCache
+    let weekPresentationCache: CalendarWeekPresentationCache
     let timelineSession: CalendarTimelineSession
 
     private var calendar: Calendar {
@@ -41,30 +42,40 @@ struct CalendarView: View {
                     calendar: calendar, selectedDate: $selectedDate,
                     hourHeight: $weekHourHeight, scrollMinute: $weekScrollMinute,
                     windowCache: weekCache,
+                    presentationCache: weekPresentationCache,
                     createTodo: createTodo, changeTodo: changeTodo,
                     editTodo: { editingItem = $0 },
                     showMore: { day in selectedDate = day.date(); isInspectorPresented = true }
                 )
             } else {
                 weekdayHeader
-                CalendarTimeline(
-                    calendar: calendar,
-                    displayedMonth: currentMonth,
-                    selectedDate: selectedDate,
-                    navigationRequest: navigationRequest,
-                    store: store,
-                    windowCache: windowCache,
-                    session: timelineSession,
-                    onSelectDate: { selectedDate = $0 },
-                    onVisibleMonthChange: { currentMonth = $0 },
-                    createTodo: createTodo, changeTodo: changeTodo,
-                    editTodo: { editingItem = $0 },
-                    showMore: { day in selectedDate = day.date(); isInspectorPresented = true }
-                )
-                .id(CalendarViewportIdentity(
-                    firstWeekday: calendar.firstWeekday,
-                    timeZoneIdentifier: calendar.timeZone.identifier
-                ))
+                GeometryReader { viewport in
+                    // NavigationSplitView first proposes an ideal height too small
+                    // for the six date headers. Build the grid at its real size.
+                    if viewport.size.height >= CalendarTimeline.minimumViewportHeight {
+                        CalendarTimeline(
+                            calendar: calendar,
+                            displayedMonth: currentMonth,
+                            selectedDate: selectedDate,
+                            navigationRequest: navigationRequest,
+                            store: store,
+                            windowCache: windowCache,
+                            session: timelineSession,
+                            onSelectDate: { selectedDate = $0 },
+                            onVisibleMonthChange: { currentMonth = $0 },
+                            createTodo: createTodo, changeTodo: changeTodo,
+                            editTodo: { editingItem = $0 },
+                            showMore: { day in selectedDate = day.date(); isInspectorPresented = true }
+                        )
+                        .id(CalendarViewportIdentity(
+                            firstWeekday: calendar.firstWeekday,
+                            timeZoneIdentifier: calendar.timeZone.identifier
+                        ))
+                        // Recreate row layout when all week heights change; the
+                        // session restores the same top week into the new viewport.
+                        .id(viewport.size.height)
+                    }
+                }
             }
         }
         .environmentObject(selection)
@@ -358,10 +369,13 @@ private struct CalendarNavigationRequest {
 private struct CalendarTimeline: View {
     private static let weekCount = 30
     private static let visibleWeekCount = 6
+    static let minimumViewportHeight = CGFloat(visibleWeekCount) * CalendarDateWeekRow.dateHeaderHeight
     private static let centerIndex = 12
     private static let cacheEdgeBuffer = 10
     private static let virtualEdgeBuffer = 52
-    private static let virtualWeekRange = -1040...1040
+    // Keep enough runway for gestures before the idle rebase without
+    // constructing years of unnecessary virtual rows.
+    private static let virtualWeekRange = -104...104
     private static let initialLoadedWeekRange = -centerIndex...(weekCount - centerIndex - 1)
 
     let calendar: Calendar
@@ -380,8 +394,10 @@ private struct CalendarTimeline: View {
     @StateObject private var dateInteraction = CalendarDateInteraction()
 
     @State private var timelineAnchorWeek: Date
-    @State private var loadedWeekRange = Self.initialLoadedWeekRange
-    @State private var topWeekOffset: Int? = 0
+    @State private var loadedWeekRange = 0...(Self.visibleWeekCount - 1)
+    // Every week has the same height. Pixel positioning avoids resolving all
+    // virtual rows as scroll targets whenever the month view is recreated.
+    @State private var position = ScrollPosition()
     @State private var latestWeekOffset: CGFloat = 0
     @State private var lastMovementDirection: CalendarScrollDirection?
     @State private var hasEstablishedInitialPosition = false
@@ -422,7 +438,10 @@ private struct CalendarTimeline: View {
         self.editTodo = editTodo; self.showMore = showMore
 
         let month = calendar.dateInterval(of: .month, for: displayedMonth)?.start ?? displayedMonth
-        let restoredTop = session.topWeek?.date(timeZone: calendar.timeZone)
+        let restoredTop = session.topWeek.map {
+            let date = $0.date(timeZone: calendar.timeZone)
+            return calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+        }
         let initialTop = restoredTop
             ?? CalendarMonthGrid.dates(containing: month, calendar: calendar).first
             ?? month
@@ -434,154 +453,149 @@ private struct CalendarTimeline: View {
         GeometryReader { geometry in
             let rowHeight = max(1, geometry.size.height / CGFloat(Self.visibleWeekCount))
 
-            ScrollViewReader { scrollProxy in
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Self.virtualWeekRange, id: \.self) { weekOffset in
-                            Group {
-                                if loadedWeekRange.contains(weekOffset) {
-                                    CalendarDateWeekRow(
-                                        interaction: dateInteraction,
-                                        week: LocalDay(week(at: weekOffset), timeZone: calendar.timeZone),
-                                        selected: LocalDay(selectedDate, timeZone: calendar.timeZone),
-                                        month: calendar.component(.month, from: displayedMonth),
-                                        items: windowCache.snapshot?.items(inWeek: LocalDay(week(at: weekOffset), timeZone: calendar.timeZone)) ?? [],
-                                        select: { onSelectDate($0.date()) }, showMore: showMore,
-                                        edit: editTodo
-                                    )
-                                } else {
-                                    Color.clear.accessibilityHidden(true)
-                                }
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Self.virtualWeekRange, id: \.self) { weekOffset in
+                        Group {
+                            if loadedWeekRange.contains(weekOffset) {
+                                CalendarDateWeekRow(
+                                    interaction: dateInteraction,
+                                    week: LocalDay(week(at: weekOffset), timeZone: calendar.timeZone),
+                                    selected: LocalDay(selectedDate, timeZone: calendar.timeZone),
+                                    month: calendar.component(.month, from: displayedMonth),
+                                    items: windowCache.snapshot?.items(inWeek: LocalDay(week(at: weekOffset), timeZone: calendar.timeZone)) ?? [],
+                                    preparedLayout: windowCache.snapshot?.key.revision == store.contentRevision
+                                        && windowCache.snapshot?.key.showCompleted == store.settings.showCompleted
+                                        && windowCache.snapshot?.key.firstWeekday == calendar.firstWeekday
+                                        && windowCache.snapshot?.key.timeZoneIdentifier == calendar.timeZone.identifier
+                                        ? windowCache.snapshot?.dateLayoutsByWeek[LocalDay(week(at: weekOffset), timeZone: calendar.timeZone)] : nil,
+                                    select: { onSelectDate($0.date()) }, showMore: showMore,
+                                    edit: editTodo
+                                )
+                            } else {
+                                Color.clear.accessibilityHidden(true)
                             }
-                            .frame(height: rowHeight)
-                            .id(weekOffset)
                         }
-                    }
-                    .scrollTargetLayout()
-                    .padding(.horizontal, 12)
-                    .background(CalendarScrollIndicatorHider())
-                }
-                .scrollDisabled(dateInteraction.drag != nil || dateInteraction.suppressed)
-                .onPreferenceChange(CalendarWeekFrames.self) { dateInteraction.frames = $0 }
-                .onAppear { dateInteraction.viewport = geometry.size }
-                .onChange(of: geometry.size) { _, size in if dateInteraction.drag != nil { dateInteraction.cancel() }; dateInteraction.viewport = size }
-                .onPreferenceChange(CalendarDateHitRegions.self) { regions in
-                    let updated = regions.keys.sorted().flatMap { regions[$0] ?? [] }
-                    if dateInteraction.hitRegions != updated { dateInteraction.hitRegions = updated }
-                }
-                .overlay {
-                    CalendarDateInput(interaction: dateInteraction, store: store,
-                        select: { onSelectDate($0.date()) }, showMore: showMore,
-                        create: createTodo, change: changeTodo, edit: editTodo)
-                }
-                .scrollPosition(id: $topWeekOffset, anchor: .top)
-                .task {
-                    // Resolve the initial week after the newly sized scroll view
-                    // has laid out its targets, instead of retaining old offsets.
-                    await Task.yield()
-                    guard !Task.isCancelled else { return }
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        scrollProxy.scrollTo(0, anchor: .top)
+                        .frame(height: rowHeight)
                     }
                 }
-                .scrollTargetBehavior(
-                    CalendarScrollTargetBehavior(
-                        calendar: calendar,
-                        timelineAnchorWeek: timelineAnchorWeek,
-                        virtualWeekRange: Self.virtualWeekRange,
-                        visibleWeekCount: Self.visibleWeekCount,
-                        tracker: gestureTracker
-                    )
-                )
-                .scrollIndicators(.hidden)
-                .offset(y: navigationOffset)
-                .opacity(navigationOpacity)
-                .onScrollGeometryChange(for: CalendarViewportGeometry.self) { scrollGeometry in
-                    let currentRowHeight = max(
-                        1,
-                        scrollGeometry.containerSize.height / CGFloat(Self.visibleWeekCount)
-                    )
-                    return CalendarViewportGeometry(
-                        rowPosition: CGFloat(Self.virtualWeekRange.lowerBound)
-                            + scrollGeometry.contentOffset.y / currentRowHeight,
-                        rowHeight: currentRowHeight
-                    )
-                } action: { _, viewport in
-                    viewportGeometryChanged(viewport, scrollProxy: scrollProxy)
-                }
-                .onScrollPhaseChange { oldPhase, newPhase, context in
-                    let currentRowHeight = max(
-                        1,
-                        context.geometry.containerSize.height / CGFloat(Self.visibleWeekCount)
-                    )
-                    var rowPosition = CGFloat(Self.virtualWeekRange.lowerBound)
-                        + context.geometry.contentOffset.y / currentRowHeight
-
-                    if let resizeAnchor = viewportResizeAnchorRow {
-                        guard newPhase == .interacting else { return }
-                        viewportResizeAnchorRow = nil
-                        rowPosition = CGFloat(resizeAnchor)
-                        latestWeekOffset = rowPosition
-                    }
-
-                    if newPhase == .interacting, oldPhase != .interacting {
-                        lastMovementDirection = nil
-                        refreshLoadedWeeks(around: rowPosition, direction: nil, force: true)
-                        gestureTracker.begin(at: rowPosition)
-                    }
-                    if oldPhase == .interacting, newPhase != .interacting {
-                        let velocityInWeeks = (context.velocity?.dy ?? 0) / currentRowHeight
-                        let projectedRow = rowPosition + max(
-                            -CGFloat(CalendarScrollPolicy.maximumPredictiveDistance),
-                            min(
-                                CGFloat(CalendarScrollPolicy.maximumPredictiveDistance),
-                                velocityInWeeks * 0.22
-                            )
-                        )
-                        refreshLoadedWeeks(
-                            around: rowPosition,
-                            direction: CalendarScrollDirection(
-                                signedMovement: projectedRow - rowPosition
-                            ),
-                            predictedRow: projectedRow,
-                            force: true
-                        )
-                        gestureTracker.release(
-                            at: rowPosition,
-                            systemVelocity: velocityInWeeks
-                        )
-                    }
-                    if newPhase == .animating {
-                        gestureTracker.cancelForProgrammaticScroll()
-                    }
-                    if newPhase == .idle {
-                        gestureTracker.finish()
-                        rebaseVirtualTimelineIfNeeded(at: rowPosition)
-                    }
-                }
-                .onChange(of: navigationRequest?.id) { _, _ in
-                    guard let navigationRequest,
-                          navigationRequest.id != lastNavigationID else { return }
-                    lastNavigationID = navigationRequest.id
-                    navigate(to: navigationRequest.date)
-                }
-                .task { prepareSnapshot() }
-                .onChange(of: loadedWeekRange) { _, _ in prepareSnapshot() }
-                .onChange(of: timelineAnchorWeek) { _, _ in prepareSnapshot() }
-                .onChange(of: store.contentRevision) { _, _ in prepareSnapshot() }
-                .onChange(of: store.settings.showCompleted) { _, _ in prepareSnapshot() }
+                .padding(.horizontal, 12)
+                .background(CalendarScrollIndicatorHider())
             }
+            .scrollDisabled(dateInteraction.drag != nil || dateInteraction.suppressed)
+            .onPreferenceChange(CalendarWeekFrames.self) { dateInteraction.frames = $0 }
+            .onAppear { dateInteraction.viewport = geometry.size }
+            .onChange(of: geometry.size) { _, size in if dateInteraction.drag != nil { dateInteraction.cancel() }; dateInteraction.viewport = size }
+            .onPreferenceChange(CalendarDateHitRegions.self) { regions in
+                let updated = regions.keys.sorted().flatMap { regions[$0] ?? [] }
+                if dateInteraction.hitRegions != updated { dateInteraction.hitRegions = updated }
+            }
+            .overlay {
+                CalendarDateInput(interaction: dateInteraction, store: store,
+                    select: { onSelectDate($0.date()) }, showMore: showMore,
+                    create: createTodo, change: changeTodo, edit: editTodo)
+            }
+            .scrollPosition($position)
+            .defaultScrollAnchor(UnitPoint(x: 0, y: CalendarScrollPolicy.initialWeekAnchor(
+                range: Self.virtualWeekRange, visibleCount: Self.visibleWeekCount
+            )), for: .initialOffset)
+            .scrollTargetBehavior(
+                CalendarScrollTargetBehavior(
+                    calendar: calendar,
+                    timelineAnchorWeek: timelineAnchorWeek,
+                    virtualWeekRange: Self.virtualWeekRange,
+                    visibleWeekCount: Self.visibleWeekCount,
+                    tracker: gestureTracker
+                )
+            )
+            .scrollIndicators(.hidden)
+            .offset(y: navigationOffset)
+            .opacity(navigationOpacity)
+            .onScrollGeometryChange(for: CalendarViewportGeometry.self) { scrollGeometry in
+                let currentRowHeight = max(
+                    1,
+                    scrollGeometry.containerSize.height / CGFloat(Self.visibleWeekCount)
+                )
+                return CalendarViewportGeometry(
+                    rowPosition: CGFloat(Self.virtualWeekRange.lowerBound)
+                        + scrollGeometry.contentOffset.y / currentRowHeight,
+                    rowHeight: currentRowHeight
+                )
+            } action: { _, viewport in
+                viewportGeometryChanged(viewport)
+            }
+            .onScrollPhaseChange { oldPhase, newPhase, context in
+                let currentRowHeight = max(
+                    1,
+                    context.geometry.containerSize.height / CGFloat(Self.visibleWeekCount)
+                )
+                var rowPosition = CGFloat(Self.virtualWeekRange.lowerBound)
+                    + context.geometry.contentOffset.y / currentRowHeight
+
+                if let resizeAnchor = viewportResizeAnchorRow {
+                    guard newPhase == .interacting else { return }
+                    viewportResizeAnchorRow = nil
+                    rowPosition = CGFloat(resizeAnchor)
+                    latestWeekOffset = rowPosition
+                }
+
+                if newPhase == .interacting, oldPhase != .interacting {
+                    lastMovementDirection = nil
+                    refreshLoadedWeeks(around: rowPosition, direction: nil, force: true)
+                    gestureTracker.begin(at: rowPosition)
+                }
+                if oldPhase == .interacting, newPhase != .interacting {
+                    let velocityInWeeks = (context.velocity?.dy ?? 0) / currentRowHeight
+                    let projectedRow = rowPosition + max(
+                        -CGFloat(CalendarScrollPolicy.maximumPredictiveDistance),
+                        min(
+                            CGFloat(CalendarScrollPolicy.maximumPredictiveDistance),
+                            velocityInWeeks * 0.22
+                        )
+                    )
+                    refreshLoadedWeeks(
+                        around: rowPosition,
+                        direction: CalendarScrollDirection(
+                            signedMovement: projectedRow - rowPosition
+                        ),
+                        predictedRow: projectedRow,
+                        force: true
+                    )
+                    gestureTracker.release(
+                        at: rowPosition,
+                        systemVelocity: velocityInWeeks
+                    )
+                }
+                if newPhase == .animating {
+                    gestureTracker.cancelForProgrammaticScroll()
+                }
+                if newPhase == .idle {
+                    gestureTracker.finish()
+                    rebaseVirtualTimelineIfNeeded(at: rowPosition)
+                }
+            }
+            .onChange(of: navigationRequest?.id) { _, _ in
+                guard let navigationRequest,
+                      navigationRequest.id != lastNavigationID else { return }
+                lastNavigationID = navigationRequest.id
+                navigate(to: navigationRequest.date)
+            }
+            .task { prepareSnapshot() }
+            .onChange(of: loadedWeekRange) { _, _ in prepareSnapshot() }
+            .onChange(of: timelineAnchorWeek) { _, _ in prepareSnapshot() }
+            .onChange(of: store.contentRevision) { _, _ in prepareSnapshot() }
+            .onChange(of: store.settings.showCompleted) { _, _ in prepareSnapshot() }
         }
         .coordinateSpace(name: "calendarDateViewport")
         .onDisappear { dateInteraction.release() }
     }
 
     private func viewportGeometryChanged(
-        _ viewport: CalendarViewportGeometry,
-        scrollProxy: ScrollViewProxy
+        _ viewport: CalendarViewportGeometry
     ) {
+        // Initial ideal-size proposals must not replace the saved logical week.
+        guard hasEstablishedInitialPosition
+                || CalendarScrollPolicy.viewportHasSettled(reportedRow: viewport.rowPosition, at: 0) else { return }
         let heightChanged = CalendarScrollPolicy.viewportHeightChanged(
             from: lastViewportHeight,
             to: viewport.rowHeight
@@ -592,7 +606,7 @@ private struct CalendarTimeline: View {
             let preservedRow = viewportResizeAnchorRow
                 ?? clampedTopRow(Int(latestWeekOffset.rounded()))
             viewportResizeAnchorRow = preservedRow
-            preserveViewport(at: preservedRow, scrollProxy: scrollProxy)
+            preserveViewport(at: preservedRow)
             return
         }
 
@@ -601,7 +615,7 @@ private struct CalendarTimeline: View {
                 reportedRow: viewport.rowPosition,
                 at: preservedRow
             ) else {
-                preserveViewport(at: preservedRow, scrollProxy: scrollProxy)
+                preserveViewport(at: preservedRow)
                 return
             }
             viewportResizeAnchorRow = nil
@@ -613,8 +627,7 @@ private struct CalendarTimeline: View {
     }
 
     private func preserveViewport(
-        at preservedRow: Int,
-        scrollProxy: ScrollViewProxy
+        at preservedRow: Int
     ) {
         // During live window resizing SwiftUI can report the old pixel offset with
         // the new row height. Converting that transient pair into a week index can
@@ -631,14 +644,14 @@ private struct CalendarTimeline: View {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            topWeekOffset = preservedRow
             latestWeekOffset = CGFloat(preservedRow)
-            scrollProxy.scrollTo(preservedRow, anchor: .top)
+            scroll(to: preservedRow)
         }
     }
 
     private func geometryChanged(to rowPosition: CGFloat) {
         guard rowPosition.isFinite else { return }
+        let isInitialPosition = !hasEstablishedInitialPosition
         if !hasEstablishedInitialPosition {
             guard abs(rowPosition) <= 1 else { return }
             hasEstablishedInitialPosition = true
@@ -646,7 +659,11 @@ private struct CalendarTimeline: View {
         let direction = CalendarScrollDirection(
             signedMovement: rowPosition - latestWeekOffset
         ) ?? lastMovementDirection
-        refreshLoadedWeeks(around: rowPosition, direction: direction)
+        // Initial anchors measure the virtual content before drawing. Keep
+        // offscreen date rows cheap until the first user scroll starts.
+        if !isInitialPosition {
+            refreshLoadedWeeks(around: rowPosition, direction: direction)
+        }
 
         if let movementDirection = CalendarScrollDirection(
             signedMovement: rowPosition - latestWeekOffset
@@ -745,7 +762,7 @@ private struct CalendarTimeline: View {
         withTransaction(transaction) {
             timelineAnchorWeek = visibleWeek
             loadedWeekRange = Self.initialLoadedWeekRange
-            topWeekOffset = 0
+            scroll(to: 0)
             latestWeekOffset = 0
             lastMovementDirection = nil
         }
@@ -765,9 +782,7 @@ private struct CalendarTimeline: View {
         let targetIndex = index(of: targetWeek)
         let currentIndex = Int(latestWeekOffset.rounded())
         let currentWeek = week(at: currentIndex)
-        let distance = abs(
-            calendar.dateComponents([.weekOfYear], from: currentWeek, to: targetWeek).weekOfYear ?? 0
-        )
+        let distance = abs(targetIndex - currentIndex)
         let maximumTopRow = Self.virtualWeekRange.upperBound - Self.visibleWeekCount + 1
 
         if (Self.virtualWeekRange.lowerBound...maximumTopRow).contains(targetIndex), distance <= 10 {
@@ -782,12 +797,11 @@ private struct CalendarTimeline: View {
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 loadedWeekRange = navigationRange
-                topWeekOffset = nil
             }
             Task { @MainActor in
                 await Task.yield()
                 withAnimation(.easeOut(duration: 0.32)) {
-                    topWeekOffset = targetIndex
+                    scroll(to: targetIndex)
                 }
             }
             return
@@ -798,8 +812,13 @@ private struct CalendarTimeline: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             timelineAnchorWeek = targetWeek
+            // A distant jump can keep logical row zero unchanged. Publish the
+            // new month and saved week even if no scroll-geometry event follows.
+            lastReportedMonth = monthStart(for: date)
+            onVisibleMonthChange(lastReportedMonth)
+            session.topWeek = LocalDay(targetWeek, timeZone: calendar.timeZone)
             loadedWeekRange = Self.initialLoadedWeekRange
-            topWeekOffset = 0
+            scroll(to: 0)
             latestWeekOffset = 0
             lastMovementDirection = nil
             navigationOffset = direction * 18
@@ -815,14 +834,18 @@ private struct CalendarTimeline: View {
         }
     }
 
+    private func scroll(to row: Int) {
+        guard let rowHeight = lastViewportHeight else { return }
+        position.scrollTo(y: CGFloat(row - Self.virtualWeekRange.lowerBound) * rowHeight)
+    }
+
     private func week(at index: Int) -> Date {
         calendar.date(byAdding: .weekOfYear, value: index, to: timelineAnchorWeek)
             ?? timelineAnchorWeek
     }
 
     private func index(of week: Date) -> Int {
-        let days = calendar.dateComponents([.day], from: timelineAnchorWeek, to: week).day ?? 0
-        return days / 7
+        CalendarScrollPolicy.weekOffset(from: timelineAnchorWeek, to: week, calendar: calendar)
     }
 
     private func monthAnchorWeek(for date: Date) -> Date? {
@@ -839,10 +862,12 @@ private struct CalendarTimeline: View {
     }
 
     private func prepareSnapshot() {
-        let firstDate = week(at: loadedWeekRange.lowerBound)
+        let cacheRange = loadedWeekRange.count < Self.weekCount
+            ? Self.initialLoadedWeekRange : loadedWeekRange
+        let firstDate = week(at: cacheRange.lowerBound)
         guard let lastDate = calendar.date(
             byAdding: .day,
-            value: (loadedWeekRange.count * 7) - 1,
+            value: (cacheRange.count * 7) - 1,
             to: firstDate
         ) else { return }
         let firstDay = LocalDay(firstDate, timeZone: calendar.timeZone)
@@ -1045,8 +1070,7 @@ private struct CalendarScrollTargetBehavior: ScrollTargetBehavior {
             containing: calendar.dateInterval(of: .month, for: month)?.start ?? month,
             calendar: calendar
         ).first else { return nil }
-        let days = calendar.dateComponents([.day], from: timelineAnchorWeek, to: anchor).day ?? 0
-        return days / 7
+        return CalendarScrollPolicy.weekOffset(from: timelineAnchorWeek, to: anchor, calendar: calendar)
     }
 
     private func clampedTopRow(_ row: Int) -> Int {
