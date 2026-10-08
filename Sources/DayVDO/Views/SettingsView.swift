@@ -51,7 +51,6 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .disabled(!store.canModify)
         .navigationTitle(L10n.string("设置"))
-        .padding(.top, 8)
         .sheet(isPresented: $isManagingTags) {
             TaskTagManagementView()
         }
@@ -62,6 +61,6 @@ struct SettingsView: View {
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             // `swift run` launches a bare executable without an Info.plist. The
             // shipped app always takes the version from its bundle above.
-            ?? "0.6.1"
+            ?? "0.7.0"
     }
 }

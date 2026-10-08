@@ -1,6 +1,6 @@
 import Foundation
 
-struct AllTodosFilterState: Equatable {
+struct TodoFilterState: Hashable, Sendable {
     var statuses: Set<TodoItem.Status> = []
     var projectIDs: Set<UUID> = []
     var includesUnassignedProject = false
@@ -24,7 +24,7 @@ struct AllTodosFilterState: Equatable {
     var isActive: Bool { activeCategoryCount > 0 }
 
     mutating func clear() {
-        self = AllTodosFilterState()
+        self = TodoFilterState()
     }
 
     mutating func sanitize(projectIDs validProjectIDs: Set<UUID>, tagIDs validTagIDs: Set<UUID>) {
@@ -36,7 +36,7 @@ struct AllTodosFilterState: Equatable {
         _ item: TodoItem,
         showCompletedPreference: Bool,
         matchesSearch: Bool = true,
-        today: LocalDay = LocalDay(.now)
+        today: LocalDay? = nil
     ) -> Bool {
         guard matchesSearch else { return false }
         let matchesStatus = statuses.isEmpty
@@ -45,22 +45,48 @@ struct AllTodosFilterState: Equatable {
         guard matchesStatus else { return false }
 
         if includesUnassignedProject || !projectIDs.isEmpty {
-            guard let projectID = item.projectID
-            else { return includesUnassignedProject }
-            guard projectIDs.contains(projectID) else { return false }
+            if let projectID = item.projectID {
+                guard projectIDs.contains(projectID) else { return false }
+            } else if !includesUnassignedProject {
+                return false
+            }
         }
 
         if includesUntagged || !tagIDs.isEmpty {
-            guard let tagID = item.tagID
-            else { return includesUntagged }
-            guard tagIDs.contains(tagID) else { return false }
+            if let tagID = item.tagID {
+                guard tagIDs.contains(tagID) else { return false }
+            } else if !includesUntagged {
+                return false
+            }
         }
 
         if !priorities.isEmpty, !priorities.contains(item.priority) { return false }
         if !urgencies.isEmpty, !urgencies.contains(item.urgency) { return false }
-        if overdueOnly,
-           !TaskDateRangePolicy.isOverdue(item, on: today, today: today) { return false }
+        if overdueOnly {
+            let referenceDay = today ?? LocalDay(.now)
+            guard TaskDateRangePolicy.isOverdue(item, on: referenceDay, today: referenceDay) else { return false }
+        }
         return true
+    }
+}
+
+/// Value criteria shared by date bars, inspectors, schedules and their caches.
+/// Non-date-dependent filters keep the same cache identity across midnight.
+struct TodoFilterContext: Hashable, Sendable {
+    let filter: TodoFilterState
+    var showCompleted: Bool
+    let overdueReferenceDay: LocalDay?
+
+    init(filter: TodoFilterState = .init(), showCompleted: Bool,
+         today: LocalDay = LocalDay(.now)) {
+        self.filter = filter
+        self.showCompleted = showCompleted
+        overdueReferenceDay = filter.overdueOnly ? today : nil
+    }
+
+    func includes(_ item: TodoItem) -> Bool {
+        filter.includes(item, showCompletedPreference: showCompleted,
+                        today: overdueReferenceDay)
     }
 }
 

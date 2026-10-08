@@ -30,52 +30,62 @@ struct TodayView: View {
     var body: some View {
         GeometryReader { geometry in
             let narrow = geometry.size.width < 720
-            VStack(spacing: 0) {
-                dateHeader(narrow: narrow)
-                Divider()
-                ZStack(alignment: .trailing) {
-                    HStack(spacing: 0) {
-                        DayTimelineView(
-                            day: selectedDay,
-                            hourHeight: $hourHeight,
-                            restoredScrollMinute: $timelineScrollMinute,
-                            now: now,
-                            obscuredWidth: narrow && showsTodoPanel ? min(280, max(220, geometry.size.width * 0.55)) : 0,
-                            presentation: $schedulePopover,
-                            create: { minute, duration in
-                                scheduleDraft = DaySchedule(startDay: selectedDay, startMinute: minute,
-                                    durationMinutes: duration, content: .independent(title: "", notes: ""))
-                            },
-                            dropTodo: requestSchedule,
-                            editTodo: queueTodoForEditing,
-                            activityChanged: { timelineActive = $0 }
-                        )
-                        if !narrow {
-                            Divider()
-                            todoPanel.frame(width: 280)
-                        }
+            ZStack(alignment: .trailing) {
+                HStack(spacing: 0) {
+                    DayTimelineView(
+                        day: selectedDay,
+                        hourHeight: $hourHeight,
+                        restoredScrollMinute: $timelineScrollMinute,
+                        now: now,
+                        obscuredWidth: narrow && showsTodoPanel ? min(280, max(220, geometry.size.width * 0.55)) : 0,
+                        presentation: $schedulePopover,
+                        create: { minute, duration, horizontal in
+                            scheduleDraft = DaySchedule(startDay: selectedDay, startMinute: minute,
+                                durationMinutes: duration, content: .independent(title: "", notes: ""),
+                                horizontalPosition: horizontal, horizontalPositionUpdatedAt: .now)
+                        },
+                        dropTodo: requestSchedule,
+                        editTodo: queueTodoForEditing,
+                        activityChanged: { timelineActive = $0 }
+                    )
+                    if !narrow {
+                        Divider()
+                        todoPanel.frame(width: 280)
                     }
-                    if narrow && showsTodoPanel {
-                        todoPanel
-                            .frame(width: min(280, max(220, geometry.size.width * 0.55)))
-                            .overlay(alignment: .leading) { Divider() }
-                            .shadow(color: .black.opacity(0.08), radius: 8, x: -4)
-                    }
+                }
+                if narrow && showsTodoPanel {
+                    todoPanel
+                        .frame(width: min(280, max(220, geometry.size.width * 0.55)))
+                        .overlay(alignment: .leading) { Divider() }
+                        .shadow(color: .black.opacity(0.08), radius: 8, x: -4)
+                }
+            }
+            .pageTopBar {
+                VStack(spacing: 0) {
+                    dateHeader(narrow: narrow)
+                    Divider()
                 }
             }
             .onChange(of: narrow) { _, value in if !value { showsTodoPanel = false } }
         }
         .navigationTitle(L10n.string("今日待办"))
         .popover(item: $scheduleDraft) { schedule in
-            ScheduleEditorView(schedule: schedule, editTodo: queueTodoForEditing)
+            ScheduleEditorView(schedule: schedule, close: { scheduleDraft = nil }, editTodo: queueTodoForEditing)
         }
         .onChange(of: scheduleDraft) { old, new in
             if old != nil && new == nil { finishPresentation() }
         }
+        // Non-key popovers can forward Escape to their presenting window.
+        .editorEscapeDismissal(
+            enabled: (scheduleDraft != nil || schedulePopover != nil) && !isPickingDate && editingItem == nil
+        ) {
+            scheduleDraft = nil
+            schedulePopover = nil
+        }
         .alert(L10n.string("已达到预计时长"), isPresented: Binding(
             get: { pending != nil }, set: { if !$0 { pending = nil } }
         )) {
-            Button(L10n.string("继续安排 30 分钟")) {
+            Button(L10n.string("继续安排")) {
                 guard let request = pending else { return }
                 pending = nil
                 store.upsertSchedule(request.schedule)
@@ -133,12 +143,13 @@ struct TodayView: View {
         .padding(.horizontal, 18).padding(.vertical, 10)
     }
 
-    private func requestSchedule(_ id: UUID, at minute: Int) {
+    private func requestSchedule(_ id: UUID, at minute: Int, horizontalPosition: Double) {
         guard let todo = store.items.first(where: { $0.id == id }) else { return }
         let scheduled = store.scheduledMinutes(for: id)
         let duration = DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled)
         let schedule = DaySchedule(startDay: selectedDay, startMinute: minute,
-                                   durationMinutes: duration, content: .todo(id))
+                                   durationMinutes: duration, content: .todo(id),
+                                   horizontalPosition: horizontalPosition, horizontalPositionUpdatedAt: .now)
         if let estimated = todo.estimatedMinutes, scheduled >= estimated {
             pending = PendingSchedule(schedule: schedule)
         } else {

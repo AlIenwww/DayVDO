@@ -70,6 +70,7 @@ struct CalendarDateWeekRow: View {
     let selected: LocalDay
     let month: Int
     let items: [CalendarWindowSnapshot.Item]
+    var visibility = TodoFilterContext(showCompleted: true)
     var showsDates = true
     var maxLanes: Int? = nil
     var preparedLayout: CalendarDateLayout? = nil
@@ -89,7 +90,7 @@ struct CalendarDateWeekRow: View {
         }
         return candidates.compactMap { summary in
             guard let latest = store.item(withID: summary.id),
-                  store.settings.showCompleted || !latest.isCompleted,
+                  visibility.includes(latest),
                   let start = latest.startDay, let end = latest.dueDay else { return nil }
             var copy = summary
             copy.startDay = start; copy.dueDay = end; copy.title = latest.title; copy.status = latest.status

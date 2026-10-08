@@ -25,6 +25,7 @@ final class TimelinePopoverPresentationTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(
             rootView: TimelinePopoverHarness(day: day, commandName: commandName)
                 .environmentObject(store)
@@ -33,7 +34,8 @@ final class TimelinePopoverPresentationTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         defer {
             NotificationCenter.default.post(name: commandName, object: nil)
-            RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            window.contentView = nil
             window.close()
         }
 
@@ -93,8 +95,8 @@ private struct TimelinePopoverHarness: View {
             restoredScrollMinute: .constant(nil),
             now: day.date(),
             presentation: $request,
-            create: { _, _ in },
-            dropTodo: { _, _ in },
+            create: { _, _, _ in },
+            dropTodo: { _, _, _ in },
             editTodo: { _ in },
             activityChanged: { _ in }
         )

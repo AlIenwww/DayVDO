@@ -1,13 +1,14 @@
 import AppKit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class CalendarWeekPresentationCache: ObservableObject {
     struct Key: Equatable {
         var week: LocalDay
         var revision: UInt64
-        var showCompleted: Bool
+        var visibility: TodoFilterContext
     }
 
     struct Snapshot {
@@ -22,16 +23,18 @@ final class CalendarWeekPresentationCache: ObservableObject {
         for key: Key,
         schedules: [DaySchedule],
         preview: DaySchedule?,
-        isCompletedTodo: (UUID) -> Bool
+        prioritizing activeID: UUID? = nil,
+        todo: (UUID) -> TodoItem?
     ) -> Snapshot {
         if preview == nil, self.key == key, let snapshot { return snapshot }
 
-        let visible = schedules.compactMap { schedule -> DaySchedule? in
-            let current = schedule.id == preview?.id ? (preview ?? schedule) : schedule
+        var values = schedules.map { $0.id == preview?.id ? preview! : $0 }
+        if let preview, !values.contains(where: { $0.id == preview.id }) { values.append(preview) }
+        let visible = values.compactMap { current -> DaySchedule? in
             let lastDay = current.startDay.adding(days: (current.endMinute - 1) / 1440)
             guard current.startDay <= key.week.adding(days: 6), lastDay >= key.week else { return nil }
-            if !key.showCompleted, let id = current.todoID, isCompletedTodo(id) {
-                return nil
+            if let id = current.todoID {
+                guard let item = todo(id), key.visibility.includes(item) else { return nil }
             }
             return current
         }
@@ -39,7 +42,7 @@ final class CalendarWeekPresentationCache: ObservableObject {
         var placements: [LocalDay: [DayPlanningPolicy.Placement]] = [:]
         for offset in 0..<7 {
             let day = key.week.adding(days: offset)
-            placements[day] = DayPlanningPolicy.placements(visible, on: day)
+            placements[day] = DayPlanningPolicy.placements(visible, on: day, prioritizing: activeID)
         }
         let result = Snapshot(schedulesByID: byID, placementsByDay: placements)
         if preview == nil {
@@ -53,6 +56,7 @@ final class CalendarWeekPresentationCache: ObservableObject {
 struct CalendarWeekTimeline: View {
     @EnvironmentObject private var store: TodoStore
     let week: LocalDay
+    let visibility: TodoFilterContext
     @Binding var hourHeight: CGFloat
     @Binding var scrollMinute: CGFloat?
     let presentationCache: CalendarWeekPresentationCache
@@ -67,6 +71,12 @@ struct CalendarWeekTimeline: View {
     @State private var drag: Interaction?
     @State private var preview: DaySchedule?
     @State private var creation: Creation?
+    @State private var draftID = UUID()
+    @State private var positionUpdatedAt = Date.now
+    @State private var externalLocation: CGPoint?
+    @State private var externalTodoID: UUID?
+    @State private var pendingDrop: UUID?
+    @State private var pendingSchedule: DaySchedule?
     @State private var suppressed = false
     @State private var draft: DaySchedule?
     @State private var presentation: SchedulePopoverRequest?
@@ -78,9 +88,10 @@ struct CalendarWeekTimeline: View {
     private let gutter: CGFloat = 54
     private var ppm: CGFloat { hourHeight / 60 }
 
-    init(week: LocalDay, hourHeight: Binding<CGFloat>, scrollMinute: Binding<CGFloat?>,
+    init(week: LocalDay, visibility: TodoFilterContext, hourHeight: Binding<CGFloat>, scrollMinute: Binding<CGFloat?>,
          presentationCache: CalendarWeekPresentationCache, editTodo: @escaping (TodoItem) -> Void) {
         self.week = week
+        self.visibility = visibility
         _hourHeight = hourHeight
         _scrollMinute = scrollMinute
         self.presentationCache = presentationCache
@@ -95,8 +106,9 @@ struct CalendarWeekTimeline: View {
         var originY: CGFloat
         var originOffset: CGFloat
         var creationStart: Int
+        var creationOrigin: Double
     }
-    private struct Creation { var day: LocalDay; var range: Range<Int> }
+    private struct Creation { var day: LocalDay; var range: Range<Int>; var horizontalPosition: Double }
     var body: some View {
         GeometryReader { geometry in
             ScrollView(.vertical) {
@@ -104,6 +116,7 @@ struct CalendarWeekTimeline: View {
                     .frame(height: hourHeight * 24 + 24)
             }
             .scrollPosition($position)
+            .onDrop(of: [.url], delegate: dropDelegate)
             .defaultScrollAnchor(UnitPoint(x: 0, y: CalendarScrollPolicy.initialAnchor(
                 offset: initialScrollMinute * ppm, contentHeight: hourHeight * 24 + 24,
                 viewportHeight: geometry.size.height
@@ -125,8 +138,11 @@ struct CalendarWeekTimeline: View {
                 if drag != nil { cancel() }
                 size = value
             }
-            .background(CalendarInteractionMonitor(active: drag != nil || suppressed,
-                cancel: cancel, release: { suppressed = false; clearDrag() }))
+            .background(CalendarInteractionMonitor(active: drag != nil || suppressed || externalLocation != nil,
+                cancel: cancel, release: {
+                    suppressed = false
+                    if drag != nil { clearDrag() }
+                }))
             .background(TimelineControlScrollMonitor { delta, precise in
                 beginZoom()
                 zoomTarget = TimelineZoomPolicy.clampedHourHeight((zoomTarget ?? hourHeight) + delta * (precise ? 0.8 : 8))
@@ -158,23 +174,58 @@ struct CalendarWeekTimeline: View {
                     close: { presentation = nil })
             }
         }
+        .alert(L10n.string("已达到预计时长"), isPresented: Binding(
+            get: { pendingSchedule != nil }, set: { if !$0 { pendingSchedule = nil } }
+        )) {
+            Button(L10n.string("继续安排")) {
+                if let pendingSchedule { store.upsertSchedule(pendingSchedule) }
+                pendingSchedule = nil
+            }
+            Button(L10n.string("取消"), role: .cancel) { pendingSchedule = nil }
+        } message: {
+            Text(L10n.string("这个待办已安排足够时间，仍要再添加一段吗？"))
+        }
         .onReceive(clock) { now = $0 }
-        .onChange(of: week) { _, _ in clearDrag(); suppressed = false; presentation = nil; draft = nil }
+        .onChange(of: week) { _, _ in clearDrag(); suppressed = false; presentation = nil; draft = nil; pendingSchedule = nil }
+        .onChange(of: visibility) { _, _ in
+            if NSEvent.pressedMouseButtons & 1 != 0 { cancel() }
+            else { clearDrag(); suppressed = false }
+            clearHiddenSelection()
+        }
+        .onChange(of: store.contentRevision) { _, _ in clearHiddenSelection() }
         .onDisappear { clearDrag() }
+    }
+
+    private var timelinePresentation: CalendarWeekPresentationCache.Snapshot {
+        presentationCache.value(
+            for: .init(
+                week: week,
+                revision: store.contentRevision,
+                visibility: visibility
+            ),
+            schedules: store.schedules,
+            preview: activePreview,
+            prioritizing: drag?.original != nil && drag?.mode != .move ? nil : activePreview?.id,
+            todo: { store.item(withID: $0) }
+        )
+    }
+
+    private var activePreview: DaySchedule? {
+        if let preview { return preview }
+        guard let creation else { return nil }
+        return DaySchedule(id: draftID, startDay: creation.day, startMinute: creation.range.lowerBound,
+            durationMinutes: creation.range.count, content: .independent(title: "", notes: ""),
+            horizontalPosition: creation.horizontalPosition, horizontalPositionUpdatedAt: positionUpdatedAt)
+    }
+
+    private func creationBoundaries(on day: LocalDay) -> [Int] {
+        TimelineCreationPolicy.boundaries(in: (timelinePresentation.placementsByDay[day] ?? [])
+            .filter { $0.id != draftID }.map(\.interval))
     }
 
     private func timeline(width: CGFloat) -> some View {
         let columnWidth = max(1, (width - gutter) / 7)
-        let presentation = presentationCache.value(
-            for: .init(
-                week: week,
-                revision: store.contentRevision,
-                showCompleted: store.settings.showCompleted
-            ),
-            schedules: store.schedules,
-            preview: preview,
-            isCompletedTodo: { store.item(withID: $0)?.isCompleted == true }
-        )
+        let presentation = timelinePresentation
         return ZStack(alignment: .topLeading) {
             grid(width: width)
             Color.clear.contentShape(Rectangle())
@@ -186,21 +237,21 @@ struct CalendarWeekTimeline: View {
                 let placements = presentation.placementsByDay[day] ?? []
                 ForEach(placements) { placement in
                     if let schedule = presentation.schedulesByID[placement.id] {
-                        block(schedule, placement: placement, day: day)
+                        Group {
+                            if schedule.id == draftID {
+                                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.2))
+                                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor))
+                                    .allowsHitTesting(false)
+                            } else {
+                                block(schedule, placement: placement, day: day)
+                            }
+                        }
                             .frame(width: max(1, columnWidth / CGFloat(placement.columnCount) - 3),
                                    height: CGFloat(placement.interval.count) * ppm)
                             .offset(x: gutter + CGFloat(column) * columnWidth + CGFloat(placement.column) * columnWidth / CGFloat(placement.columnCount) + 1,
                                     y: 12 + CGFloat(placement.interval.lowerBound) * ppm)
                     }
                 }
-            }
-            if let creation {
-                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.2))
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor))
-                    .frame(width: columnWidth - 3, height: CGFloat(creation.range.count) * ppm)
-                    .offset(x: gutter + CGFloat(week.distance(to: creation.day)) * columnWidth + 1,
-                            y: 12 + CGFloat(creation.range.lowerBound) * ppm)
-                    .allowsHitTesting(false)
             }
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 let today = LocalDay(context.date)
@@ -242,9 +293,8 @@ struct CalendarWeekTimeline: View {
         let inProgress = DayPlanningPolicy.isInProgress(placement,
             at: (components.hour ?? 0) * 60 + (components.minute ?? 0), onCurrentDay: day == LocalDay(now))
         return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: min(5, height / 2)).fill(color.opacity(inProgress ? 0.20 : 0.14))
+            RoundedRectangle(cornerRadius: min(5, height / 2)).fill(color.opacity(0.14))
             if inProgress {
-                RoundedRectangle(cornerRadius: min(5, height / 2)).fill(Color.red.opacity(0.055))
                 Capsule().fill(.red).frame(width: 3, height: max(4, height - 6)).padding(.leading, 3).padding(.top, 3)
             }
             RoundedRectangle(cornerRadius: min(5, height / 2)).stroke(color.opacity(selectedID == schedule.id ? 0.9 : 0.35), lineWidth: selectedID == schedule.id ? 2 : 1)
@@ -300,40 +350,136 @@ struct CalendarWeekTimeline: View {
             .onChanged { value in
                 guard !suppressed else { return }
                 if drag == nil, let column = column(at: value.startLocation) {
+                    draftID = UUID(); positionUpdatedAt = .now
                     presentation = nil
                     selectedID = original?.id
-                    let start = DayPlanningPolicy.snapped(Double((value.startLocation.y + offset - 12) / ppm), within: 0...1435) ?? 0
+                    let minute = Double((value.startLocation.y + offset - 12) / ppm)
+                    let start = TimelineCreationPolicy.startMinute(at: minute,
+                        boundaries: creationBoundaries(on: week.adding(days: column)), pointsPerMinute: Double(ppm))
                     drag = Interaction(original: original, mode: mode, column: column,
-                        originY: value.startLocation.y, originOffset: offset, creationStart: start)
+                        originY: value.startLocation.y, originOffset: offset, creationStart: start, creationOrigin: minute)
                 }
-                guard let drag, let targetColumn = column(at: value.location) else { return }
-                let delta = Double((value.location.y - drag.originY + offset - drag.originOffset) / ppm)
-                if let schedule = drag.original {
-                    preview = WeekSchedulePolicy.adjusted(schedule, mode: drag.mode,
-                        dayDelta: targetColumn - drag.column, minuteDelta: delta)
-                } else {
-                    let end = min(1440, max(0, DayPlanningPolicy.snapped(Double(drag.creationStart) + delta)))
-                    let lower = min(drag.creationStart, end)
-                    creation = Creation(day: week.adding(days: drag.column), range: lower..<max(lower + 5, max(drag.creationStart, end)))
-                }
+                updateDrag(at: value.location)
             }
             .onEnded { value in
                 defer { clearDrag() }
                 guard !suppressed, column(at: value.location) != nil else { return }
+                updateDrag(at: value.location)
                 if let preview, let original = drag?.original, preview != original,
                    store.schedules.first(where: { $0.id == original.id }) == original {
                     _ = store.upsertSchedule(preview)
                 }
-                else if let creation {
+                else if let drag, drag.original == nil {
+                    updateCreation(drag, at: value.location)
+                    guard let creation else { return }
                     draft = DaySchedule(startDay: creation.day, startMinute: creation.range.lowerBound,
-                        durationMinutes: creation.range.count, content: .independent(title: "", notes: ""))
+                        durationMinutes: creation.range.count, content: .independent(title: "", notes: ""),
+                        horizontalPosition: creation.horizontalPosition, horizontalPositionUpdatedAt: .now)
                 }
             }
+    }
+
+    private func horizontalPosition(at location: CGPoint, column: Int) -> Double {
+        let width = max(1, (size.width - gutter) / 7)
+        return DayPlanningPolicy.horizontalPosition(x: Double(location.x),
+            minX: Double(gutter + CGFloat(column) * width), width: Double(width))
+    }
+
+    private func updateDrag(at location: CGPoint) {
+        guard let drag, let targetColumn = column(at: location) else { return }
+        let delta = Double((location.y - drag.originY + offset - drag.originOffset) / ppm)
+        if let schedule = drag.original {
+            var value = WeekSchedulePolicy.adjusted(schedule, mode: drag.mode,
+                dayDelta: targetColumn - drag.column, minuteDelta: delta)
+            if drag.mode == .move {
+                value.setHorizontalPosition(horizontalPosition(at: location, column: targetColumn), at: positionUpdatedAt)
+            }
+            preview = value
+        } else {
+            updateCreation(drag, at: location)
+        }
+    }
+
+    private func updateCreation(_ drag: Interaction, at location: CGPoint) {
+        let day = week.adding(days: drag.column)
+        let minute = Double((location.y + offset - 12) / ppm)
+        creation = Creation(day: day, range: TimelineCreationPolicy.range(
+            from: drag.creationOrigin, anchoredAt: drag.creationStart, to: minute,
+            boundaries: creationBoundaries(on: day), pointsPerMinute: Double(ppm)),
+            horizontalPosition: horizontalPosition(at: location, column: drag.column))
+    }
+
+    private var dropDelegate: PlanningDropDelegate {
+        PlanningDropDelegate(
+            isValidLocation: { column(at: $0) != nil && !suppressed },
+            enter: { location in
+                guard pendingDrop == nil, !suppressed else { return }
+                draftID = UUID(); positionUpdatedAt = .now
+                externalLocation = location
+                updateExternalPreview()
+            },
+            update: { location in
+                guard externalLocation != nil else { return }
+                externalLocation = location
+                updateExternalPreview()
+            },
+            identify: { id in
+                guard externalLocation != nil else { return }
+                externalTodoID = id
+                updateExternalPreview()
+            },
+            exit: { externalLocation = nil; externalTodoID = nil; creation = nil },
+            prepare: { location in
+                let targetColumn = column(at: location) ?? 0
+                let day = week.adding(days: targetColumn)
+                let minute = dropMinute(at: location)
+                let horizontal = horizontalPosition(at: location, column: targetColumn)
+                let token = UUID()
+                pendingDrop = token
+                externalLocation = nil; externalTodoID = nil; creation = nil
+                return { id in
+                    guard pendingDrop == token else { return }
+                    defer { pendingDrop = nil }
+                    guard let id, let todo = store.item(withID: id) else { return }
+                    let scheduled = store.scheduledMinutes(for: id)
+                    let schedule = DaySchedule(startDay: day, startMinute: minute,
+                        durationMinutes: DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled),
+                        content: .todo(id), horizontalPosition: horizontal, horizontalPositionUpdatedAt: .now)
+                    if let estimated = todo.estimatedMinutes, scheduled >= estimated { pendingSchedule = schedule }
+                    else { store.upsertSchedule(schedule) }
+                }
+            }
+        )
+    }
+
+    private func dropMinute(at location: CGPoint) -> Int {
+        min(1435, max(0, DayPlanningPolicy.snapped(Double((location.y + offset - 12) / ppm))))
+    }
+
+    private func updateExternalPreview() {
+        guard let location = externalLocation, let targetColumn = column(at: location) else { creation = nil; return }
+        let todo = externalTodoID.flatMap { store.item(withID: $0) }
+        let duration = DayPlanningPolicy.defaultDuration(estimated: todo?.estimatedMinutes,
+            scheduled: externalTodoID.map { store.scheduledMinutes(for: $0) } ?? 0)
+        let minute = dropMinute(at: location)
+        creation = Creation(day: week.adding(days: targetColumn), range: minute..<(minute + duration),
+            horizontalPosition: horizontalPosition(at: location, column: targetColumn))
+    }
+
+    private func clearHiddenSelection() {
+        func isVisible(_ id: UUID) -> Bool {
+            guard let schedule = store.schedules.first(where: { $0.id == id }) else { return false }
+            guard let todoID = schedule.todoID else { return true }
+            return store.item(withID: todoID).map { visibility.includes($0) } == true
+        }
+        if let id = selectedID, !isVisible(id) { selectedID = nil }
+        if let request = presentation, !isVisible(request.scheduleID) { presentation = nil }
     }
 
     private func cancel() { suppressed = true; clearDrag() }
     private func clearDrag() {
         drag = nil; preview = nil; creation = nil
+        externalLocation = nil; externalTodoID = nil; pendingDrop = nil
     }
     private func beginZoom() {
         guard drag == nil else { return }

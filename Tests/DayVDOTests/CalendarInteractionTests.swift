@@ -117,23 +117,25 @@ final class CalendarInteractionTests: XCTestCase {
         XCTAssertFalse(store.upsert(item))
         let request = try XCTUnwrap(store.dateChangeConfirmation(for: item))
         XCTAssertEqual(request.schedules.count, 2)
+        XCTAssertEqual(request.affectedSchedules.map(\.startDay), [friday])
+        let retained = try XCTUnwrap(originalSchedules.first { $0.startDay == friday.adding(days: 1) })
         XCTAssertEqual(store.item(withID: item.id), original)
         undo.beginUndoGrouping()
-        XCTAssertTrue(store.confirmDateChange(request))
+        XCTAssertTrue(store.confirmDateChange(request, scheduleAction: .delete))
         undo.endUndoGrouping()
-        XCTAssertEqual(store.schedules, [independent])
+        XCTAssertEqual(store.schedules, [retained, independent])
         XCTAssertEqual(store.item(withID: item.id)?.startDay, item.startDay)
         undo.undo()
         XCTAssertEqual(store.item(withID: item.id), original)
         XCTAssertEqual(store.schedules, originalSchedules)
         undo.redo()
-        XCTAssertEqual(store.schedules, [independent])
+        XCTAssertEqual(store.schedules, [retained, independent])
         let persisted = await store.flushPersistence()
         XCTAssertTrue(persisted)
         let loaded = TodoStore(fileURL: url)
         for _ in 0..<100 where loaded.isInitialLoading { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(loaded.items, store.items)
-        XCTAssertEqual(loaded.schedules, [independent])
+        XCTAssertEqual(loaded.schedules, [retained, independent])
     }
 
     @MainActor
@@ -148,13 +150,13 @@ final class CalendarInteractionTests: XCTestCase {
         let request = try XCTUnwrap(store.dateChangeConfirmation(for: candidate))
         schedule.startMinute = 700
         XCTAssertTrue(store.upsertSchedule(schedule))
-        XCTAssertFalse(store.confirmDateChange(request))
+        XCTAssertFalse(store.confirmDateChange(request, scheduleAction: .delete))
         XCTAssertFalse(store.upsert(candidate))
         XCTAssertEqual(store.items, [item])
         var renamed = item
         renamed.title = "Changed title"
         XCTAssertTrue(store.upsert(renamed))
         XCTAssertEqual(store.schedules, [schedule])
-        XCTAssertFalse(store.confirmDateChange(request))
+        XCTAssertFalse(store.confirmDateChange(request, scheduleAction: .keepAsIndependent))
     }
 }

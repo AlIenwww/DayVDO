@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 enum SidebarDestination: String, CaseIterable, Identifiable {
@@ -39,7 +40,10 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var searchFocusRequest = 0
     @State private var allTodosQuery = ""
-    @State private var allTodosFilter = AllTodosFilterState()
+    @State private var allTodosFilter = TodoFilterState()
+    @State private var calendarFilter = TodoFilterState()
+    @State private var calendarToday = LocalDay(.now)
+    private let calendarDayClock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
     @State private var allTodosScrollPosition = ScrollPosition(y: 0)
     @State private var todayHourHeight: CGFloat = 90
     @State private var todayScrollMinute: CGFloat?
@@ -96,6 +100,8 @@ struct ContentView: View {
                 case .calendar:
                     CalendarView(
                         editingItem: $editingItem,
+                        filter: $calendarFilter,
+                        visibility: calendarFilterContext,
                         columnVisibility: $columnVisibility,
                         selectedDate: $calendarSelectedDate,
                         currentMonth: $calendarCurrentMonth,
@@ -206,7 +212,21 @@ struct ContentView: View {
                 isRecoveryPromptPresented = true
             }
             updateLoadingIndicator()
+            refreshCalendarFilterDay()
+            sanitizeCalendarFilter()
         }
+        .onReceive(calendarDayClock) { _ in refreshCalendarFilterDay() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            refreshCalendarFilterDay()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshCalendarFilterDay()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+            refreshCalendarFilterDay()
+        }
+        .onChange(of: store.projects) { _, _ in sanitizeCalendarFilter() }
+        .onChange(of: store.tags) { _, _ in sanitizeCalendarFilter() }
         .onChange(of: store.persistenceIssue) { _, issue in
             if case .recoveryRequired = issue {
                 isRecoveryPromptPresented = true
@@ -247,10 +267,25 @@ struct ContentView: View {
 
     private var displayedDestination: SidebarDestination { pagePresentation.displayedDestination }
 
+    private var calendarFilterContext: TodoFilterContext {
+        .init(filter: calendarFilter, showCompleted: store.settings.showCompleted, today: calendarToday)
+    }
+
+    private func refreshCalendarFilterDay() {
+        let today = LocalDay(.now)
+        if calendarToday != today { calendarToday = today }
+    }
+
+    private func sanitizeCalendarFilter() {
+        var updated = calendarFilter
+        updated.sanitize(projectIDs: Set(store.projects.map(\.id)), tagIDs: Set(store.tags.map(\.id)))
+        if updated != calendarFilter { calendarFilter = updated }
+    }
+
     private var calendarPrewarmTrigger: CalendarPrewarmTrigger {
         CalendarPrewarmTrigger(
             revision: store.contentRevision,
-            showCompleted: store.settings.showCompleted,
+            visibility: calendarFilterContext,
             startsOnMonday: store.settings.startWeekOnMonday,
             timeZoneIdentifier: TimeZone.autoupdatingCurrent.identifier,
             mode: calendarDisplayMode,
@@ -274,9 +309,9 @@ struct ContentView: View {
         if isWeek {
             _ = calendarWeekPresentationCache.value(
                 for: .init(week: request.key.firstDay, revision: store.contentRevision,
-                           showCompleted: store.settings.showCompleted),
+                           visibility: calendarFilterContext),
                 schedules: store.schedules, preview: nil,
-                isCompletedTodo: { store.item(withID: $0)?.isCompleted == true }
+                todo: { store.item(withID: $0) }
             )
         }
         return CalendarEntryPreparation(cache: cache, key: request.key)
@@ -298,7 +333,7 @@ struct ContentView: View {
                     lastDay: week.adding(days: 6),
                     timeZoneIdentifier: calendar.timeZone.identifier,
                     firstWeekday: calendar.firstWeekday,
-                    showCompleted: store.settings.showCompleted
+                    visibility: calendarFilterContext
                 ), items: store.items, tags: store.tags
             )
         } else {
@@ -328,7 +363,7 @@ struct ContentView: View {
                 lastDay: lastDay,
                 timeZoneIdentifier: calendar.timeZone.identifier,
                 firstWeekday: calendar.firstWeekday,
-                showCompleted: store.settings.showCompleted
+                visibility: calendarFilterContext
             ),
             items: store.items,
             tags: store.tags
@@ -405,13 +440,17 @@ private struct SidebarDestinationList: View {
                 Label(L10n.string(destination.title), systemImage: destination.symbol)
             }
         }
+        .listStyle(.sidebar)
+        // Keep the first row below the toolbar's fade without overriding
+        // the native selection colors or keyboard-focus behavior.
+        .padding(.top, 12)
         .onChange(of: presentation.selection) { _, _ in selectionChanged() }
     }
 }
 
 private struct CalendarPrewarmTrigger: Hashable {
     var revision: UInt64
-    var showCompleted: Bool
+    var visibility: TodoFilterContext
     var startsOnMonday: Bool
     var timeZoneIdentifier: String
     var mode: String

@@ -6,6 +6,42 @@ import XCTest
 final class CalendarWeekPresentationCacheTests: XCTestCase {
     private let monday = LocalDay(year: 2026, month: 9, day: 21)
 
+    func testCreationPreviewParticipatesInOverlapWithoutPollutingTheCachedWeek() throws {
+        let cache = CalendarWeekPresentationCache()
+        let original = DaySchedule(startDay: monday, startMinute: 540, durationMinutes: 60,
+                                   content: .independent(title: "Plan", notes: ""))
+        var draft = DaySchedule(startDay: monday, startMinute: 550, durationMinutes: 30,
+                                content: .independent(title: "", notes: ""))
+        draft.setHorizontalPosition(0.95)
+        let key = CalendarWeekPresentationCache.Key(week: monday, revision: 1, visibility: .init(showCompleted: true))
+        _ = cache.value(for: key, schedules: [original], preview: nil, todo: { _ in nil })
+        let preview = cache.value(for: key, schedules: [original], preview: draft,
+                                  prioritizing: draft.id, todo: { _ in nil })
+        let placements = try XCTUnwrap(preview.placementsByDay[monday])
+        XCTAssertEqual(placements.first { $0.id == draft.id }?.column, 1)
+        XCTAssertEqual(placements.first { $0.id == original.id }?.column, 0)
+        XCTAssertTrue(placements.allSatisfy { $0.columnCount == 2 })
+        let restored = cache.value(for: key, schedules: [original], preview: nil, todo: { _ in nil })
+        XCTAssertEqual(restored.schedulesByID.count, 1)
+        XCTAssertEqual(restored.placementsByDay[monday]?.first?.columnCount, 1)
+    }
+
+    func testHorizontalOnlyRevisionRefreshesTheCachedColumns() {
+        let cache = CalendarWeekPresentationCache()
+        let original = DaySchedule(startDay: monday, startMinute: 540, durationMinutes: 60,
+                                   content: .independent(title: "Plan", notes: ""))
+        var moving = DaySchedule(startDay: monday, startMinute: 550, durationMinutes: 30,
+                                content: .independent(title: "Moving", notes: ""))
+        let visibility = TodoFilterContext(showCompleted: true)
+        _ = cache.value(for: .init(week: monday, revision: 1, visibility: visibility),
+                        schedules: [original, moving], preview: nil, todo: { _ in nil })
+        moving.setHorizontalPosition(0.1)
+        let refreshed = cache.value(for: .init(week: monday, revision: 2, visibility: visibility),
+                                    schedules: [original, moving], preview: nil, todo: { _ in nil })
+        XCTAssertEqual(refreshed.placementsByDay[monday]?.first { $0.id == moving.id }?.column, 0)
+        XCTAssertEqual(refreshed.placementsByDay[monday]?.first { $0.id == original.id }?.column, 1)
+    }
+
     func testDragPreviewDoesNotReplaceTheCachedWeek() {
         let cache = CalendarWeekPresentationCache()
         let schedule = DaySchedule(
@@ -13,12 +49,12 @@ final class CalendarWeekPresentationCacheTests: XCTestCase {
             content: .independent(title: "Plan", notes: "")
         )
         let key = CalendarWeekPresentationCache.Key(
-            week: monday, revision: 1, showCompleted: true
+            week: monday, revision: 1, visibility: .init(showCompleted: true)
         )
 
         let original = cache.value(
             for: key, schedules: [schedule], preview: nil,
-            isCompletedTodo: { _ in false }
+            todo: { _ in nil }
         )
         XCTAssertEqual(original.placementsByDay[monday]?.map(\.id), [schedule.id])
 
@@ -26,7 +62,7 @@ final class CalendarWeekPresentationCacheTests: XCTestCase {
         preview.startDay = monday.adding(days: 1)
         let dragged = cache.value(
             for: key, schedules: [schedule], preview: preview,
-            isCompletedTodo: { _ in false }
+            todo: { _ in nil }
         )
         XCTAssertTrue(dragged.placementsByDay[monday]?.isEmpty == true)
         XCTAssertEqual(
@@ -36,7 +72,7 @@ final class CalendarWeekPresentationCacheTests: XCTestCase {
 
         let restored = cache.value(
             for: key, schedules: [schedule], preview: nil,
-            isCompletedTodo: { _ in false }
+            todo: { _ in nil }
         )
         XCTAssertEqual(restored.placementsByDay[monday]?.map(\.id), [schedule.id])
         XCTAssertTrue(restored.placementsByDay[monday.adding(days: 1)]?.isEmpty == true)
@@ -51,16 +87,16 @@ final class CalendarWeekPresentationCacheTests: XCTestCase {
         )
 
         let hidden = cache.value(
-            for: .init(week: monday, revision: 1, showCompleted: false),
+            for: .init(week: monday, revision: 1, visibility: .init(showCompleted: false)),
             schedules: [schedule], preview: nil,
-            isCompletedTodo: { $0 == todoID }
+            todo: { $0 == todoID ? TodoItem(id: todoID, title: "Completed", isCompleted: true) : nil }
         )
         XCTAssertTrue(hidden.placementsByDay[monday]?.isEmpty == true)
 
         let shown = cache.value(
-            for: .init(week: monday, revision: 1, showCompleted: true),
+            for: .init(week: monday, revision: 1, visibility: .init(showCompleted: true)),
             schedules: [schedule], preview: nil,
-            isCompletedTodo: { $0 == todoID }
+            todo: { $0 == todoID ? TodoItem(id: todoID, title: "Completed", isCompleted: true) : nil }
         )
         XCTAssertEqual(shown.placementsByDay[monday]?.map(\.id), [schedule.id])
     }
@@ -72,18 +108,18 @@ final class CalendarWeekPresentationCacheTests: XCTestCase {
             content: .independent(title: "Plan", notes: "")
         )
         let first = cache.value(
-            for: .init(week: monday, revision: 1, showCompleted: true),
+            for: .init(week: monday, revision: 1, visibility: .init(showCompleted: true)),
             schedules: [schedule], preview: nil,
-            isCompletedTodo: { _ in false }
+            todo: { _ in nil }
         )
         XCTAssertEqual(first.placementsByDay[monday]?.map(\.id), [schedule.id])
 
         var moved = schedule
         moved.startDay = monday.adding(days: 1)
         let updated = cache.value(
-            for: .init(week: monday, revision: 2, showCompleted: true),
+            for: .init(week: monday, revision: 2, visibility: .init(showCompleted: true)),
             schedules: [moved], preview: nil,
-            isCompletedTodo: { _ in false }
+            todo: { _ in nil }
         )
         XCTAssertTrue(updated.placementsByDay[monday]?.isEmpty == true)
         XCTAssertEqual(updated.placementsByDay[monday.adding(days: 1)]?.map(\.id), [schedule.id])

@@ -110,7 +110,7 @@ final class CalendarWindowSnapshotTests: XCTestCase {
                 lastDay: windowEnd,
                 timeZoneIdentifier: "GMT",
                 firstWeekday: 2,
-                showCompleted: showCompleted
+                visibility: .init(showCompleted: showCompleted)
             ),
             items: items,
             tags: tags

@@ -52,7 +52,7 @@ final class CalendarEntryPreparationTests: XCTestCase {
         newest.revision = 2
         XCTAssertFalse(cache.hasSnapshot(covering: newest))
         newest = old.key
-        newest.showCompleted.toggle()
+        newest.visibility.showCompleted.toggle()
         XCTAssertFalse(cache.hasSnapshot(covering: newest))
         newest = old.key
         newest.firstWeekday = 1
@@ -73,7 +73,7 @@ final class CalendarEntryPreparationTests: XCTestCase {
     private func request(days: Int, revision: UInt64) -> CalendarWindowRequest {
         let first = LocalDay(year: 2026, month: 9, day: 21)
         return .init(key: .init(revision: revision, firstDay: first, lastDay: first.adding(days: days - 1),
-                               timeZoneIdentifier: "Asia/Shanghai", firstWeekday: 2, showCompleted: true),
+                               timeZoneIdentifier: "Asia/Shanghai", firstWeekday: 2, visibility: .init(showCompleted: true)),
                      items: [TodoItem(title: "跨周任务", startDate: first.date(), dueDate: first.adding(days: 9).date())], tags: [])
     }
 }

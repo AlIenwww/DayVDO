@@ -18,7 +18,7 @@ struct SchedulePopoverView: View {
     var body: some View {
         Group {
             if isEditing {
-                ScheduleEditorView(schedule: schedule) { todo in
+                ScheduleEditorView(schedule: schedule, close: close) { todo in
                     close()
                     DispatchQueue.main.async { editTodo(todo) }
                 }
@@ -56,9 +56,10 @@ struct ScheduleEditorView: View {
     @State private var endText: String
     @State private var nextDay: Bool
     @State private var failed = false
+    var close: (() -> Void)?
     var editTodo: (TodoItem) -> Void
 
-    init(schedule: DaySchedule, editTodo: @escaping (TodoItem) -> Void) {
+    init(schedule: DaySchedule, close: (() -> Void)? = nil, editTodo: @escaping (TodoItem) -> Void) {
         _draft = State(initialValue: schedule)
         if case .independent(let title, let notes) = schedule.content {
             _title = State(initialValue: title); _notes = State(initialValue: notes)
@@ -68,6 +69,7 @@ struct ScheduleEditorView: View {
         _startText = State(initialValue: SchedulePresentation.clock(schedule.startMinute))
         _endText = State(initialValue: SchedulePresentation.clock(schedule.endMinute))
         _nextDay = State(initialValue: schedule.endMinute >= 1440)
+        self.close = close
         self.editTodo = editTodo
     }
 
@@ -87,7 +89,10 @@ struct ScheduleEditorView: View {
             if let todo = linkedTodo {
                 Text(todo.title).font(.headline)
                 if !todo.notes.isEmpty { Text(todo.notes).foregroundStyle(.secondary).lineLimit(4) }
-                Button(L10n.string("编辑原待办")) { dismiss(); editTodo(todo) }
+                Button(L10n.string("编辑原待办")) {
+                    finishEditing()
+                    if let latest = store.item(withID: todo.id) { editTodo(latest) }
+                }
             } else {
                 TextField(L10n.string("安排名称"), text: $title).font(.title3)
                 TextField(L10n.string("备注"), text: $notes, axis: .vertical).lineLimit(2...5)
@@ -121,10 +126,10 @@ struct ScheduleEditorView: View {
             Divider()
             HStack {
                 Spacer()
-                Button(L10n.string("取消")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L10n.string("取消"), role: .cancel) { finishEditing() }.keyboardShortcut(.cancelAction)
                 Button(L10n.string("保存")) {
                     if let value = candidate, store.canModify,
-                       store.schedules.contains(value) || store.upsertSchedule(value) { dismiss() }
+                       store.schedules.contains(value) || store.upsertSchedule(value) { finishEditing() }
                     else { failed = true }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -133,6 +138,12 @@ struct ScheduleEditorView: View {
         }
         .textFieldStyle(.roundedBorder)
         .padding(24).frame(width: 440)
+        .editorEscapeDismissal(cancel: finishEditing)
+    }
+
+    private func finishEditing() {
+        if let close { close() }
+        else { dismiss() }
     }
 
     private static func parse(_ text: String) -> Int? {

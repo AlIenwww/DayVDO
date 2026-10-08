@@ -143,7 +143,7 @@
 
 "已达到预计时长" = "Durée estimée atteinte";
 
-"继续安排 30 分钟" = "Ajouter 30 minutes";
+"继续安排" = "Continuer à planifier";
 
 "这个待办已安排足够时间，仍要再添加一段吗？" = "Cette tâche dispose déjà d’assez de temps. Ajouter un créneau ?";
 
@@ -212,3 +212,13 @@
 "拷贝" = "Copier";
 
 "粘贴" = "Coller";
+
+"编辑任务" = "Modifier la tâche";
+
+"如何处理原时间安排？" = "Que faire des créneaux existants ?";
+
+"保留为普通安排" = "Conserver comme créneaux indépendants";
+
+"删除安排" = "Supprimer les créneaux";
+
+"原日期：%@\n新日期：%@\n需要处理 %lld 段安排。\n\n仅处理新日期范围之外的安排，范围内的安排继续关联此待办。部分超出范围的跨日安排将整段处理。" = "Anciennes dates : %@\nNouvelles dates : %@\n%lld créneaux nécessitent une décision.\n\nSeuls les créneaux en dehors de la nouvelle période seront concernés. Ceux situés dans la période resteront liés à cette tâche. Les créneaux passant minuit et partiellement hors de la période seront traités dans leur intégralité.";

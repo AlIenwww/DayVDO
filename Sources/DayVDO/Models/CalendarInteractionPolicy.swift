@@ -74,8 +74,10 @@ enum WeekSchedulePolicy {
         switch mode {
         case .move:
             value.startDay = schedule.startDay.adding(days: dayDelta)
-            value.startMinute = DayPlanningPolicy.snapped(Double(schedule.startMinute) + minuteDelta,
-                                                         within: 0...1439) ?? schedule.startMinute
+            if abs(minuteDelta) > 0.001 {
+                value.startMinute = DayPlanningPolicy.snapped(Double(schedule.startMinute) + minuteDelta,
+                                                             within: 0...1439) ?? schedule.startMinute
+            }
         case .start:
             let absolute = dayDelta * 1440 + DayPlanningPolicy.snapped(Double(schedule.startMinute) + minuteDelta)
             guard let newStart = DayPlanningPolicy.snapped(Double(absolute),

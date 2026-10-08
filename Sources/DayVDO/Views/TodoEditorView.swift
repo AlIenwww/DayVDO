@@ -248,6 +248,10 @@ struct TodoEditorView: View {
         .dateChangeConfirmation($dateChange) { _ in dismiss() }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .editorEscapeDismissal(
+            enabled: dateChange == nil && !isShowingStartDatePicker && !isShowingDeadlinePicker,
+            cancel: { dismiss() }
+        )
         .task {
             await Task.yield()
             titleIsFocused = true
@@ -318,6 +322,7 @@ struct TodoEditorView: View {
                     }
                 }
                 .padding(10)
+                .editorEscapeDismissal { isPresented.wrappedValue = false }
             }
         }
         .padding(.horizontal, 20)

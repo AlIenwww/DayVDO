@@ -143,7 +143,7 @@
 
 "已达到预计时长" = "Geschätzte Dauer erreicht";
 
-"继续安排 30 分钟" = "Weitere 30 Minuten einplanen";
+"继续安排" = "Weiter einplanen";
 
 "这个待办已安排足够时间，仍要再添加一段吗？" = "Für diese Aufgabe ist genug Zeit eingeplant. Weiteren Block hinzufügen?";
 
@@ -212,3 +212,13 @@
 "拷贝" = "Kopieren";
 
 "粘贴" = "Einfügen";
+
+"编辑任务" = "Aufgabe bearbeiten";
+
+"如何处理原时间安排？" = "Was soll mit den bisherigen Zeitblöcken geschehen?";
+
+"保留为普通安排" = "Als eigenständige Zeitblöcke behalten";
+
+"删除安排" = "Zeitblöcke löschen";
+
+"原日期：%@\n新日期：%@\n需要处理 %lld 段安排。\n\n仅处理新日期范围之外的安排，范围内的安排继续关联此待办。部分超出范围的跨日安排将整段处理。" = "Bisherige Daten: %@\nNeue Daten: %@\n%lld Zeitblöcke müssen behandelt werden.\n\nNur Zeitblöcke außerhalb des neuen Datumsbereichs sind betroffen. Zeitblöcke innerhalb des Bereichs bleiben mit dieser Aufgabe verknüpft. Zeitblöcke über Mitternacht, die teilweise außerhalb liegen, werden vollständig behandelt.";

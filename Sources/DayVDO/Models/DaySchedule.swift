@@ -12,6 +12,13 @@ struct DaySchedule: Identifiable, Codable, Equatable, Sendable {
     var startMinute: Int
     var durationMinutes: Int
     var content: Content
+    var horizontalPosition: Double? = nil
+    var horizontalPositionUpdatedAt: Date? = nil
+
+    mutating func setHorizontalPosition(_ position: Double, at date: Date = .now) {
+        horizontalPosition = position
+        horizontalPositionUpdatedAt = date
+    }
 
     var todoID: UUID? {
         if case .todo(let id) = content { return id }
@@ -19,12 +26,20 @@ struct DaySchedule: Identifiable, Codable, Equatable, Sendable {
     }
     var isValid: Bool {
         guard (0..<1440).contains(startMinute), (1...1440).contains(durationMinutes) else { return false }
+        if let horizontalPosition, !horizontalPosition.isFinite || !(0...1).contains(horizontalPosition) { return false }
         if case .independent(let title, _) = content {
             return !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         return true
     }
     var endMinute: Int { startMinute + durationMinutes }
+
+    /// The end is exclusive: an arrangement ending at midnight occupies only
+    /// its starting day. A partially overlapping arrangement stays indivisible.
+    func isContained(in days: ClosedRange<LocalDay>) -> Bool {
+        let lastDay = startDay.adding(days: (endMinute - 1) / 1440)
+        return days.contains(startDay) && days.contains(lastDay)
+    }
 
     func interval(on day: LocalDay) -> Range<Int>? {
         let offset = startDay.distance(to: day) * 1440
@@ -77,8 +92,16 @@ enum DayPlanningPolicy {
         onCurrentDay && placement.interval.contains(minute)
     }
 
-    /// Connected overlap groups have stable, equal-width columns. Touching edges do not overlap.
-    static func placements(_ schedules: [DaySchedule], on day: LocalDay) -> [Placement] {
+    static func horizontalPosition(x: Double, minX: Double, width: Double) -> Double {
+        guard x.isFinite, minX.isFinite, width.isFinite, width > 0 else { return 0.5 }
+        return min(1, max(0, (x - minX) / width))
+    }
+
+    /// Connected overlap groups use only as many columns as their simultaneous overlap needs.
+    /// Column permutations honor pointer positions without putting conflicts in the same column.
+    static func placements(_ schedules: [DaySchedule], on day: LocalDay,
+                           prioritizing activeID: UUID? = nil) -> [Placement] {
+        let byID = Dictionary(schedules.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         let sorted = schedules.compactMap { schedule -> (UUID, Range<Int>)? in
             schedule.interval(on: day).map { (schedule.id, $0) }
         }.sorted {
@@ -91,7 +114,36 @@ enum DayPlanningPolicy {
         var columnEnds: [Int] = []
         var groupEnd = -1
         func flush() {
-            result += group.map { var p = $0; p.columnCount = columnEnds.count; return p }
+            let count = columnEnds.count
+            var available = Array(0..<count)
+            var columns: [Int: Int] = [:]
+            let preferred = group.filter { byID[$0.id]?.horizontalPosition != nil }.sorted {
+                if ($0.id == activeID) != ($1.id == activeID) { return $0.id == activeID }
+                let left = byID[$0.id]?.horizontalPositionUpdatedAt ?? .distantPast
+                let right = byID[$1.id]?.horizontalPositionUpdatedAt ?? .distantPast
+                return left != right ? left > right : $0.id.uuidString < $1.id.uuidString
+            }
+            func reserve(_ source: Int, near target: Int) {
+                guard columns[source] == nil,
+                      let destination = available.min(by: {
+                          let left = abs($0 - target), right = abs($1 - target)
+                          return left != right ? left < right : $0 < $1
+                      }) else { return }
+                columns[source] = destination
+                available.removeAll { $0 == destination }
+            }
+            for placement in preferred {
+                guard let position = byID[placement.id]?.horizontalPosition, position.isFinite else { continue }
+                let target = min(count - 1, Int(min(1, max(0, position)) * Double(count)))
+                reserve(placement.column, near: target)
+            }
+            for source in 0..<count { reserve(source, near: source) }
+            result += group.map {
+                var placement = $0
+                placement.columnCount = count
+                placement.column = columns[placement.column] ?? placement.column
+                return placement
+            }
             group = []
             columnEnds = []
         }

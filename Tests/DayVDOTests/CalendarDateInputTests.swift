@@ -163,8 +163,25 @@ final class CalendarDateInputTests: XCTestCase {
     }
 
     @MainActor
+    func testDividerOverlayLetsBothScrollPanesReceiveInput() {
+        let host = NSView(frame: CGRect(x: 0, y: 0, width: 700, height: 501))
+        let split = CalendarWeekDivider.SplitView(frame: host.bounds)
+        host.addSubview(split)
+        split.addSubview(NSView()); split.addSubview(NSView())
+        split.preferredFraction = 0.6
+        split.applyFraction()
+
+        for y: CGFloat in [80, 220, 380, 480] {
+            let point = split.convert(NSPoint(x: 350, y: y), to: host)
+            XCTAssertNil(split.hitTest(point))
+        }
+        let divider = split.convert(NSPoint(x: 350, y: 300), to: host)
+        XCTAssertTrue(split.hitTest(divider) === split)
+    }
+
+    @MainActor
     func testNativeSplitWindowResizeKeepsRatioAndNeverPersistsTemporaryClamp() {
-        let split = CalendarWeekSplitView<EmptyView, EmptyView>.SplitView(frame: CGRect(x: 0, y: 0, width: 700, height: 501))
+        let split = CalendarWeekDivider.SplitView(frame: CGRect(x: 0, y: 0, width: 700, height: 501))
         split.addSubview(NSView()); split.addSubview(NSView())
         split.preferredFraction = 0.8
         var writes = 0

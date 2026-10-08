@@ -8,12 +8,15 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
         var lastDay: LocalDay
         var timeZoneIdentifier: String
         var firstWeekday: Int
-        var showCompleted: Bool
+        var visibility: TodoFilterContext
+
+        func matchesContent(of other: Key) -> Bool {
+            revision == other.revision && timeZoneIdentifier == other.timeZoneIdentifier
+                && firstWeekday == other.firstWeekday && visibility == other.visibility
+        }
 
         func covers(_ other: Key) -> Bool {
-            revision == other.revision && timeZoneIdentifier == other.timeZoneIdentifier
-                && firstWeekday == other.firstWeekday && showCompleted == other.showCompleted
-                && firstDay <= other.firstDay && lastDay >= other.lastDay
+            matchesContent(of: other) && firstDay <= other.firstDay && lastDay >= other.lastDay
         }
     }
 
@@ -51,7 +54,7 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
         let colorsByTag = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0.color) })
         let sortedItems = items
             .filter {
-                guard key.showCompleted || !$0.isCompleted,
+                guard key.visibility.includes($0),
                       let start = $0.startDay, let end = $0.dueDay, start <= end else { return false }
                 return start <= key.lastDay && end >= key.firstDay
             }

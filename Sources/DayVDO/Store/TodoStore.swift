@@ -297,16 +297,17 @@ final class TodoStore: ObservableObject {
         }.sorted(by: Self.areInIncreasingOrder)
     }
 
-    func calendarItems(on date: Date) -> [TodoItem] {
+    func calendarItems(on date: Date, visibility: TodoFilterContext? = nil) -> [TodoItem] {
         let timeZone = Calendar.current.timeZone
         let day = LocalDay(date, timeZone: timeZone)
         let today = LocalDay(.now, timeZone: timeZone)
+        let criteria = visibility ?? TodoFilterContext(showCompleted: settings.showCompleted, today: today)
         return items.filter {
-            TaskDateRangePolicy.isVisibleInCalendar(
+            criteria.includes($0) && TaskDateRangePolicy.isVisibleInCalendar(
                 $0,
                 on: day,
                 today: today,
-                includeCompleted: settings.showCompleted,
+                includeCompleted: true,
                 timeZone: timeZone
             )
         }.sorted(by: Self.areInIncreasingOrder)
@@ -317,30 +318,43 @@ final class TodoStore: ObservableObject {
         let original: TodoItem
         let candidate: TodoItem
         let schedules: [DaySchedule]
+        let affectedSchedules: [DaySchedule]
+    }
+
+    enum DateChangeScheduleAction {
+        case keepAsIndependent
+        case delete
     }
 
     func dateChangeConfirmation(for candidate: TodoItem) -> DateChangeConfirmation? {
-        guard let original = item(withID: candidate.id),
+        guard candidate.hasValidDateRange, let original = item(withID: candidate.id),
               original.startDay != candidate.startDay || original.dueDay != candidate.dueDay else { return nil }
         let linked = schedules(for: candidate.id)
-        guard !linked.isEmpty else { return nil }
-        return DateChangeConfirmation(original: original, candidate: candidate, schedules: linked)
+        let affected: [DaySchedule]
+        if let start = candidate.startDay, let end = candidate.dueDay {
+            affected = linked.filter { !$0.isContained(in: start...end) }
+        } else {
+            affected = linked
+        }
+        guard !affected.isEmpty else { return nil }
+        return DateChangeConfirmation(original: original, candidate: candidate,
+                                      schedules: linked, affectedSchedules: affected)
     }
 
     @discardableResult
-    func confirmDateChange(_ request: DateChangeConfirmation) -> Bool {
-        guard item(withID: request.original.id) == request.original,
-              schedules(for: request.original.id) == request.schedules else { return false }
-        return saveItem(request.candidate, removingSchedules: true)
+    func confirmDateChange(_ request: DateChangeConfirmation, scheduleAction: DateChangeScheduleAction) -> Bool {
+        guard dateChangeConfirmation(for: request.candidate) == request else { return false }
+        return saveItem(request.candidate, scheduleChange: (Set(request.affectedSchedules.map(\.id)), scheduleAction))
     }
 
     @discardableResult
     func upsert(_ item: TodoItem) -> Bool {
         guard dateChangeConfirmation(for: item) == nil else { return false }
-        return saveItem(item, removingSchedules: false)
+        return saveItem(item)
     }
 
-    private func saveItem(_ item: TodoItem, removingSchedules: Bool) -> Bool {
+    private func saveItem(_ item: TodoItem,
+                          scheduleChange: (ids: Set<UUID>, action: DateChangeScheduleAction)? = nil) -> Bool {
         var copy = item
         copy.title = copy.normalizedTitle
         guard !copy.title.isEmpty,
@@ -380,7 +394,19 @@ final class TodoStore: ObservableObject {
         }
 
         return performUndoable(L10n.string(isEditing ? "编辑待办" : "添加待办")) {
-            if removingSchedules { schedules.removeAll { $0.todoID == copy.id } }
+            if let change = scheduleChange {
+                switch change.action {
+                case .delete:
+                    schedules.removeAll { change.ids.contains($0.id) }
+                case .keepAsIndependent:
+                    schedules = schedules.map { schedule in
+                        guard change.ids.contains(schedule.id) else { return schedule }
+                        var independent = schedule
+                        independent.content = .independent(title: copy.title, notes: copy.notes)
+                        return independent
+                    }
+                }
+            }
             if let index = items.firstIndex(where: { $0.id == copy.id }) {
                 items[index] = copy
             } else {

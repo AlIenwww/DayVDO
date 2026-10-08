@@ -1,9 +1,9 @@
 import XCTest
 @testable import DayVDO
 
-final class AllTodosFilterStateTests: XCTestCase {
+final class TodoFilterStateTests: XCTestCase {
     func testActiveCategoryCountCountsCategoriesAndClearResetsEverything() {
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
         let projectID = UUID()
         let tagID = UUID()
 
@@ -20,7 +20,7 @@ final class AllTodosFilterStateTests: XCTestCase {
         XCTAssertTrue(filter.isActive)
 
         filter.clear()
-        XCTAssertEqual(filter, AllTodosFilterState())
+        XCTAssertEqual(filter, TodoFilterState())
         XCTAssertFalse(filter.isActive)
     }
 
@@ -35,7 +35,7 @@ final class AllTodosFilterStateTests: XCTestCase {
             projectID: projectID,
             tagID: tagID
         )
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
         filter.statuses = [.notStarted, .inProgress]
         filter.projectIDs = [projectID]
         filter.tagIDs = [tagID]
@@ -58,7 +58,7 @@ final class AllTodosFilterStateTests: XCTestCase {
         let tagID = UUID()
         let unassigned = TodoItem(title: "无归类", priority: .none, urgency: .none)
         let assigned = TodoItem(title: "已归类", projectID: projectID, tagID: tagID)
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
         filter.includesUnassignedProject = true
         filter.includesUntagged = true
         filter.priorities = [.none]
@@ -75,7 +75,7 @@ final class AllTodosFilterStateTests: XCTestCase {
     func testDefaultAndExplicitStatusSelectionHandleCompletedPreference() {
         let active = TodoItem(title: "进行中", status: .inProgress)
         let completed = TodoItem(title: "已完成", status: .completed)
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
 
         XCTAssertTrue(filter.includes(active, showCompletedPreference: false))
         XCTAssertFalse(filter.includes(completed, showCompletedPreference: false))
@@ -87,7 +87,7 @@ final class AllTodosFilterStateTests: XCTestCase {
     }
 
     func testSearchMustMatchAlongsideEveryFilterCategory() {
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
         filter.statuses = [.inProgress]
         let item = TodoItem(title: "目标", status: .inProgress)
 
@@ -103,7 +103,7 @@ final class AllTodosFilterStateTests: XCTestCase {
         let projectID = UUID()
         let matching = TodoItem(title: "保留", priority: .high, projectID: projectID)
         let rejected = TodoItem(title: "隐藏", priority: .low, projectID: projectID)
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
         filter.projectIDs = [projectID]
         filter.priorities = [.high]
 
@@ -119,7 +119,7 @@ final class AllTodosFilterStateTests: XCTestCase {
         let deletedProjectID = UUID()
         let retainedTagID = UUID()
         let deletedTagID = UUID()
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
         filter.projectIDs = [retainedProjectID, deletedProjectID]
         filter.tagIDs = [retainedTagID, deletedTagID]
 
@@ -141,7 +141,7 @@ final class AllTodosFilterStateTests: XCTestCase {
             dueDate: today.adding(days: 1).date(),
             status: .inProgress
         )
-        var filter = AllTodosFilterState()
+        var filter = TodoFilterState()
         filter.statuses = [.inProgress]
         filter.overdueOnly = true
 

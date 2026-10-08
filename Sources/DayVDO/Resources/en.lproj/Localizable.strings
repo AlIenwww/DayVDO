@@ -225,7 +225,7 @@
 
 "已达到预计时长" = "Estimated duration reached";
 
-"继续安排 30 分钟" = "Add another 30 minutes";
+"继续安排" = "Continue scheduling";
 
 "这个待办已安排足够时间，仍要再添加一段吗？" = "This task has enough time scheduled. Add another block?";
 
@@ -294,3 +294,13 @@
 "拷贝" = "Copy";
 
 "粘贴" = "Paste";
+
+"编辑任务" = "Edit task";
+
+"如何处理原时间安排？" = "What should happen to the existing arrangements?";
+
+"保留为普通安排" = "Keep as standalone arrangements";
+
+"删除安排" = "Delete arrangements";
+
+"原日期：%@\n新日期：%@\n需要处理 %lld 段安排。\n\n仅处理新日期范围之外的安排，范围内的安排继续关联此待办。部分超出范围的跨日安排将整段处理。" = "Previous dates: %@\nNew dates: %@\n%lld arrangements need attention.\n\nOnly arrangements outside the new date range will be affected. Arrangements within the range will stay linked to this task. Overnight arrangements partially outside the range will be handled in full.";

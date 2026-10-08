@@ -127,6 +127,7 @@ struct PlanningTodoPanel: View {
                 .animation(.snappy(duration: 0.28), value: sections)
                 .id(day)
             }
+            .scrollClipDisabled()
         }
         .background(.background)
         .onChange(of: day) { _, _ in selectedID = nil }

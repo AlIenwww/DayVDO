@@ -18,26 +18,40 @@ enum CalendarWeekSplitPolicy {
     }
 }
 
-/// The preference records the user's ratio, never a temporary window-size constraint.
-struct CalendarWeekSplitView<Top: View, Bottom: View>: NSViewRepresentable {
+/// Both panes stay in the page's SwiftUI hierarchy so their scroll content
+/// participates in the native toolbar's scroll edge effect.
+struct CalendarWeekSplitView<Top: View, Bottom: View>: View {
     @Binding var fraction: Double
     @ViewBuilder var top: () -> Top
     @ViewBuilder var bottom: () -> Bottom
 
+    var body: some View {
+        GeometryReader { geometry in
+            let available = max(0, geometry.size.height - 1)
+            let topHeight = CalendarWeekSplitPolicy.topHeight(fraction: fraction, availableHeight: available)
+            VStack(spacing: 0) {
+                top().frame(height: topHeight)
+                Divider().frame(height: 1)
+                bottom().frame(height: max(0, available - topHeight)).clipped()
+            }
+            .overlay { CalendarWeekDivider(fraction: $fraction) }
+        }
+    }
+}
+
+/// Preserve AppKit's divider tracking without separate NSHostingViews that
+/// isolate each pane from the window's safe-area and scroll-edge preferences.
+struct CalendarWeekDivider: NSViewRepresentable {
+    @Binding var fraction: Double
+
     func makeNSView(context: Context) -> SplitView {
         let split = SplitView()
-        let upper = NSHostingView(rootView: top())
-        let lower = NSHostingView(rootView: bottom())
-        upper.sizingOptions = []; lower.sizingOptions = []
-        split.addSubview(upper); split.addSubview(lower)
+        split.addSubview(NSView())
+        split.addSubview(NSView())
         configure(split)
         return split
     }
-    func updateNSView(_ split: SplitView, context: Context) {
-        (split.subviews[0] as? NSHostingView<Top>)?.rootView = top()
-        (split.subviews[1] as? NSHostingView<Bottom>)?.rootView = bottom()
-        configure(split)
-    }
+    func updateNSView(_ split: SplitView, context: Context) { configure(split) }
     private func configure(_ split: SplitView) {
         split.preferredFraction = fraction
         split.onUserResize = { fraction = $0 }
@@ -56,6 +70,13 @@ struct CalendarWeekSplitView<Top: View, Bottom: View>: NSViewRepresentable {
             isVertical = false; dividerStyle = .thin; delegate = self
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            let local = convert(point, from: superview)
+            guard bounds.contains(local), subviews.count == 2,
+                  abs(local.y - subviews[0].frame.maxY) <= 5 else { return nil }
+            return self
+        }
+        override func drawDivider(in rect: NSRect) { }
         override var isFlipped: Bool { true }
         override func resizeSubviews(withOldSize oldSize: NSSize) { applyFraction() }
         func applyFraction() {

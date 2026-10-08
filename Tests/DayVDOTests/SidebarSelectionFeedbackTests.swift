@@ -140,7 +140,7 @@ final class SidebarSelectionFeedbackTests: XCTestCase {
     private func calendarRequest() -> CalendarWindowRequest {
         let day = LocalDay(year: 2026, month: 9, day: 28)
         return .init(key: .init(revision: 1, firstDay: day, lastDay: day.adding(days: 41),
-            timeZoneIdentifier: "Asia/Shanghai", firstWeekday: 2, showCompleted: true),
+            timeZoneIdentifier: "Asia/Shanghai", firstWeekday: 2, visibility: .init(showCompleted: true)),
             items: [TodoItem(title: "待办", dueDate: day.date())], tags: [])
     }
 }
