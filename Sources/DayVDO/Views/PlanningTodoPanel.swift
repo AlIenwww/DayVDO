@@ -57,7 +57,7 @@ struct PlanningTodoPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(sections) { section in
                         Section {
                             if expandedSections.contains(section.kind) {
@@ -106,7 +106,6 @@ struct PlanningTodoPanel: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(.background)
                             .accessibilityElement(children: .combine)
                             .accessibilityValue(
                                 L10n.string(
@@ -129,7 +128,6 @@ struct PlanningTodoPanel: View {
             }
             .scrollClipDisabled()
         }
-        .background(.background)
         .onChange(of: day) { _, _ in selectedID = nil }
     }
 }

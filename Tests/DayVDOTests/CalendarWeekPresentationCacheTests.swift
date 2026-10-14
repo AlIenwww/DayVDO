@@ -6,6 +6,24 @@ import XCTest
 final class CalendarWeekPresentationCacheTests: XCTestCase {
     private let monday = LocalDay(year: 2026, month: 9, day: 21)
 
+    func testNeighboringWeeksReusePlacementsInsteadOfEvictingEachOther() {
+        let cache = CalendarWeekPresentationCache()
+        let todo = TodoItem(title: "Cached")
+        let schedules = (0..<3).map { offset in
+            DaySchedule(startDay: monday.adding(days: offset * 7), startMinute: 540,
+                durationMinutes: 30, content: .todo(todo.id))
+        }
+        var resolutions = 0
+        for _ in 0..<10 {
+            for offset in 0..<3 {
+                _ = cache.value(for: .init(week: monday.adding(days: offset * 7), revision: 1,
+                    visibility: .init(showCompleted: true)), schedules: schedules, preview: nil,
+                    todo: { _ in resolutions += 1; return todo })
+            }
+        }
+        XCTAssertEqual(resolutions, 3, "Rendering adjacent weeks must not recalculate each schedule every frame")
+    }
+
     func testCreationPreviewParticipatesInOverlapWithoutPollutingTheCachedWeek() throws {
         let cache = CalendarWeekPresentationCache()
         let original = DaySchedule(startDay: monday, startMinute: 540, durationMinutes: 60,

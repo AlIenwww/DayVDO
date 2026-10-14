@@ -196,10 +196,18 @@ final class TimelineInteractionWindowTests: XCTestCase {
     }
 
     private func editorWindow(_ fixture: Fixture) -> NSWindow? {
-        NSApp.windows.first {
+        (NSApp.windows + (fixture.window.childWindows ?? [])).first {
             $0.isVisible && $0 !== fixture.window && $0 !== fixture.window.attachedSheet
-                && !fields(in: $0.contentView ?? NSView()).isEmpty
+                && hasEditorControls(in: $0.contentView ?? NSView())
         }
+    }
+
+    private func hasEditorControls(in view: NSView) -> Bool {
+        // Linked tasks keep their title read-only; their editor can consist
+        // entirely of native date pickers, without an editable text field.
+        if view is NSDatePicker { return true }
+        if let field = view as? NSTextField, field.isEditable { return true }
+        return view.subviews.contains { hasEditorControls(in: $0) }
     }
 
     private func fields(in view: NSView) -> [NSTextField] {
@@ -300,7 +308,7 @@ private struct TimelineWindowHarness: View {
                 probe.editingItem = $0
             }, activityChanged: { _ in })
         .popover(item: $probe.draft) { schedule in
-            ScheduleEditorView(schedule: schedule, close: { probe.draft = nil }, editTodo: { _ in })
+            ScheduleEditorView(schedule: schedule, isCreating: true, close: { probe.draft = nil }, editTodo: { _ in })
         }
         .sheet(item: $probe.editingItem) { item in
             TodoEditorView(item: item, isEditing: true) { store.upsert($0) }

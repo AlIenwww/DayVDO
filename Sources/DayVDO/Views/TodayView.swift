@@ -30,48 +30,35 @@ struct TodayView: View {
     var body: some View {
         GeometryReader { geometry in
             let narrow = geometry.size.width < 720
-            ZStack(alignment: .trailing) {
-                HStack(spacing: 0) {
-                    DayTimelineView(
-                        day: selectedDay,
-                        hourHeight: $hourHeight,
-                        restoredScrollMinute: $timelineScrollMinute,
-                        now: now,
-                        obscuredWidth: narrow && showsTodoPanel ? min(280, max(220, geometry.size.width * 0.55)) : 0,
-                        presentation: $schedulePopover,
-                        create: { minute, duration, horizontal in
-                            scheduleDraft = DaySchedule(startDay: selectedDay, startMinute: minute,
-                                durationMinutes: duration, content: .independent(title: "", notes: ""),
-                                horizontalPosition: horizontal, horizontalPositionUpdatedAt: .now)
-                        },
-                        dropTodo: requestSchedule,
-                        editTodo: queueTodoForEditing,
-                        activityChanged: { timelineActive = $0 }
-                    )
-                    if !narrow {
-                        Divider()
-                        todoPanel.frame(width: 280)
-                    }
-                }
-                if narrow && showsTodoPanel {
-                    todoPanel
-                        .frame(width: min(280, max(220, geometry.size.width * 0.55)))
-                        .overlay(alignment: .leading) { Divider() }
-                        .shadow(color: .black.opacity(0.08), radius: 8, x: -4)
-                }
-            }
+            let panelWidth: CGFloat = narrow ? min(280, max(220, geometry.size.width * 0.55)) : 280
+            // Both columns belong to the same native scroll backdrop. The list
+            // stays fixed in the viewport and keeps its own scroll position.
+            DayTimelineView(
+                day: selectedDay,
+                hourHeight: $hourHeight,
+                restoredScrollMinute: $timelineScrollMinute,
+                now: now,
+                reservedTrailingWidth: narrow ? 0 : panelWidth + 1,
+                obscuredWidth: narrow && showsTodoPanel ? panelWidth : 0,
+                trailingPanel: !narrow || showsTodoPanel ? todoPanel : nil,
+                trailingPanelWidth: panelWidth,
+                creationDraft: $scheduleDraft,
+                presentation: $schedulePopover,
+                create: { minute, duration, horizontal in
+                    scheduleDraft = DaySchedule(startDay: selectedDay, startMinute: minute,
+                        durationMinutes: duration, content: .independent(title: "", notes: ""),
+                        horizontalPosition: horizontal, horizontalPositionUpdatedAt: .now)
+                },
+                dropTodo: requestSchedule,
+                editTodo: queueTodoForEditing,
+                activityChanged: { timelineActive = $0 }
+            )
             .pageTopBar {
-                VStack(spacing: 0) {
-                    dateHeader(narrow: narrow)
-                    Divider()
-                }
+                dateHeader(narrow: narrow)
             }
             .onChange(of: narrow) { _, value in if !value { showsTodoPanel = false } }
         }
         .navigationTitle(L10n.string("今日待办"))
-        .popover(item: $scheduleDraft) { schedule in
-            ScheduleEditorView(schedule: schedule, close: { scheduleDraft = nil }, editTodo: queueTodoForEditing)
-        }
         .onChange(of: scheduleDraft) { old, new in
             if old != nil && new == nil { finishPresentation() }
         }
@@ -101,7 +88,7 @@ struct TodayView: View {
         .onChange(of: isBusy) { _, busy in if !busy { refreshClock() } }
     }
 
-    private var todoPanel: some View {
+    private var todoPanel: PlanningTodoPanel {
         PlanningTodoPanel(
             day: selectedDay,
             today: LocalDay(now),
@@ -111,8 +98,6 @@ struct TodayView: View {
 
     private func dateHeader(narrow: Bool) -> some View {
         HStack(spacing: 10) {
-            Button { selectedDay = selectedDay.adding(days: -1) } label: { Image(systemName: "chevron.left") }
-                .help(L10n.string("前一天"))
             Button { isPickingDate.toggle() } label: {
                 HStack(spacing: 8) {
                     Text(selectedDay.date().formatted(.dateTime.year().month(.abbreviated).day().locale(L10n.locale)))
@@ -130,10 +115,12 @@ struct TodayView: View {
                 ), startsOnMonday: store.settings.startWeekOnMonday)
                 .fixedSize().padding(10)
             }
+            Spacer(minLength: 0)
+            Button(L10n.string("今天")) { selectedDay = LocalDay(.now) }
+            Button { selectedDay = selectedDay.adding(days: -1) } label: { Image(systemName: "chevron.left") }
+                .help(L10n.string("前一天"))
             Button { selectedDay = selectedDay.adding(days: 1) } label: { Image(systemName: "chevron.right") }
                 .help(L10n.string("后一天"))
-            Button(L10n.string("今天")) { selectedDay = LocalDay(.now) }
-            Spacer(minLength: 0)
             if narrow {
                 Button { showsTodoPanel.toggle() } label: { Image(systemName: "list.bullet.rectangle.portrait") }
                     .help(L10n.string("待办事项"))

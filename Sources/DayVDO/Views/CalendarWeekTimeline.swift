@@ -16,8 +16,7 @@ final class CalendarWeekPresentationCache: ObservableObject {
         var placementsByDay: [LocalDay: [DayPlanningPolicy.Placement]]
     }
 
-    private var key: Key?
-    private var snapshot: Snapshot?
+    private var snapshots: [LocalDay: (key: Key, value: Snapshot)] = [:]
 
     func value(
         for key: Key,
@@ -26,7 +25,7 @@ final class CalendarWeekPresentationCache: ObservableObject {
         prioritizing activeID: UUID? = nil,
         todo: (UUID) -> TodoItem?
     ) -> Snapshot {
-        if preview == nil, self.key == key, let snapshot { return snapshot }
+        if preview == nil, let cached = snapshots[key.week], cached.key == key { return cached.value }
 
         var values = schedules.map { $0.id == preview?.id ? preview! : $0 }
         if let preview, !values.contains(where: { $0.id == preview.id }) { values.append(preview) }
@@ -46,8 +45,11 @@ final class CalendarWeekPresentationCache: ObservableObject {
         }
         let result = Snapshot(schedulesByID: byID, placementsByDay: placements)
         if preview == nil {
-            self.key = key
-            snapshot = result
+            snapshots = snapshots.filter { $0.value.key.revision == key.revision && $0.value.key.visibility == key.visibility }
+            snapshots[key.week] = (key, result)
+            if snapshots.count > 7, let farthest = snapshots.keys.max(by: {
+                abs(key.week.distance(to: $0)) < abs(key.week.distance(to: $1))
+            }) { snapshots.removeValue(forKey: farthest) }
         }
         return result
     }
@@ -60,6 +62,7 @@ struct CalendarWeekTimeline: View {
     @Binding var hourHeight: CGFloat
     @Binding var scrollMinute: CGFloat?
     let presentationCache: CalendarWeekPresentationCache
+    let isActive: Bool
     var editTodo: (TodoItem) -> Void
     @State private var hasRestoredScroll = false
     @State private var now = Date.now
@@ -81,20 +84,28 @@ struct CalendarWeekTimeline: View {
     @State private var draft: DaySchedule?
     @State private var presentation: SchedulePopoverRequest?
     @State private var selectedID: UUID?
+    @State private var creationAnchor = CGPoint.zero
+    @FocusState private var isFocused: Bool
     @State private var zoomAnchor: TimelineZoomAnchor?
     @State private var zoomTarget: CGFloat?
     @State private var lastMagnification: CGFloat = 1
     @State private var magnifying = false
-    private let gutter: CGFloat = 54
+    private let gutter: CGFloat
+    private let synchronizesScrolling: Bool
     private var ppm: CGFloat { hourHeight / 60 }
 
     init(week: LocalDay, visibility: TodoFilterContext, hourHeight: Binding<CGFloat>, scrollMinute: Binding<CGFloat?>,
-         presentationCache: CalendarWeekPresentationCache, editTodo: @escaping (TodoItem) -> Void) {
+         presentationCache: CalendarWeekPresentationCache, isActive: Bool = true,
+         gutter: CGFloat = 54, synchronizesScrolling: Bool = false,
+         editTodo: @escaping (TodoItem) -> Void) {
         self.week = week
         self.visibility = visibility
         _hourHeight = hourHeight
         _scrollMinute = scrollMinute
         self.presentationCache = presentationCache
+        self.isActive = isActive
+        self.gutter = gutter
+        self.synchronizesScrolling = synchronizesScrolling
         self.editTodo = editTodo
         _initialScrollMinute = State(initialValue: scrollMinute.wrappedValue ?? 480)
     }
@@ -116,6 +127,13 @@ struct CalendarWeekTimeline: View {
                     .frame(height: hourHeight * 24 + 24)
             }
             .scrollPosition($position)
+            .focusable().focusEffectDisabled().focused($isFocused)
+            .popover(item: $draft,
+                     attachmentAnchor: .point(TimelinePopoverAnchor.point(at: creationAnchor, in: geometry.size)),
+                     arrowEdge: .trailing) { schedule in
+                ScheduleEditorView(schedule: schedule, isCreating: true,
+                    close: { draft = nil }, editTodo: editTodo)
+            }
             .onDrop(of: [.url], delegate: dropDelegate)
             .defaultScrollAnchor(UnitPoint(x: 0, y: CalendarScrollPolicy.initialAnchor(
                 offset: initialScrollMinute * ppm, contentHeight: hourHeight * 24 + 24,
@@ -129,10 +147,29 @@ struct CalendarWeekTimeline: View {
                                      max(0, hourHeight * 24 + 24 - geometry.size.height))
                     if abs(value - target) <= 1 { hasRestoredScroll = true }
                 }
-                if hasRestoredScroll { scrollMinute = value / ppm }
+                if hasRestoredScroll && isActive
+                    && (scrollMinute.map { abs(value / ppm - $0) > 1 / ppm } ?? true) {
+                    scrollMinute = value / ppm
+                }
             }
             .onAppear {
                 size = geometry.size
+            }
+            .onChange(of: scrollMinute) { _, minute in
+                if synchronizesScrolling, let minute, abs(minute * ppm - offset) > 1 {
+                    position.scrollTo(y: minute * ppm)
+                }
+            }
+            .onChange(of: isActive) { _, active in
+                if active, let scrollMinute {
+                    position.scrollTo(y: scrollMinute * ppm)
+                } else if !active {
+                    selectedID = nil
+                    clearDrag()
+                    presentation = nil
+                    draft = nil
+                    pendingSchedule = nil
+                }
             }
             .onChange(of: geometry.size) { _, value in
                 if drag != nil { cancel() }
@@ -164,9 +201,6 @@ struct CalendarWeekTimeline: View {
             }
         }
         .coordinateSpace(name: "weekTimeViewport")
-        .popover(item: $draft) { schedule in
-            ScheduleEditorView(schedule: schedule, editTodo: editTodo)
-        }
         .popover(item: $presentation) { request in
             if let schedule = store.schedules.first(where: { $0.id == request.scheduleID }) {
                 SchedulePopoverView(schedule: schedule, startsEditing: request.mode == .editor,
@@ -186,6 +220,20 @@ struct CalendarWeekTimeline: View {
             Text(L10n.string("这个待办已安排足够时间，仍要再添加一段吗？"))
         }
         .onReceive(clock) { now = $0 }
+        .background(TimelineSelectionKeyMonitor(
+            enabled: isActive && selectedID != nil && presentation == nil && draft == nil && drag == nil && !suppressed,
+            delete: {
+                guard let id = selectedID, store.canModify else { return }
+                if store.deleteSchedule(id) { selectedID = nil }
+            },
+            clear: { selectedID = nil }
+        ))
+        .editorEscapeDismissal(enabled: isActive && draft != nil) { draft = nil }
+        .editorReturnSubmission(enabled: isActive && (draft != nil || presentation?.mode == .editor)) {
+            if let id = draft?.id ?? presentation?.scheduleID {
+                NotificationCenter.default.post(name: .scheduleEditorSubmit, object: id)
+            }
+        }
         .onChange(of: week) { _, _ in clearDrag(); suppressed = false; presentation = nil; draft = nil; pendingSchedule = nil }
         .onChange(of: visibility) { _, _ in
             if NSEvent.pressedMouseButtons & 1 != 0 { cancel() }
@@ -237,18 +285,20 @@ struct CalendarWeekTimeline: View {
                 let placements = presentation.placementsByDay[day] ?? []
                 ForEach(placements) { placement in
                     if let schedule = presentation.schedulesByID[placement.id] {
+                        let arrangementWidth = max(1, columnWidth - 2) / CGFloat(placement.columnCount)
                         Group {
                             if schedule.id == draftID {
-                                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.2))
-                                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor))
+                                TimelineScheduleShape.shape(placement: placement, radius: 4)
+                                    .fill(Color.accentColor.opacity(0.2))
+                                    .overlay(TimelineScheduleShape.shape(placement: placement, radius: 4).strokeBorder(Color.accentColor))
                                     .allowsHitTesting(false)
                             } else {
                                 block(schedule, placement: placement, day: day)
                             }
                         }
-                            .frame(width: max(1, columnWidth / CGFloat(placement.columnCount) - 3),
+                            .frame(width: arrangementWidth,
                                    height: CGFloat(placement.interval.count) * ppm)
-                            .offset(x: gutter + CGFloat(column) * columnWidth + CGFloat(placement.column) * columnWidth / CGFloat(placement.columnCount) + 1,
+                            .offset(x: gutter + CGFloat(column) * columnWidth + CGFloat(placement.column) * arrangementWidth + 1,
                                     y: 12 + CGFloat(placement.interval.lowerBound) * ppm)
                     }
                 }
@@ -277,7 +327,7 @@ struct CalendarWeekTimeline: View {
                     path.move(to: CGPoint(x: x, y: 12)); path.addLine(to: CGPoint(x: x, y: 12 + hourHeight * 24))
                 }
             }.stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
-            ForEach(0..<24, id: \.self) { hour in
+            ForEach(0..<(gutter > 0 ? 24 : 0), id: \.self) { hour in
                 Text(SchedulePresentation.clock(hour * 60)).font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary).frame(width: gutter - 8, alignment: .trailing)
                     .offset(y: 5 + CGFloat(hour) * hourHeight)
@@ -292,12 +342,13 @@ struct CalendarWeekTimeline: View {
         let components = Calendar.current.dateComponents([.hour, .minute], from: now)
         let inProgress = DayPlanningPolicy.isInProgress(placement,
             at: (components.hour ?? 0) * 60 + (components.minute ?? 0), onCurrentDay: day == LocalDay(now))
+        let shape = TimelineScheduleShape.shape(placement: placement, radius: min(5, height / 2))
         return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: min(5, height / 2)).fill(color.opacity(0.14))
+            shape.fill(color.opacity(0.14))
             if inProgress {
                 Capsule().fill(.red).frame(width: 3, height: max(4, height - 6)).padding(.leading, 3).padding(.top, 3)
             }
-            RoundedRectangle(cornerRadius: min(5, height / 2)).stroke(color.opacity(selectedID == schedule.id ? 0.9 : 0.35), lineWidth: selectedID == schedule.id ? 2 : 1)
+            shape.strokeBorder(color.opacity(selectedID == schedule.id ? 0.9 : 0.35), lineWidth: selectedID == schedule.id ? 2 : 1)
             if height >= 14 {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 3) {
@@ -321,8 +372,12 @@ struct CalendarWeekTimeline: View {
         }
         .clipped().contentShape(Rectangle())
         .gesture(gesture(schedule, mode: .move))
-        .onTapGesture(count: 2) { selectedID = schedule.id; presentation = .editor(schedule.id) }
-        .onTapGesture { selectedID = schedule.id; presentation = .details(schedule.id) }
+        .onTapGesture(count: 2) { selectedID = schedule.id; isFocused = true; presentation = .editor(schedule.id) }
+        .onTapGesture {
+            selectedID = schedule.id
+            isFocused = true
+            presentation = schedule.todoID == nil ? nil : .details(schedule.id)
+        }
         .overlay(alignment: .top) { if schedule.startDay == day { handle(schedule, mode: .start, height: height) } }
         .overlay(alignment: .bottom) {
             if schedule.endMinute - schedule.startDay.distance(to: day) * 1440 <= 1440 { handle(schedule, mode: .end, height: height) }
@@ -353,6 +408,7 @@ struct CalendarWeekTimeline: View {
                     draftID = UUID(); positionUpdatedAt = .now
                     presentation = nil
                     selectedID = original?.id
+                    if original != nil { isFocused = true }
                     let minute = Double((value.startLocation.y + offset - 12) / ppm)
                     let start = TimelineCreationPolicy.startMinute(at: minute,
                         boundaries: creationBoundaries(on: week.adding(days: column)), pointsPerMinute: Double(ppm))
@@ -372,9 +428,15 @@ struct CalendarWeekTimeline: View {
                 else if let drag, drag.original == nil {
                     updateCreation(drag, at: value.location)
                     guard let creation else { return }
-                    draft = DaySchedule(startDay: creation.day, startMinute: creation.range.lowerBound,
+                    let anchor = value.location
+                    let schedule = DaySchedule(startDay: creation.day, startMinute: creation.range.lowerBound,
                         durationMinutes: creation.range.count, content: .independent(title: "", notes: ""),
                         horizontalPosition: creation.horizontalPosition, horizontalPositionUpdatedAt: .now)
+                    DispatchQueue.main.async {
+                        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+                        creationAnchor = anchor
+                        draft = schedule
+                    }
                 }
             }
     }

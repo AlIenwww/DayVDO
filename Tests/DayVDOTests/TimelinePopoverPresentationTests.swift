@@ -49,6 +49,19 @@ final class TimelinePopoverPresentationTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))
         XCTAssertTrue(hasVisiblePopover(in: window, app: app, excluding: existingWindows))
         XCTAssertFalse(editableTextFields(in: popoverWindows(in: window, app: app, excluding: existingWindows)).isEmpty)
+
+        // Return must close an editor even when keyboard focus remains in the
+        // presenting timeline rather than in one of the popover's fields.
+        let returnKey = NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil,
+            characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
+        app.postEvent(returnKey, atStart: true)
+        if let event = app.nextEvent(matching: .keyDown, until: Date().addingTimeInterval(0.1),
+                                     inMode: .default, dequeue: true) { app.sendEvent(event) }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertFalse(hasVisiblePopover(in: window, app: app, excluding: existingWindows))
+        XCTAssertEqual(store.schedules.first { $0.id == block.id }, block)
     }
 
     private func hasVisiblePopover(

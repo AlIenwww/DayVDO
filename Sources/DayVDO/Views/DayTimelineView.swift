@@ -39,7 +39,13 @@ struct DayTimelineView: View {
     @Binding var hourHeight: CGFloat
     @Binding var restoredScrollMinute: CGFloat?
     let now: Date
+    /// Keep the native scroll viewport full-width while laying out schedules
+    /// beside the overlaid todo list.
+    var reservedTrailingWidth: CGFloat = 0
     var obscuredWidth: CGFloat = 0
+    var trailingPanel: PlanningTodoPanel? = nil
+    var trailingPanelWidth: CGFloat = 280
+    var creationDraft: Binding<DaySchedule?> = .constant(nil)
     @Binding var presentation: SchedulePopoverRequest?
     var create: (Int, Int, Double) -> Void
     var dropTodo: (UUID, Int, Double) -> Void
@@ -49,8 +55,12 @@ struct DayTimelineView: View {
     @State private var position = ScrollPosition(y: 0)
     @State private var scrollOffset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 400
+    @State private var topContentInset: CGFloat = 0
     @State private var viewportWidth: CGFloat = 400
+    @State private var isViewportReady = false
+    @State private var needsInitialPosition = true
     @State private var selectedID: UUID?
+    @State private var creationAnchor = CGPoint.zero
     @State private var titleFrames: [UUID: CGRect] = [:]
     @State private var statusFrames: [UUID: CGRect] = [:]
     @State private var magnificationBase: CGFloat?
@@ -109,20 +119,21 @@ struct DayTimelineView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let timelineWidth = max(1, geometry.size.width - reservedTrailingWidth)
             let placements = DayPlanningPolicy.placements(displayed, on: day, prioritizing: placementPriority)
             ScrollView(.vertical) {
                 ZStack(alignment: .topLeading) {
-                    grid(width: geometry.size.width)
+                    grid(width: timelineWidth)
                     Color.clear
                         .contentShape(Rectangle())
-                        .frame(width: max(1, geometry.size.width - gutter), height: hourHeight * 24)
+                        .frame(width: max(1, timelineWidth - gutter), height: hourHeight * 24)
                         .offset(x: gutter)
                         .gesture(creationGesture)
                     if day == LocalDay(now) {
                         let lineY = CGFloat(currentMinute) * pixelsPerMinute
                         Rectangle()
                             .fill(.red)
-                            .frame(width: max(1, geometry.size.width - gutter), height: 1)
+                            .frame(width: max(1, timelineWidth - gutter), height: 1)
                             .offset(x: gutter, y: lineY - 0.5)
                             .allowsHitTesting(false)
                     }
@@ -133,16 +144,16 @@ struct DayTimelineView: View {
                         }
                         .font(.callout)
                         .foregroundStyle(.tertiary)
-                        .frame(width: max(1, geometry.size.width - gutter), height: min(180, viewportHeight))
+                        .frame(width: max(1, timelineWidth - gutter), height: min(180, viewportHeight))
                         .offset(x: gutter)
                         .allowsHitTesting(false)
                     }
                     ForEach(placements) { placement in
                         if let schedule = displayed.first(where: { $0.id == placement.id }) {
                             if schedule.id == draftID {
-                                previewBand(placement, width: geometry.size.width)
+                                previewBand(placement, width: timelineWidth)
                             } else {
-                                scheduleBlock(schedule, placement: placement, width: geometry.size.width)
+                                scheduleBlock(schedule, placement: placement, width: timelineWidth)
                             }
                         }
                     }
@@ -157,20 +168,54 @@ struct DayTimelineView: View {
                             .offset(x: gutter - 3, y: lineY - 3)
                             .allowsHitTesting(false)
                     }
+                    if let trailingPanel {
+                        // Include the list in the toolbar's native content
+                        // sampling, while counteracting the timeline's scrolling.
+                        // Its viewport must include the toolbar too: otherwise
+                        // LazyVStack evicts fully covered cards before they have
+                        // scrolled out from behind the translucent material.
+                        trailingPanel
+                            .contentMargins(.top, topContentInset, for: .scrollContent)
+                            .frame(width: trailingPanelWidth, height: geometry.size.height + topContentInset)
+                            .background(.background, ignoresSafeAreaEdges: [])
+                            .overlay {
+                                if isReturningToList {
+                                    Rectangle().fill(Color.accentColor.opacity(0.08))
+                                        .overlay { Rectangle().strokeBorder(Color.accentColor, lineWidth: 2) }
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            .overlay(alignment: .leading) {
+                                Color(nsColor: .separatorColor).frame(width: 1)
+                            }
+                            .shadow(color: .black.opacity(reservedTrailingWidth == 0 ? 0.08 : 0),
+                                    radius: 8, x: -4)
+                            .offset(x: geometry.size.width - trailingPanelWidth,
+                                    y: scrollOffset - 12 - topContentInset)
+                            .zIndex(1)
+                    }
                 }
-                .frame(width: geometry.size.width, height: hourHeight * 24, alignment: .topLeading)
+                .frame(width: timelineWidth, height: hourHeight * 24, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 12)
 
             }
+            .contentMargins(.trailing, reservedTrailingWidth, for: .scrollIndicators)
             .scrollClipDisabled()
             .onPreferenceChange(ScheduleTitleFrames.self) { titleFrames = $0 }
             .onPreferenceChange(ScheduleStatusFrames.self) { statusFrames = $0 }
             .scrollPosition($position)
+            .popover(item: creationDraft,
+                     attachmentAnchor: .point(TimelinePopoverAnchor.point(at: creationAnchor, in: geometry.size)),
+                     arrowEdge: .trailing) { schedule in
+                ScheduleEditorView(schedule: schedule, isCreating: true,
+                    close: { creationDraft.wrappedValue = nil }, editTodo: editTodo)
+            }
             .popover(
                 item: $presentation,
                 attachmentAnchor: .point(popoverAttachmentPoint(
                     placements: placements,
-                    width: geometry.size.width,
+                    width: timelineWidth,
                     height: geometry.size.height
                 )),
                 arrowEdge: .trailing
@@ -188,11 +233,11 @@ struct DayTimelineView: View {
             .scrollDisabled(magnificationAnchor != nil)
             .coordinateSpace(name: "planningViewport")
             .contentShape(Rectangle())
-            .background {
+            .background(alignment: .leading) {
                 ScheduleClickMonitor(acceptsClick: { location in
-                    scheduleHit(at: location, placements: placements, width: geometry.size.width) != nil
+                    scheduleHit(at: location, placements: placements, width: timelineWidth) != nil
                 }) { location, count in
-                    guard let hit = scheduleHit(at: location, placements: placements, width: geometry.size.width) else { return }
+                    guard let hit = scheduleHit(at: location, placements: placements, width: timelineWidth) else { return }
                     if count == 2 {
                         if titleFrames[hit.id]?.contains(hit.point) == true {
                             editScheduleTodo(hit.id)
@@ -203,20 +248,30 @@ struct DayTimelineView: View {
                         selectSchedule(hit.id)
                     }
                 }
+                .frame(width: timelineWidth, height: geometry.size.height)
             }
-            .onScrollGeometryChange(for: TimelineViewport.self) { value in
-                TimelineViewport(offset: value.contentOffset.y + value.contentInsets.top, height: value.containerSize.height)
+            .onScrollGeometryChange(for: TodayTimelineViewport.self) { value in
+                TodayTimelineViewport(offset: value.contentOffset.y + value.contentInsets.top,
+                                      height: value.containerSize.height, topInset: value.contentInsets.top)
             } action: { _, value in
                 scrollOffset = value.offset
                 viewportHeight = value.height
+                topContentInset = value.topInset
+                isViewportReady = value.height > 0
+                applyInitialPositionIfReady()
             }
             .onAppear {
-                viewportWidth = geometry.size.width
-                restorePositionOrLocate()
+                viewportWidth = timelineWidth
+                applyInitialPositionIfReady()
             }
-            .onChange(of: geometry.size.width) { _, width in viewportWidth = width }
+            .onChange(of: store.isInitialLoading) { _, _ in applyInitialPositionIfReady() }
+            .onChange(of: timelineWidth) { _, width in viewportWidth = width }
             .onDisappear {
-                restoredScrollMinute = scrollOffset / max(pixelsPerMinute, 0.001)
+                if !needsInitialPosition {
+                    restoredScrollMinute = scrollOffset / max(pixelsPerMinute, 0.001)
+                }
+                needsInitialPosition = true
+                isViewportReady = false
                 cancel()
                 magnificationBase = nil
                 magnificationAnchor = nil
@@ -230,9 +285,13 @@ struct DayTimelineView: View {
                 selectedID = nil
                 presentation = nil
                 restoredScrollMinute = nil
-                locate()
+                needsInitialPosition = true
+                applyInitialPositionIfReady()
             }
             .onChange(of: displayed) { _, latest in
+                if let id = selectedID, !latest.contains(where: { $0.id == id && $0.interval(on: day) != nil }) {
+                    selectedID = nil
+                }
                 guard let request = presentation else { return }
                 if !DayPlanningPolicy.placements(latest, on: day)
                     .contains(where: { $0.id == request.scheduleID }) {
@@ -242,7 +301,7 @@ struct DayTimelineView: View {
             }
             .onChange(of: scrollOffset) { _, _ in dismissOffscreenPopover() }
             .onScrollPhaseChange { _, newPhase in
-                if newPhase == .idle {
+                if newPhase == .idle && !needsInitialPosition {
                     restoredScrollMinute = scrollOffset / max(pixelsPerMinute, 0.001)
                 }
             }
@@ -285,7 +344,7 @@ struct DayTimelineView: View {
                         magnificationBase = nil
                     }
             )
-            .background {
+            .background(alignment: .leading) {
                 TimelineControlScrollMonitor { delta, precise in
                     let sensitivity: CGFloat = precise ? 0.8 : 8
                     if magnificationAnchor == nil {
@@ -299,18 +358,30 @@ struct DayTimelineView: View {
                         (zoomTarget ?? hourHeight) + delta * sensitivity
                     )
                 }
+                .frame(width: timelineWidth, height: geometry.size.height)
             }
             .focusable().focusEffectDisabled().focused($isFocused)
+            .editorReturnSubmission(enabled: presentation?.mode == .editor || creationDraft.wrappedValue != nil) {
+                if let id = creationDraft.wrappedValue?.id ?? presentation?.scheduleID {
+                    NotificationCenter.default.post(name: .scheduleEditorSubmit, object: id)
+                }
+            }
+            .background(TimelineSelectionKeyMonitor(
+                enabled: selectedID != nil && presentation == nil && creationDraft.wrappedValue == nil
+                    && interaction == nil && !cancellation.isSuppressed,
+                delete: deleteSelectedSchedule,
+                clear: { selectedID = nil }
+            ))
             .onKeyPress(.escape) {
+                selectedID = nil
                 cancellation.cancel(isDragging: interaction != nil)
                 cancel()
                 activityChanged(cancellation.isSuppressed)
                 return .handled
             }
             .onDeleteCommand {
-                guard isFocused, let id = selectedID else { return }
-                if presentation?.scheduleID == id { presentation = nil }
-                store.deleteSchedule(id); selectedID = nil
+                guard isFocused else { return }
+                deleteSelectedSchedule()
             }
             .onKeyPress(.upArrow) { selectAdjacent(-1); return .handled }
             .onKeyPress(.downArrow) { selectAdjacent(1); return .handled }
@@ -320,15 +391,18 @@ struct DayTimelineView: View {
                 store.toggle(todo); return .handled
             }
             .onKeyPress(.return) {
+                if let id = creationDraft.wrappedValue?.id ?? (presentation?.mode == .editor ? presentation?.scheduleID : nil) {
+                    NotificationCenter.default.post(name: .scheduleEditorSubmit, object: id)
+                    return .handled
+                }
                 guard let selected = store.schedules.first(where: { $0.id == selectedID }) else { return .ignored }
                 showSchedule(selected.id, mode: .editor); return .handled
             }
 
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .topLeading) {
             if let dragTimeLabel, let pointerY {
-                Text(dragTimeLabel)
+                Text(isReturningToList ? L10n.string("移除安排") : dragTimeLabel)
                     .font(.caption.monospacedDigit())
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
@@ -415,8 +489,9 @@ struct DayTimelineView: View {
             onCurrentDay: day == LocalDay(now)
         )
         let cornerRadius = min(5, height / 2)
+        let shape = TimelineScheduleShape.shape(placement: placement, radius: cornerRadius)
         return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: cornerRadius)
+            shape
                 .fill(color.opacity(0.14))
             if isInProgress {
                 Capsule()
@@ -426,8 +501,8 @@ struct DayTimelineView: View {
                     .padding(.top, 3)
                     .accessibilityHidden(true)
             }
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .stroke(color.opacity(selectedID == schedule.id ? 0.9 : 0.35), lineWidth: selectedID == schedule.id ? 2 : 1)
+            shape
+                .strokeBorder(color.opacity(selectedID == schedule.id ? 0.9 : 0.35), lineWidth: selectedID == schedule.id ? 2 : 1)
             if height >= 14 {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
@@ -472,7 +547,7 @@ struct DayTimelineView: View {
                 .foregroundStyle(color)
             }
         }
-        .frame(width: max(1, columnWidth - 3), height: height)
+        .frame(width: columnWidth, height: height)
         .coordinateSpace(name: schedule.id)
         .clipped()
         .contentShape(Rectangle())
@@ -588,6 +663,12 @@ struct DayTimelineView: View {
         presentation = nil
     }
 
+    private func deleteSelectedSchedule() {
+        guard let id = selectedID, store.canModify else { return }
+        if presentation?.scheduleID == id { presentation = nil }
+        if store.deleteSchedule(id) { selectedID = nil }
+    }
+
     private func scheduleHit(at location: CGPoint, placements: [DayPlanningPolicy.Placement],
                              width: CGFloat) -> (id: UUID, point: CGPoint)? {
         guard validRelease(location) else { return nil }
@@ -595,7 +676,7 @@ struct DayTimelineView: View {
             let columnWidth = max(1, width - gutter - 8) / CGFloat(placement.columnCount)
             let frame = CGRect(x: gutter + CGFloat(placement.column) * columnWidth,
                 y: CGFloat(placement.interval.lowerBound) * pixelsPerMinute + 12 - scrollOffset,
-                width: max(1, columnWidth - 3), height: CGFloat(placement.interval.count) * pixelsPerMinute)
+                width: columnWidth, height: CGFloat(placement.interval.count) * pixelsPerMinute)
             guard frame.contains(location) else { continue }
             let point = CGPoint(x: location.x - frame.minX, y: location.y - frame.minY)
             guard statusFrames[placement.id]?.contains(point) != true else { return nil }
@@ -639,7 +720,7 @@ struct DayTimelineView: View {
         let y = CGFloat(placement.interval.lowerBound) * pixelsPerMinute
             + 12 - scrollOffset + min(20, blockHeight / 2)
         return UnitPoint(
-            x: min(0.98, max(0.02, x / max(1, width))),
+            x: min(0.98, max(0.02, x / max(1, width + reservedTrailingWidth))),
             y: min(0.98, max(0.02, y / max(1, height)))
         )
     }
@@ -664,24 +745,25 @@ struct DayTimelineView: View {
     private func previewBand(_ placement: DayPlanningPolicy.Placement, width: CGFloat) -> some View {
         let columnWidth = max(1, width - gutter - 8) / CGFloat(placement.columnCount)
         return Rectangle().fill(Color.accentColor.opacity(0.15))
-            .frame(width: max(1, columnWidth - 3), height: CGFloat(placement.interval.count) * pixelsPerMinute)
+            .frame(width: columnWidth, height: CGFloat(placement.interval.count) * pixelsPerMinute)
             .offset(x: gutter + CGFloat(placement.column) * columnWidth,
                     y: CGFloat(placement.interval.lowerBound) * pixelsPerMinute)
             .allowsHitTesting(false)
     }
 
     private var creationGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("planningViewport"))
+        DragGesture(minimumDistance: 4, coordinateSpace: .named("planningViewport"))
             .onChanged { value in
                 guard !cancellation.isSuppressed else { return }
                 if interaction == nil {
+                    selectedID = nil
                     draftID = UUID(); positionUpdatedAt = .now
                     let minute = Double((value.startLocation.y + scrollOffset - 12) / pixelsPerMinute)
                     interaction = Interaction(mode: .create, originY: value.startLocation.y, originOffset: scrollOffset,
                         creationStart: TimelineCreationPolicy.startMinute(at: minute,
                             boundaries: creationBoundaries, pointsPerMinute: Double(pixelsPerMinute)),
                         creationOrigin: minute)
-                    activityChanged(true); isFocused = true
+                    activityChanged(true)
                 }
                 pointerX = value.location.x; pointerY = value.location.y
                 updatePreview()
@@ -693,8 +775,16 @@ struct DayTimelineView: View {
                 pointerX = value.location.x; pointerY = value.location.y
                 updatePreview()
                 let movement = value.translation.height + scrollOffset - interaction.originOffset
-                if abs(movement) < 4 { create(start, 30, horizontalPosition) }
-                else if let range = createRange { create(range.lowerBound, range.count, horizontalPosition) }
+                let range = abs(movement) < 4 ? start..<(start + 30) : createRange
+                guard let range else { return }
+                let horizontal = horizontalPosition
+                let anchor = value.location
+                // Let the native mouse-up finish before a popover can take focus.
+                DispatchQueue.main.async {
+                    guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+                    creationAnchor = anchor
+                    create(range.lowerBound, range.count, horizontal)
+                }
             }
     }
 
@@ -711,7 +801,11 @@ struct DayTimelineView: View {
                 updatePreview()
             }
             .onEnded { value in
-                if !cancellation.isSuppressed, validRelease(value.location) {
+                if !cancellation.isSuppressed, mode == .move, schedule.todoID != nil,
+                   isInsideTodoPanel(value.location) {
+                    store.deleteSchedule(schedule.id)
+                    selectedID = nil
+                } else if !cancellation.isSuppressed, validRelease(value.location) {
                     pointerX = value.location.x; pointerY = value.location.y
                     updatePreview()
                     if let preview { store.upsertSchedule(preview) }
@@ -736,8 +830,24 @@ struct DayTimelineView: View {
         location.x >= gutter && location.x <= viewportWidth - obscuredWidth && location.y >= 0 && location.y <= viewportHeight
     }
 
+    private func isInsideTodoPanel(_ point: CGPoint) -> Bool {
+        guard trailingPanel != nil else { return false }
+        let fullWidth = viewportWidth + reservedTrailingWidth
+        return point.x >= fullWidth - trailingPanelWidth && point.x <= fullWidth
+            && point.y >= 0 && point.y <= viewportHeight
+    }
+
+    private var isReturningToList: Bool {
+        guard interaction?.mode == .move, interaction?.original?.todoID != nil,
+              let pointerX, let pointerY else { return false }
+        return isInsideTodoPanel(CGPoint(x: pointerX, y: pointerY))
+    }
+
     private func updatePreview() {
         guard let interaction, let pointerY else { return }
+        // Returning to the list cancels this one arrangement. Keep its original
+        // time while hovering, so leaving the target can resume the same drag.
+        if isReturningToList { preview = interaction.original; return }
         let delta = Double((pointerY - interaction.originY + scrollOffset - interaction.originOffset) / pixelsPerMinute)
         if var value = interaction.original {
             switch interaction.mode {
@@ -774,7 +884,7 @@ struct DayTimelineView: View {
     }
 
     private func autoScroll() {
-        guard let pointerY, interaction != nil || externalActive else { return }
+        guard !isReturningToList, let pointerY, interaction != nil || externalActive else { return }
         let direction: CGFloat = pointerY < 36 ? -1 : (pointerY > viewportHeight - 36 ? 1 : 0)
         guard direction != 0 else { return }
         let target = min(max(0, hourHeight * 24 + 24 - viewportHeight), max(0, scrollOffset + direction * 12))
@@ -796,9 +906,19 @@ struct DayTimelineView: View {
     }
 
     private func locate() {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: now)
-        let minute = day == LocalDay(now) ? max(0, (components.hour ?? 0) * 60 + (components.minute ?? 0) - 60) : 480
-        position.scrollTo(y: CGFloat(minute) * pixelsPerMinute)
+        let minute = DayPlanningPolicy.initialScrollMinute(schedules: store.schedules, on: day, now: now)
+        let target = min(CGFloat(minute) * pixelsPerMinute,
+                         max(0, hourHeight * 24 + 24 - viewportHeight))
+        scrollOffset = target
+        position.scrollTo(y: target)
+    }
+
+    private func applyInitialPositionIfReady() {
+        guard needsInitialPosition, isViewportReady, !store.isInitialLoading else { return }
+        // ScrollPosition needs the laid-out viewport, and launch data can
+        // arrive afterwards. Only locate once, so edits don't move the user.
+        needsInitialPosition = false
+        restorePositionOrLocate()
     }
 
     private func restorePositionOrLocate() {
@@ -819,6 +939,12 @@ struct DayTimelineView: View {
         pendingDrop = nil; interaction = nil; preview = nil; createRange = nil; pointerY = nil
         externalMinute = nil; externalTodoID = nil; externalActive = false; activityChanged(false)
     }
+}
+
+private struct TodayTimelineViewport: Equatable {
+    var offset: CGFloat
+    var height: CGFloat
+    var topInset: CGFloat
 }
 
 struct TimelineControlScrollMonitor: NSViewRepresentable {

@@ -16,6 +16,7 @@ struct CalendarView: View {
     @Binding var weekHourHeight: CGFloat
     @Binding var weekScrollMinute: CGFloat?
     @State private var navigationRequest: CalendarNavigationRequest?
+    @State private var visibleWeekFirstDay: LocalDay?
     @State private var isDatePickerPresented = false
     @State private var datePickerSelection = Date.now
     @Binding var isInspectorPresented: Bool
@@ -45,6 +46,12 @@ struct CalendarView: View {
                     hourHeight: $weekHourHeight, scrollMinute: $weekScrollMinute,
                     windowCache: weekCache,
                     presentationCache: weekPresentationCache,
+                    navigationID: navigationRequest?.id, navigationDate: navigationRequest?.date,
+                    visibleRangeChanged: { day in
+                        visibleWeekFirstDay = day
+                        let month = monthStart(for: day.adding(days: 3).date(timeZone: calendar.timeZone))
+                        if !calendar.isDate(currentMonth, equalTo: month, toGranularity: .month) { currentMonth = month }
+                    },
                     createTodo: createTodo, changeTodo: changeTodo,
                     editTodo: { editingItem = $0 },
                     showMore: { day in selectedDate = day.date(); isInspectorPresented = true }
@@ -134,14 +141,9 @@ struct CalendarView: View {
                 }
                 Button(L10n.string("取消"), role: .cancel) { selection.pendingDelete = nil }
             } message: { Text(L10n.string("删除后可以从“编辑”菜单撤销。")) }
-        .background {
-            if !(CalendarNativeMonthExperiment.isEnabled
-                 && displayMode == CalendarDisplayMode.month.rawValue) {
-                Rectangle().fill(.background)
-            }
-        }
         .dateChangeConfirmation($dateChange) { _ in }
         .onChange(of: displayMode) { _, _ in
+            visibleWeekFirstDay = nil
             currentMonth = monthStart(for: selectedDate)
             timelineSession.topWeek = nil
             navigate(to: selectedDate)
@@ -213,7 +215,7 @@ struct CalendarView: View {
             isDatePickerPresented.toggle()
         } label: {
             HStack(spacing: 6) {
-                Text((displayMode == CalendarDisplayMode.week.rawValue ? selectedDate : currentMonth).formatted(.dateTime.year().month(.wide).locale(L10n.locale)))
+                Text(currentMonth.formatted(.dateTime.year().month(.wide).locale(L10n.locale)))
                     .font(.title2.weight(.semibold))
                     .contentTransition(.numericText())
                 Image(systemName: "chevron.down")
@@ -374,13 +376,17 @@ struct CalendarView: View {
 
     private func navigate(to date: Date) {
         selection.selectedID = nil
-        if displayMode == CalendarDisplayMode.week.rawValue { selectedDate = date }
-        navigationRequest = CalendarNavigationRequest(date: date)
+        let destination = displayMode == CalendarDisplayMode.week.rawValue
+            ? (calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date) : date
+        navigationRequest = CalendarNavigationRequest(date: destination)
     }
 
     private func moveMonth(by value: Int) {
         if displayMode == CalendarDisplayMode.week.rawValue {
-            selectedDate = LocalDay(selectedDate).adding(days: value * 7).date()
+            let weekStart = calendar.dateInterval(of: .weekOfYear, for: selectedDate)?.start ?? selectedDate
+            let first = visibleWeekFirstDay ?? LocalDay(weekStart, timeZone: calendar.timeZone)
+            navigationRequest = CalendarNavigationRequest(date: first.adding(days: value * 7).date(timeZone: calendar.timeZone))
+            selection.selectedID = nil
             return
         }
         guard let target = calendar.date(byAdding: .month, value: value, to: currentMonth) else { return }
@@ -405,7 +411,7 @@ private struct CalendarDetailTodoRow: View {
     }
 }
 
-private struct CalendarViewportIdentity: Hashable {
+struct CalendarViewportIdentity: Hashable {
     let firstWeekday: Int
     let timeZoneIdentifier: String
 }
@@ -922,9 +928,8 @@ private struct CalendarTimeline: View {
     }
 
     private var currentSnapshot: CalendarWindowSnapshot? {
-        guard let key = snapshotRequest?.key, let snapshot = windowCache.snapshot,
-              snapshot.key.matchesContent(of: key) else { return nil }
-        return snapshot
+        guard let key = snapshotRequest?.key else { return nil }
+        return windowCache.snapshotForDisplay(matching: key)
     }
 
     private func prepareSnapshot() {

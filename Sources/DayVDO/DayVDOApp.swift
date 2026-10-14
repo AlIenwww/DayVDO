@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct DayVDOCommandActions {
     let newTodo: () -> Void
@@ -56,7 +57,15 @@ private struct DayVDOCommands: Commands {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    weak var store: TodoStore?
+    weak var store: TodoStore? {
+        didSet {
+            appearanceSubscription = store?.$settings
+                .map(\.appearance)
+                .removeDuplicates()
+                .sink { AppAppearance.apply($0) }
+        }
+    }
+    private var appearanceSubscription: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -102,9 +111,9 @@ struct DayVDOApp: App {
     var body: some Scene {
         Window("DayVDO", id: "main") {
             ContentView()
+                .background { IconOnlyWindowToolbar() }
                 .environmentObject(store)
                 .environment(\.locale, store.settings.language.locale)
-                .preferredColorScheme(preferredColorScheme)
                 .frame(minWidth: 760, minHeight: 468)
                 .onAppear { appDelegate.store = store }
         }
@@ -117,16 +126,8 @@ struct DayVDOApp: App {
             SettingsView()
                 .environmentObject(store)
                 .environment(\.locale, store.settings.language.locale)
-                .preferredColorScheme(preferredColorScheme)
                 .frame(width: 520, height: 480)
-        }
-    }
-
-    private var preferredColorScheme: ColorScheme? {
-        switch store.settings.appearance {
-        case .automatic: nil
-        case .light: .light
-        case .dark: .dark
+                .onAppear { appDelegate.store = store }
         }
     }
 }

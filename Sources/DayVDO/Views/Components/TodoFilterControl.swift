@@ -10,8 +10,6 @@ struct TodoFilterButton: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "line.3.horizontal.decrease")
-                Text(L10n.string("筛选"))
-                    .lineLimit(1)
                 if filter.isActive {
                     Text("\(filter.activeCategoryCount)")
                         .font(.caption2.weight(.semibold))
@@ -22,7 +20,6 @@ struct TodoFilterButton: View {
             }
             .foregroundStyle(filter.isActive ? Color.accentColor : Color.primary)
             .fixedSize(horizontal: true, vertical: false)
-            .frame(minWidth: 104)
         }
         .help(L10n.string("筛选待办"))
         .accessibilityLabel(L10n.string("筛选待办"))

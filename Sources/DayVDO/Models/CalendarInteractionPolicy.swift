@@ -25,11 +25,15 @@ enum CalendarDatePolicy {
         var id: UUID { item.id }
     }
 
-    /// Reserve the first lane for the active preview before placing real cards. This keeps
-    /// the preview visible in short month rows, and stable when its interval changes.
+    /// Existing tasks keep their normal lane during a drag. Only new drafts and
+    /// previews hidden by overflow need a reserved visible lane.
     static func previewSegments(_ items: [CalendarWindowSnapshot.Item], draft: CalendarWindowSnapshot.Item?,
-                                previewID: UUID?, week: LocalDay) -> [Segment] {
+                                previewID: UUID?, week: LocalDay, maxLanes: Int = .max) -> [Segment] {
         let values = items + (draft.map { [$0] } ?? [])
+        let regular = segments(values, week: week)
+        guard let previewID,
+              draft?.id == previewID || regular.contains(where: { $0.id == previewID && $0.lane >= maxLanes })
+        else { return regular }
         let ordered = values.filter { $0.id == previewID } + values.filter { $0.id != previewID }
         return segments(ordered, week: week)
     }

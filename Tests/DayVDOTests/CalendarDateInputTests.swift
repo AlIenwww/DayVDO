@@ -4,6 +4,31 @@ import XCTest
 @testable import DayVDO
 
 final class CalendarDateInputTests: XCTestCase {
+    func testExistingPreviewKeepsItsSavedLaneWhenItFits() {
+        let week = LocalDay(year: 2026, month: 10, day: 5)
+        let items = (0..<3).map { index in
+            CalendarWindowSnapshot.Item(id: UUID(), startDay: week, dueDay: week,
+                title: "Task \(index)", status: .notStarted, hasProject: false, tagColor: nil)
+        }
+        let regular = CalendarDatePolicy.segments(items, week: week)
+        let preview = CalendarDatePolicy.previewSegments(items, draft: nil,
+            previewID: items[2].id, week: week, maxLanes: 3)
+        XCTAssertEqual(preview, regular)
+    }
+
+    func testOverflowStillKeepsTheDraggedTaskVisible() {
+        let week = LocalDay(year: 2026, month: 10, day: 5)
+        let items = (0..<8).map { index in
+            CalendarWindowSnapshot.Item(id: UUID(), startDay: week, dueDay: week,
+                title: "Task \(index)", status: .notStarted, hasProject: false, tagColor: nil)
+        }
+        let preview = CalendarDatePolicy.previewSegments(items, draft: nil,
+            previewID: items[7].id, week: week, maxLanes: 2)
+        XCTAssertEqual(preview.first?.id, items[7].id)
+        XCTAssertEqual(preview.first?.lane, 0)
+        XCTAssertEqual(Set(preview.map(\.id)), Set(items.map(\.id)))
+    }
+
     private let monday = LocalDay(year: 2026, month: 8, day: 31)
 
     @MainActor

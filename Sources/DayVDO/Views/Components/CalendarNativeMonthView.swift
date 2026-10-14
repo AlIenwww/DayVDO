@@ -406,12 +406,13 @@ final class CalendarNativeScrollAnimator {
         let startTime: TimeInterval
         let from: NSPoint
         let to: NSPoint
+        let curve: UnitCurve?
         let update: (NSPoint) -> Void
         let completion: (() -> Void)?
     }
     private var run: Run?
 
-    func start(from: NSPoint, to: NSPoint, framesPerSecond: Int,
+    func start(from: NSPoint, to: NSPoint, framesPerSecond: Int, curve: UnitCurve? = nil,
                update: @escaping (NSPoint) -> Void, completion: (() -> Void)? = nil) {
         cancel()
         guard abs(to.y - from.y) > 0.5 || abs(to.x - from.x) > 0.5 else {
@@ -419,7 +420,7 @@ final class CalendarNativeScrollAnimator {
             completion?()
             return
         }
-        run = Run(startTime: ProcessInfo.processInfo.systemUptime, from: from, to: to,
+        run = Run(startTime: ProcessInfo.processInfo.systemUptime, from: from, to: to, curve: curve,
                   update: update, completion: completion)
         let timer = Timer(timeInterval: 1 / Double(max(30, framesPerSecond)), repeats: true) {
             [weak self] _ in
@@ -432,7 +433,7 @@ final class CalendarNativeScrollAnimator {
     private func tick() {
         guard let run else { return }
         let progress = min(1, (ProcessInfo.processInfo.systemUptime - run.startTime) / 0.24)
-        let eased = CGFloat(1 - pow(1 - progress, 3))
+        let eased = CGFloat(run.curve?.value(at: progress) ?? (1 - pow(1 - progress, 3)))
         run.update(NSPoint(x: run.from.x + (run.to.x - run.from.x) * eased,
                            y: run.from.y + (run.to.y - run.from.y) * eased))
         if progress >= 1, self.run?.id == run.id {

@@ -119,6 +119,7 @@ struct ContentView: View {
             }
             .transition(.identity)
             .animation(nil, value: displayedDestination)
+            .toolbarBackground(.automatic, for: .windowToolbar)
             .disabled(!store.canModify)
             .overlay {
                 if showsLoadingIndicator && store.isInitialLoading {

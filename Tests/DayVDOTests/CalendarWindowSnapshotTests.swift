@@ -79,6 +79,57 @@ final class CalendarWindowSnapshotTests: XCTestCase {
         XCTAssertEqual(cache.snapshot?.items(on: windowStart).map(\.id), [newest.id])
     }
 
+    @MainActor
+    func testPendingEditKeepsVisibleTasksUntilTheReplacementIsReady() async throws {
+        let cache = CalendarWindowCache()
+        let unchanged = TodoItem(title: "Unchanged", dueDate: windowStart.date())
+        var edited = TodoItem(title: "Before", dueDate: windowStart.adding(days: 1).date())
+        let initial = request(items: [unchanged, edited], revision: 1)
+        cache.prepare(initial)
+        let ready = await cache.waitForSnapshot(covering: initial.key, until: .now + .seconds(2))
+        XCTAssertTrue(ready)
+
+        edited.title = "After"
+        edited.startDay = windowStart.adding(days: 2)
+        edited.dueDay = edited.startDay
+        let update = request(items: [unchanged, edited], revision: 2)
+        cache.prepare(update)
+        let pending = try XCTUnwrap(cache.snapshotForDisplay(matching: update.key))
+        XCTAssertEqual(Set(pending.rangedItems.map(\.id)), [unchanged.id, edited.id])
+        XCTAssertTrue(pending.dateLayoutsByWeek.isEmpty, "Pending rows must resolve current task dates and styles")
+        XCTAssertFalse(cache.hasSnapshot(covering: update.key), "Visible fallback does not mean fresh data is ready")
+        XCTAssertFalse(try XCTUnwrap(cache.snapshot).dateLayoutsByWeek.isEmpty)
+
+        let updated = await cache.waitForSnapshot(covering: update.key, until: .now + .seconds(2))
+        XCTAssertTrue(updated)
+        let displayed = try XCTUnwrap(cache.snapshotForDisplay(matching: update.key))
+        XCTAssertEqual(displayed.items(on: windowStart).map(\.id), [unchanged.id])
+        XCTAssertTrue(displayed.items(on: windowStart.adding(days: 1)).isEmpty)
+        XCTAssertEqual(displayed.items(on: windowStart.adding(days: 2)).first?.title, "After")
+        XCTAssertFalse(displayed.dateLayoutsByWeek.isEmpty)
+    }
+
+    @MainActor
+    func testPendingFilterRecomputesLayoutsButCalendarGeometryMustMatch() async throws {
+        let cache = CalendarWindowCache()
+        let item = TodoItem(title: "Done", dueDate: windowStart.date(), isCompleted: true)
+        let initial = request(items: [item], revision: 1)
+        cache.prepare(initial)
+        let ready = await cache.waitForSnapshot(covering: initial.key, until: .now + .seconds(2))
+        XCTAssertTrue(ready)
+
+        var filteredKey = initial.key
+        filteredKey.visibility.showCompleted = false
+        let pending = try XCTUnwrap(cache.snapshotForDisplay(matching: filteredKey))
+        XCTAssertTrue(pending.dateLayoutsByWeek.isEmpty, "The previous filter's layout must never bypass the current filter")
+        XCTAssertFalse(cache.hasSnapshot(covering: filteredKey))
+        filteredKey.firstWeekday = 1
+        XCTAssertNil(cache.snapshotForDisplay(matching: filteredKey))
+        filteredKey = initial.key
+        filteredKey.timeZoneIdentifier = "America/Los_Angeles"
+        XCTAssertNil(cache.snapshotForDisplay(matching: filteredKey))
+    }
+
     private func makeSnapshot(
         items: [TodoItem],
         tags: [TaskTag] = [],

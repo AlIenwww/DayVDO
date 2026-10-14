@@ -48,6 +48,22 @@ final class DayPlanningTests: XCTestCase {
         XCTAssertEqual(DayPlanningPolicy.snapped(484), 485)
     }
 
+    func testInitialTimelinePositionUsesEarliestVisibleArrangement() {
+        let late = DaySchedule(startDay: friday, startMinute: 900, durationMinutes: 60,
+                               content: .independent(title: "Afternoon", notes: ""))
+        let early = DaySchedule(startDay: friday, startMinute: 547, durationMinutes: 30,
+                                content: .todo(UUID()))
+        let anotherDay = DaySchedule(startDay: friday.adding(days: -1), startMinute: 60,
+                                     durationMinutes: 30, content: .todo(UUID()))
+        XCTAssertEqual(DayPlanningPolicy.initialScrollMinute(schedules: [late, anotherDay, early], on: friday), 547)
+        XCTAssertEqual(DayPlanningPolicy.initialScrollMinute(schedules: [anotherDay], on: friday), 0)
+        XCTAssertEqual(DayPlanningPolicy.initialScrollMinute(schedules: [], on: friday), 0)
+
+        let overnight = DaySchedule(startDay: friday.adding(days: -1), startMinute: 1380,
+                                    durationMinutes: 120, content: .todo(UUID()))
+        XCTAssertEqual(DayPlanningPolicy.initialScrollMinute(schedules: [late, overnight, early], on: friday), 0)
+    }
+
     func testInProgressUsesCurrentDayAndHalfOpenScheduleInterval() {
         let placement = DayPlanningPolicy.Placement(
             id: UUID(),
@@ -154,6 +170,35 @@ final class DayPlanningTests: XCTestCase {
         let dst = LocalDay(year: 2026, month: 3, day: 8)
         XCTAssertEqual(dst.distance(to: dst.adding(days: 1)), 1)
         XCTAssertEqual(LocalDay(year: 2026, month: 12, day: 31).adding(days: 1), LocalDay(year: 2027, month: 1, day: 1))
+    }
+
+    @MainActor
+    func testReturningOneSegmentToListKeepsTodoAndOtherSegmentsAcrossUndoAndReload() async throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let todo = TodoItem(title: "Split work", dueDate: friday.date(), estimatedMinutes: 90)
+        XCTAssertTrue(store.upsert(todo))
+        let first = DaySchedule(startDay: friday, startMinute: 540, durationMinutes: 30, content: .todo(todo.id))
+        let second = DaySchedule(startDay: friday, startMinute: 780, durationMinutes: 60, content: .todo(todo.id))
+        XCTAssertTrue(store.upsertSchedule(first))
+        XCTAssertTrue(store.upsertSchedule(second))
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        store.undoManager = undo
+        undo.beginUndoGrouping()
+        XCTAssertTrue(store.deleteSchedule(first.id))
+        undo.endUndoGrouping()
+        XCTAssertEqual(store.schedules, [second])
+        XCTAssertEqual(store.scheduledMinutes(for: todo.id), 60)
+        XCTAssertEqual(store.item(withID: todo.id), todo)
+        undo.undo()
+        XCTAssertEqual(store.scheduledMinutes(for: todo.id), 90)
+        undo.redo()
+        let saved = await store.flushPersistence()
+        XCTAssertTrue(saved)
+        let restored = TodoStore(fileURL: url)
+        XCTAssertEqual(restored.schedules, [second])
+        XCTAssertEqual(restored.item(withID: todo.id), todo)
     }
 
     @MainActor

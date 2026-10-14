@@ -57,7 +57,10 @@ final class CalendarDateInteraction: ObservableObject {
         } else { create(drag.range.lowerBound, drag.range.upperBound) }
     }
     func cancel() { suppressed = true; drag = nil }
-    func release() { drag = nil; suppressed = false }
+    func release() {
+        if drag != nil { drag = nil }
+        if suppressed { suppressed = false }
+    }
 }
 
 struct CalendarDateWeekRow: View {
@@ -79,27 +82,27 @@ struct CalendarDateWeekRow: View {
     var edit: (TodoItem) -> Void
 
     private var displayed: [CalendarWindowSnapshot.Item] {
-        var candidates = items
-        // A dragged task can enter a week that did not originally contain it.
-        if let item = interaction.drag?.item,
-           !candidates.contains(where: { $0.id == item.id }),
-           let start = item.startDay, let end = item.dueDay {
-            candidates.append(.init(id: item.id, startDay: start, dueDay: end,
-                title: item.title, status: item.status, hasProject: item.projectID != nil,
-                tagColor: store.tag(withID: item.tagID)?.color))
+        let weekEnd = week.adding(days: 6)
+        // While a new snapshot builds, its predecessor has stale week membership
+        // and ordering. Resolve the complete current week instead.
+        var candidates = preparedLayout == nil ? store.items : items.compactMap { store.item(withID: $0.id) }
+        if let id = interaction.drag?.item?.id, !candidates.contains(where: { $0.id == id }),
+           let item = store.item(withID: id) {
+            candidates.append(item)
         }
-        return candidates.compactMap { summary in
-            guard let latest = store.item(withID: summary.id),
-                  visibility.includes(latest),
-                  let start = latest.startDay, let end = latest.dueDay else { return nil }
-            var copy = summary
-            copy.startDay = start; copy.dueDay = end; copy.title = latest.title; copy.status = latest.status
-            copy.hasProject = latest.projectID != nil
-            copy.tagColor = store.tag(withID: latest.tagID)?.color
-            if interaction.drag?.item?.id == copy.id, let range = interaction.drag?.range {
-                copy.startDay = range.lowerBound; copy.dueDay = range.upperBound
+        return candidates.compactMap { candidate -> TodoItem? in
+            var item = candidate
+            if interaction.drag?.item?.id == item.id, let range = interaction.drag?.range {
+                item.startDay = range.lowerBound; item.dueDay = range.upperBound
             }
-            return copy
+            guard visibility.includes(item), let start = item.startDay, let end = item.dueDay,
+                  start <= weekEnd, end >= week else { return nil }
+            return item
+        }.sorted(by: CalendarWindowSnapshot.areInIncreasingOrder).compactMap { item in
+            guard let start = item.startDay, let end = item.dueDay else { return nil }
+            return .init(id: item.id, startDay: start, dueDay: end,
+                title: item.title, status: item.status, hasProject: item.projectID != nil,
+                tagColor: store.tag(withID: item.tagID)?.color)
         }
     }
 
@@ -110,7 +113,7 @@ struct CalendarDateWeekRow: View {
             let previewID = interaction.drag.map { $0.item?.id ?? interaction.draftID } ?? draft?.id
             let layout = (interaction.drag == nil && draft == nil ? preparedLayout : nil)
                 ?? CalendarDateLayout(segments: CalendarDatePolicy.previewSegments(
-                    displayed, draft: draft, previewID: previewID, week: week))
+                    displayed, draft: draft, previewID: previewID, week: week, maxLanes: capacity))
             let segments = layout.segments
             let columnWidth = geometry.size.width / 7
             let frame = geometry.frame(in: .named("calendarDateViewport"))

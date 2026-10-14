@@ -22,6 +22,7 @@ enum CalendarWeekSplitPolicy {
 /// participates in the native toolbar's scroll edge effect.
 struct CalendarWeekSplitView<Top: View, Bottom: View>: View {
     @Binding var fraction: Double
+    var showsDividerControl = true
     @ViewBuilder var top: () -> Top
     @ViewBuilder var bottom: () -> Bottom
 
@@ -34,7 +35,9 @@ struct CalendarWeekSplitView<Top: View, Bottom: View>: View {
                 Divider().frame(height: 1)
                 bottom().frame(height: max(0, available - topHeight)).clipped()
             }
-            .overlay { CalendarWeekDivider(fraction: $fraction) }
+            .overlay {
+                if showsDividerControl { CalendarWeekDivider(fraction: $fraction) }
+            }
         }
     }
 }
@@ -63,6 +66,7 @@ struct CalendarWeekDivider: NSViewRepresentable {
         var preferredFraction = CalendarWeekSplitPolicy.defaultFraction
         var onUserResize: (Double) -> Void = { _ in }
         private var draggingDivider = false
+        private var dragOffset: CGFloat = 0
         private var layingOut = false
 
         override init(frame frameRect: NSRect) {
@@ -81,9 +85,13 @@ struct CalendarWeekDivider: NSViewRepresentable {
         override func resizeSubviews(withOldSize oldSize: NSSize) { applyFraction() }
         func applyFraction() {
             guard !draggingDivider, !layingOut, subviews.count == 2 else { return }
-            layingOut = true
             let available = max(0, bounds.height - dividerThickness)
             let height = CalendarWeekSplitPolicy.topHeight(fraction: preferredFraction, availableHeight: available)
+            layoutPanes(topHeight: height)
+        }
+        private func layoutPanes(topHeight height: CGFloat) {
+            layingOut = true
+            let available = max(0, bounds.height - dividerThickness)
             subviews[0].frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
             subviews[1].frame = CGRect(x: 0, y: height + dividerThickness,
                 width: bounds.width, height: max(0, available - height))
@@ -95,10 +103,32 @@ struct CalendarWeekDivider: NSViewRepresentable {
                 super.mouseDown(with: event); return
             }
             draggingDivider = true
-            super.mouseDown(with: event)
+            dragOffset = point.y - subviews[0].frame.height
+            // NSSplitView.mouseDown runs a tracking loop. Returning normally
+            // lets SwiftUI redraw both panes between native drag events.
+        }
+        override func mouseDragged(with event: NSEvent) {
+            guard draggingDivider else { super.mouseDragged(with: event); return }
+            updateDivider(with: event)
+        }
+        override func mouseUp(with event: NSEvent) {
+            guard draggingDivider else { super.mouseUp(with: event); return }
+            updateDivider(with: event)
             draggingDivider = false
+            applyFraction()
+        }
+        private func updateDivider(with event: NSEvent) {
             let available = bounds.height - dividerThickness
-            if available >= 220 { onUserResize(subviews[0].frame.height / available) }
+            guard available >= 220 else { return }
+            let proposed = convert(event.locationInWindow, from: nil).y - dragOffset
+            let limits = CalendarWeekSplitPolicy.limits(availableHeight: available)
+            let height = min(limits.upperBound, max(limits.lowerBound, proposed))
+            let fraction = Double(height / available)
+            guard fraction != preferredFraction else { return }
+            preferredFraction = fraction
+            layoutPanes(topHeight: height)
+            window?.invalidateCursorRects(for: self)
+            onUserResize(fraction)
         }
         func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
         nonisolated func splitView(_ splitView: NSSplitView, shouldCollapseSubview subview: NSView,

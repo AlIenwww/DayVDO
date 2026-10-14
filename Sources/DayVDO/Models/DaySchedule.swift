@@ -88,6 +88,15 @@ enum DayPlanningPolicy {
         return min(1440, estimated - scheduled)
     }
 
+    static func initialScrollMinute(schedules: [DaySchedule], on day: LocalDay, now: Date = .now) -> Int {
+        if let earliest = schedules.compactMap({ $0.interval(on: day)?.lowerBound }).min() {
+            return earliest
+        }
+        guard day == LocalDay(now) else { return 0 }
+        let time = Calendar.current.dateComponents([.hour, .minute], from: now)
+        return (time.hour ?? 0) * 60 + (time.minute ?? 0)
+    }
+
     static func isInProgress(_ placement: Placement, at minute: Int, onCurrentDay: Bool) -> Bool {
         onCurrentDay && placement.interval.contains(minute)
     }

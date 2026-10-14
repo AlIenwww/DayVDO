@@ -1,30 +1,33 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import DayVDO
 
 final class CalendarNativeScrollAnimatorTests: XCTestCase {
     @MainActor
     func testSnapMovesClipViewThroughIntermediatePositionsBeforeCompletion() async throws {
-        let scroll = makeScrollView()
-        let animator = CalendarNativeScrollAnimator()
-        defer { animator.cancel() }
-        var positions: [CGFloat] = []
-        var completed = false
-        animator.start(from: .zero, to: NSPoint(x: 0, y: 600), framesPerSecond: 60) { point in
-            scroll.contentView.scroll(to: point)
-            positions.append(scroll.contentView.bounds.minY)
-        } completion: {
-            completed = true
+        for curve in [nil, UnitCurve.easeInOut] {
+            let scroll = makeScrollView()
+            let animator = CalendarNativeScrollAnimator()
+            defer { animator.cancel() }
+            var positions: [CGFloat] = []
+            var completed = false
+            animator.start(from: .zero, to: NSPoint(x: 0, y: 600), framesPerSecond: 60, curve: curve) { point in
+                scroll.contentView.scroll(to: point)
+                positions.append(scroll.contentView.bounds.minY)
+            } completion: {
+                completed = true
+            }
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertFalse(completed)
+            XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
+            XCTAssertLessThan(scroll.contentView.bounds.minY, 600)
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertTrue(completed)
+            XCTAssertEqual(scroll.contentView.bounds.minY, 600, accuracy: 0.01)
+            XCTAssertGreaterThan(positions.count, 2)
+            XCTAssertTrue(zip(positions, positions.dropFirst()).allSatisfy { $0 <= $1 })
         }
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertFalse(completed)
-        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0)
-        XCTAssertLessThan(scroll.contentView.bounds.minY, 600)
-        try await Task.sleep(for: .milliseconds(250))
-        XCTAssertTrue(completed)
-        XCTAssertEqual(scroll.contentView.bounds.minY, 600, accuracy: 0.01)
-        XCTAssertGreaterThan(positions.count, 2)
-        XCTAssertTrue(zip(positions, positions.dropFirst()).allSatisfy { $0 <= $1 })
     }
 
     @MainActor

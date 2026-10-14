@@ -113,7 +113,7 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
                                       dateLayoutsByWeek: dateLayouts)
     }
 
-    private static func areInIncreasingOrder(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {
+    static func areInIncreasingOrder(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {
         if lhs.isCompleted != rhs.isCompleted { return !lhs.isCompleted }
         if lhs.priority != rhs.priority { return lhs.priority.rawValue > rhs.priority.rawValue }
         if lhs.urgency != rhs.urgency { return lhs.urgency.rawValue > rhs.urgency.rawValue }
@@ -150,6 +150,18 @@ final class CalendarWindowCache: ObservableObject {
 
     func hasSnapshot(covering key: CalendarWindowSnapshot.Key) -> Bool {
         snapshot?.key.covers(key) == true
+    }
+
+    func snapshotForDisplay(matching key: CalendarWindowSnapshot.Key) -> CalendarWindowSnapshot? {
+        guard var result = snapshot,
+              result.key.timeZoneIdentifier == key.timeZoneIdentifier,
+              result.key.firstWeekday == key.firstWeekday else { return nil }
+        // Keep task identities on screen while the replacement builds. Rows
+        // resolve current tasks and filters; stale layouts would bypass that.
+        if !result.key.matchesContent(of: key) {
+            result.dateLayoutsByWeek = [:]
+        }
+        return result
     }
 
     func prepare(_ request: CalendarWindowRequest, priority: TaskPriority = .utility) {
