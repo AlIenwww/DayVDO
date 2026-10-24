@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class CalendarWeekPresentationCache: ObservableObject {
+    @Published var dragPreview: DaySchedule?
     struct Key: Equatable {
         var week: LocalDay
         var revision: UInt64
@@ -61,7 +62,7 @@ struct CalendarWeekTimeline: View {
     let visibility: TodoFilterContext
     @Binding var hourHeight: CGFloat
     @Binding var scrollMinute: CGFloat?
-    let presentationCache: CalendarWeekPresentationCache
+    @ObservedObject var presentationCache: CalendarWeekPresentationCache
     let isActive: Bool
     var editTodo: (TodoItem) -> Void
     @State private var hasRestoredScroll = false
@@ -72,6 +73,7 @@ struct CalendarWeekTimeline: View {
     @State private var offset: CGFloat = 0
     @State private var size = CGSize.zero
     @State private var drag: Interaction?
+    @State private var dragAnchor = CalendarWeekDragAnchor.AnchorView()
     @State private var preview: DaySchedule?
     @State private var creation: Creation?
     @State private var draftID = UUID()
@@ -123,7 +125,10 @@ struct CalendarWeekTimeline: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView(.vertical) {
-                timeline(width: geometry.size.width)
+                CalendarWeekTimelineContent(version: renderVersion(width: geometry.size.width)) {
+                    timeline(width: geometry.size.width)
+                }
+                    .equatable()
                     .frame(height: hourHeight * 24 + 24)
             }
             .scrollPosition($position)
@@ -163,7 +168,7 @@ struct CalendarWeekTimeline: View {
             .onChange(of: isActive) { _, active in
                 if active, let scrollMinute {
                     position.scrollTo(y: scrollMinute * ppm)
-                } else if !active {
+                } else if !active && drag == nil {
                     selectedID = nil
                     clearDrag()
                     presentation = nil
@@ -180,6 +185,7 @@ struct CalendarWeekTimeline: View {
                     suppressed = false
                     if drag != nil { clearDrag() }
                 }))
+            .background(CalendarWeekDragAnchor(view: dragAnchor))
             .background(TimelineControlScrollMonitor { delta, precise in
                 beginZoom()
                 zoomTarget = TimelineZoomPolicy.clampedHourHeight((zoomTarget ?? hourHeight) + delta * (precise ? 0.8 : 8))
@@ -258,8 +264,19 @@ struct CalendarWeekTimeline: View {
         )
     }
 
+    private func renderVersion(width: CGFloat) -> CalendarWeekTimelineRenderVersion {
+        let time = Calendar.current.dateComponents([.hour, .minute], from: now)
+        return CalendarWeekTimelineRenderVersion(week: week, revision: store.contentRevision,
+            visibility: visibility, width: width, hourHeight: hourHeight,
+            selectedID: selectedID, preview: activePreview,
+            prioritizing: drag?.original != nil && drag?.mode != .move ? nil : activePreview?.id,
+            today: LocalDay(now), minute: (time.hour ?? 0) * 60 + (time.minute ?? 0),
+            locale: L10n.locale.identifier)
+    }
+
     private var activePreview: DaySchedule? {
         if let preview { return preview }
+        if let preview = presentationCache.dragPreview { return preview }
         guard let creation else { return nil }
         return DaySchedule(id: draftID, startDay: creation.day, startMinute: creation.range.lowerBound,
             durationMinutes: creation.range.count, content: .independent(title: "", notes: ""),
@@ -277,8 +294,8 @@ struct CalendarWeekTimeline: View {
         return ZStack(alignment: .topLeading) {
             grid(width: width)
             Color.clear.contentShape(Rectangle())
-                .frame(width: max(1, width - gutter), height: hourHeight * 24)
-                .offset(x: gutter, y: 12)
+                .frame(width: max(1, width - gutter), height: hourHeight * 24 + 24)
+                .offset(x: gutter)
                 .gesture(gesture(nil, mode: .move))
             ForEach(0..<7, id: \.self) { column in
                 let day = week.adding(days: column)
@@ -416,10 +433,13 @@ struct CalendarWeekTimeline: View {
                         originY: value.startLocation.y, originOffset: offset, creationStart: start, creationOrigin: minute)
                 }
                 updateDrag(at: value.location)
+                if drag?.original != nil {
+                    dragAnchor.track(at: value.location, cancel: cancel) { location in updateDrag(at: location) }
+                }
             }
             .onEnded { value in
                 defer { clearDrag() }
-                guard !suppressed, column(at: value.location) != nil else { return }
+                guard !suppressed, targetDay(at: value.location) != nil else { return }
                 updateDrag(at: value.location)
                 if let preview, let original = drag?.original, preview != original,
                    store.schedules.first(where: { $0.id == original.id }) == original {
@@ -448,7 +468,8 @@ struct CalendarWeekTimeline: View {
     }
 
     private func updateDrag(at location: CGPoint) {
-        guard let drag, let targetColumn = column(at: location) else { return }
+        guard let drag, let targetDay = targetDay(at: location) else { return }
+        let targetColumn = week.distance(to: targetDay)
         let delta = Double((location.y - drag.originY + offset - drag.originOffset) / ppm)
         if let schedule = drag.original {
             var value = WeekSchedulePolicy.adjusted(schedule, mode: drag.mode,
@@ -457,9 +478,15 @@ struct CalendarWeekTimeline: View {
                 value.setHorizontalPosition(horizontalPosition(at: location, column: targetColumn), at: positionUpdatedAt)
             }
             preview = value
+            presentationCache.dragPreview = value
         } else {
             updateCreation(drag, at: location)
         }
+    }
+
+    private func targetDay(at location: CGPoint) -> LocalDay? {
+        if dragAnchor.isInWeekViewport { return dragAnchor.day(at: location) }
+        return column(at: location).map { week.adding(days: $0) }
     }
 
     private func updateCreation(_ drag: Interaction, at location: CGPoint) {
@@ -540,6 +567,10 @@ struct CalendarWeekTimeline: View {
 
     private func cancel() { suppressed = true; clearDrag() }
     private func clearDrag() {
+        if let original = drag?.original, presentationCache.dragPreview?.id == original.id {
+            presentationCache.dragPreview = nil
+        }
+        dragAnchor.endDrag()
         drag = nil; preview = nil; creation = nil
         externalLocation = nil; externalTodoID = nil; pendingDrop = nil
     }
@@ -547,4 +578,29 @@ struct CalendarWeekTimeline: View {
         guard drag == nil else { return }
         if zoomAnchor == nil { zoomAnchor = TimelineZoomPolicy.anchor(scrollOffset: offset, viewportHeight: size.height, hourHeight: hourHeight) }
     }
+}
+
+private struct CalendarWeekTimelineRenderVersion: Equatable, Sendable {
+    var week: LocalDay
+    var revision: UInt64
+    var visibility: TodoFilterContext
+    var width: CGFloat
+    var hourHeight: CGFloat
+    var selectedID: UUID?
+    var preview: DaySchedule?
+    var prioritizing: UUID?
+    var today: LocalDay
+    var minute: Int
+    var locale: String
+}
+
+/// Scrolling changes the clip origin, not the grid or its arrangement cards.
+/// Keep that content stable while scroll synchronization updates the viewport.
+private struct CalendarWeekTimelineContent<Content: View>: View, Equatable {
+    nonisolated let version: CalendarWeekTimelineRenderVersion
+    @ViewBuilder var content: () -> Content
+
+    var body: some View { content() }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.version == rhs.version }
 }

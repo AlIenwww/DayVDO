@@ -103,8 +103,8 @@ final class CalendarRefreshWindowTests: XCTestCase {
         let hosting = NSHostingView(rootView: CalendarView(
             editingItem: .constant(nil), filter: .constant(.init()), visibility: visibility,
             columnVisibility: .constant(.all), selectedDate: .constant(monday.date()),
-            currentMonth: .constant(monday.date()), weekHourHeight: .constant(90),
-            weekScrollMinute: .constant(480), isInspectorPresented: .constant(false),
+            currentMonth: .constant(monday.date()), weekPosition: CalendarWeekViewportPosition(scrollMinute: 480),
+            isInspectorPresented: .constant(false),
             windowCache: monthCache, weekCache: weekCache,
             weekPresentationCache: CalendarWeekPresentationCache(), timelineSession: session)
             .environmentObject(store)
@@ -161,7 +161,14 @@ final class CalendarRefreshWindowTests: XCTestCase {
             return false
         }?.frame)
         let targetWeek = monday.adding(days: offset / 7 * 7)
-        let weekFrame = try XCTUnwrap(input.interaction?.frames[targetWeek])
+        // Each native week has its own hit regions; its viewport owns date
+        // conversion across week boundaries. Month still uses shared row frames.
+        let weekFrame: CGRect
+        if input.calendarWeekViewport != nil {
+            weekFrame = CGRect(x: 0, y: 0, width: input.bounds.width, height: input.bounds.height)
+        } else {
+            weekFrame = try XCTUnwrap(input.interaction?.frames[targetWeek])
+        }
         let target = CGPoint(x: weekFrame.minX + (CGFloat(offset % 7) + 0.5) * weekFrame.width / 7,
                              y: weekFrame.minY + source.midY - (input.interaction?.frames[monday]?.minY ?? 0))
         input.pointerDown(at: CGPoint(x: source.midX, y: source.midY), clickCount: 1)

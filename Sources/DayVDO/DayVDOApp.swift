@@ -42,10 +42,10 @@ private struct DayVDOCommands: Commands {
             Button(L10n.string("今日待办")) { actions?.navigate(.today) }
                 .keyboardShortcut("1", modifiers: .command)
                 .disabled(actions == nil)
-            Button(L10n.string("总待办")) { actions?.navigate(.all) }
+            Button(L10n.string("日历")) { actions?.navigate(.calendar) }
                 .keyboardShortcut("2", modifiers: .command)
                 .disabled(actions == nil)
-            Button(L10n.string("日历")) { actions?.navigate(.calendar) }
+            Button(L10n.string("总待办")) { actions?.navigate(.all) }
                 .keyboardShortcut("3", modifiers: .command)
                 .disabled(actions == nil)
             Button(L10n.string("设置")) { actions?.navigate(.settings) }
@@ -88,24 +88,30 @@ struct DayVDOApp: App {
     @StateObject private var store: TodoStore
 
     init() {
+        let initialStore = Self.makeStore()
+        _store = StateObject(wrappedValue: initialStore)
+        appDelegate.store = initialStore
+    }
+
+    private static func makeStore() -> TodoStore {
         if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
            let isolatedURL = AppDataLocation.isolatedTestingURL(
                bundleIdentifier: Bundle.main.bundleIdentifier,
                enabled: Bundle.main.object(forInfoDictionaryKey: "DayVDOIsolatedTesting") as? Bool == true,
                applicationSupport: support
            ) {
-            _store = StateObject(wrappedValue: TodoStore(fileURL: isolatedURL))
-            return
+            return TodoStore(fileURL: isolatedURL)
         }
         #if DEBUG
         // A test-only bundle may opt into an explicit data file. This remains
         // isolated even when a UI automation tool relaunches it without its environment.
         if let path = Bundle.main.object(forInfoDictionaryKey: "DayVDOTestingDataPath") as? String {
-            _store = StateObject(wrappedValue: TodoStore(fileURL: URL(fileURLWithPath: path)))
-            return
+            return TodoStore(fileURL: URL(fileURLWithPath: path))
         }
         #endif
-        _store = StateObject(wrappedValue: TodoStore())
+        // Finish loading arrangements and their task data before SwiftUI
+        // creates the first window, so its first frame contains the saved plan.
+        return TodoStore(loadsAsynchronously: false)
     }
 
     var body: some Scene {
@@ -115,7 +121,6 @@ struct DayVDOApp: App {
                 .environmentObject(store)
                 .environment(\.locale, store.settings.language.locale)
                 .frame(minWidth: 760, minHeight: 468)
-                .onAppear { appDelegate.store = store }
         }
         .defaultSize(width: 1080, height: 720)
         .commands {
@@ -127,7 +132,6 @@ struct DayVDOApp: App {
                 .environmentObject(store)
                 .environment(\.locale, store.settings.language.locale)
                 .frame(width: 520, height: 480)
-                .onAppear { appDelegate.store = store }
         }
     }
 }

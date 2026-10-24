@@ -5,6 +5,41 @@ import XCTest
 
 @MainActor
 final class AppAppearanceWindowTests: XCTestCase {
+    func testSavedAppearanceIsAppliedBeforeFirstWindowWhileTasksLoadAsynchronously() async throws {
+        let app = NSApplication.shared
+        let previous = app.appearance
+        defer { app.appearance = previous }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DayVDO-Startup-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("todos.json")
+        for mode in AppearanceMode.allCases {
+            var settings = AppSettings()
+            settings.appearance = mode
+            let data: [String: Any] = [
+                "items": [try JSONSerialization.jsonObject(with: JSONEncoder().encode(TodoItem(title: "Saved task")))],
+                "settings": try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings))
+            ]
+            try JSONSerialization.data(withJSONObject: data).write(to: file)
+            let store = TodoStore(fileURL: file, loadsAsynchronously: true)
+            XCTAssertTrue(store.isInitialLoading)
+            XCTAssertTrue(store.items.isEmpty)
+            XCTAssertFalse(store.hasPendingPersistence, "Reading startup preferences must never save an empty task graph")
+            let delegate = AppDelegate()
+            delegate.store = store
+            let expected = mode == .dark ? NSAppearance.Name.darkAqua : (mode == .light ? .aqua : nil)
+            XCTAssertEqual(app.appearance?.name, expected)
+            let window = makeWindow(Text("First frame"), probe: AppearanceProbe())
+            XCTAssertEqual(window.effectiveAppearance.name, app.effectiveAppearance.name)
+            for _ in 0..<100 where store.isInitialLoading { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertFalse(store.isInitialLoading)
+            XCTAssertEqual(store.items.map(\.title), ["Saved task"])
+            XCTAssertEqual(store.settings.appearance, mode)
+            window.contentView = nil; window.close()
+            delegate.store = nil
+        }
+    }
+
     func testDarkAndLightReturnToSystemAcrossExistingAndNewWindows() async throws {
         let app = NSApplication.shared
         let previous = app.appearance

@@ -10,6 +10,7 @@ struct TodoEditorView: View {
     @State private var isShowingDeadlinePicker = false
     @State private var isEstimateValid = true
     @State private var dateChange: TodoStore.DateChangeConfirmation?
+    @State private var newProjectDraft: TodoProject?
     @FocusState private var titleIsFocused: Bool
 
     let isEditing: Bool
@@ -52,7 +53,7 @@ struct TodoEditorView: View {
                 }
                 .padding(20)
 
-                if showsProjectPicker {
+                Group {
                     Divider()
                     HStack(spacing: 10) {
                         Image(systemName: "folder")
@@ -87,6 +88,10 @@ struct TodoEditorView: View {
                                     )
                                 }
                             }
+                            Divider()
+                            Button(L10n.string("新建大项目…"), systemImage: "plus") {
+                                newProjectDraft = TodoProject(title: "")
+                            }
                         } label: {
                             HStack(spacing: 5) {
                                 Text(selectedProjectTitle)
@@ -103,81 +108,37 @@ struct TodoEditorView: View {
                         }
                         .menuIndicator(.hidden)
                         .buttonStyle(.plain)
+                        .disabled(!store.canModify)
+                        .sheet(item: $newProjectDraft) { project in
+                            ProjectEditorView(project: project, isEditing: false) { savedProject in
+                                guard store.upsertProject(savedProject) else { return false }
+                                draft.projectID = savedProject.id
+                                draft.projectSortOrder = nil
+                                if draft.tagID == nil { draft.tagID = savedProject.tagID }
+                                return true
+                            }
+                        }
                     }
                     .padding(.horizontal, 20)
                     .frame(height: 46)
                 }
 
-                Divider()
+                Divider().padding(.leading, 50)
 
-                HStack {
-                    Text(L10n.string("预计时长"))
+                HStack(spacing: 10) {
+                    Image(systemName: "tag")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                    Text(L10n.string("标签"))
                     Spacer()
-                    DurationInput(minutes: draft.estimatedMinutes, updatesDraft: true,
-                                  onValidityChange: { isEstimateValid = $0 }) { draft.estimatedMinutes = $0 }
+                    TaskTagPicker(selection: $draft.tagID)
                 }
                 .padding(.horizontal, 20)
                 .frame(height: 46)
+
                 Divider()
 
                 VStack(spacing: 0) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "tag")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                        Text(L10n.string("标签"))
-                        Spacer()
-                        TaskTagPicker(selection: $draft.tagID)
-                    }
-                    .padding(.horizontal, 20)
-                    .frame(height: 46)
-
-                    Divider().padding(.leading, 50)
-
-                    HStack(spacing: 10) {
-                        Image(systemName: "flag")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                        Text(L10n.string("重要度"))
-                        Spacer()
-                        FixedWidthPopUp(
-                            label: L10n.string("重要度"),
-                            selection: $draft.priority,
-                            options: TodoItem.Priority.allCases,
-                            title: { L10n.string($0.title) },
-                            symbolName: { $0 == .none ? nil : $0.symbolName },
-                            iconColor: { $0 == .none ? nil : $0.displayColor }
-                        )
-                        .frame(width: optionWidth, height: 26)
-                        .layoutPriority(1)
-                    }
-                    .padding(.horizontal, 20)
-                    .frame(height: 46)
-
-                    Divider().padding(.leading, 50)
-
-                    HStack(spacing: 10) {
-                        Image(systemName: "bolt")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                        Text(L10n.string("紧急度"))
-                        Spacer()
-                        FixedWidthPopUp(
-                            label: L10n.string("紧急度"),
-                            selection: $draft.urgency,
-                            options: TodoItem.Urgency.allCases,
-                            title: { L10n.string($0.title) },
-                            symbolName: { $0 == .none ? nil : $0.symbolName },
-                            iconColor: { $0 == .none ? nil : $0.displayColor }
-                        )
-                        .frame(width: optionWidth, height: 26)
-                        .layoutPriority(1)
-                    }
-                    .padding(.horizontal, 20)
-                    .frame(height: 46)
-
-                    Divider().padding(.leading, 50)
-
                     VStack(spacing: 0) {
                         HStack(spacing: 10) {
                             Image(systemName: "calendar")
@@ -222,6 +183,64 @@ struct TodoEditorView: View {
                             }
                         }
                     }
+
+                    Divider().padding(.leading, 50)
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "clock")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(L10n.string("预计时长"))
+                        Spacer()
+                        DurationInput(minutes: draft.estimatedMinutes, updatesDraft: true,
+                                      onValidityChange: { isEstimateValid = $0 }) { draft.estimatedMinutes = $0 }
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(height: 46)
+
+                    Divider()
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "flag")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(L10n.string("重要度"))
+                        Spacer()
+                        FixedWidthPopUp(
+                            label: L10n.string("重要度"),
+                            selection: $draft.priority,
+                            options: TodoItem.Priority.allCases,
+                            title: { L10n.string($0.title) },
+                            symbolName: { $0 == .none ? nil : $0.symbolName },
+                            iconColor: { $0 == .none ? nil : $0.displayColor }
+                        )
+                        .frame(width: optionWidth, height: 26)
+                        .layoutPriority(1)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(height: 46)
+
+                    Divider().padding(.leading, 50)
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "bolt")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
+                        Text(L10n.string("紧急度"))
+                        Spacer()
+                        FixedWidthPopUp(
+                            label: L10n.string("紧急度"),
+                            selection: $draft.urgency,
+                            options: TodoItem.Urgency.allCases,
+                            title: { L10n.string($0.title) },
+                            symbolName: { $0 == .none ? nil : $0.symbolName },
+                            iconColor: { $0 == .none ? nil : $0.displayColor }
+                        )
+                        .frame(width: optionWidth, height: 26)
+                        .layoutPriority(1)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(height: 46)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .top)
@@ -341,10 +360,6 @@ struct TodoEditorView: View {
             return L10n.string(isEditing ? "编辑子任务" : "添加子任务")
         }
         return L10n.string(isEditing ? "编辑待办" : "添加待办")
-    }
-
-    private var showsProjectPicker: Bool {
-        !store.projects.isEmpty || draft.projectID != nil
     }
 
     private var selectedProjectTitle: String {

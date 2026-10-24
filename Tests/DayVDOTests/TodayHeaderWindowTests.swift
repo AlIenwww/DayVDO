@@ -5,6 +5,52 @@ import XCTest
 
 @MainActor
 final class TodayHeaderWindowTests: XCTestCase {
+    func testZoomAndNativeScrollKeepListFixedBeforeSwiftUIProcessesScrollGeometry() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DayVDO-PinnedList-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TodoStore(fileURL: directory.appendingPathComponent("todos.json"))
+        let day = LocalDay(.now)
+        for index in 0..<20 { store.upsert(TodoItem(title: "Task \(index)", dueDate: day.date())) }
+        let zoom = PlanningZoomState()
+        let hosting = NSHostingView(rootView: PlanningZoomHarness(day: day, zoom: zoom).environmentObject(store))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                              styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.contentView = nil; window.close() }
+        try await settle(hosting)
+        let scrolls = findScrollViews(in: hosting).sorted { $0.bounds.width > $1.bounds.width }
+        let timeline = try XCTUnwrap(scrolls.first)
+        let panel = try XCTUnwrap(scrolls.last)
+        XCTAssertEqual(scrolls.count, 2)
+        panel.contentView.scroll(to: NSPoint(x: 0, y: 120))
+        panel.reflectScrolledClipView(panel.contentView)
+        try await settle(hosting)
+        let listOffset = panel.contentView.bounds.minY
+        let frame = panel.convert(panel.bounds, to: hosting)
+
+        for height: CGFloat in [45, 180, 90] {
+            zoom.hourHeight = height
+            try await settle(hosting)
+            for offset: CGFloat in [0, 400, 100] {
+                timeline.contentView.scroll(to: NSPoint(x: 0, y: offset))
+                timeline.reflectScrolledClipView(timeline.contentView)
+                // Check immediately: a later SwiftUI update cannot hide a frame
+                // that briefly moved with the document during zooming.
+                let current = panel.convert(panel.bounds, to: hosting)
+                XCTAssertEqual(current.minY, frame.minY, accuracy: 1)
+                XCTAssertEqual(current.height, frame.height, accuracy: 1)
+                XCTAssertEqual(panel.contentView.bounds.minY, listOffset, accuracy: 1)
+                let hit = hosting.hitTest(NSPoint(x: current.midX, y: current.midY))
+                XCTAssertTrue(hit?.enclosingScrollView === panel)
+                try await settle(hosting)
+            }
+        }
+        let saved = await store.flushPersistence()
+        XCTAssertTrue(saved)
+    }
+
     func testSharedToolbarViewportKeepsBothColumnsInteractiveAcrossResizing() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory
@@ -48,9 +94,11 @@ final class TodayHeaderWindowTests: XCTestCase {
                 XCTAssertEqual(panelFrame.maxX, hosting.bounds.maxX, accuracy: 1)
                 XCTAssertEqual(panelFrame.width, 280, accuracy: 1)
                 XCTAssertEqual(panelFrame.minY, frame.minY, accuracy: 1,
-                               "The list viewport includes the toolbar so covered lazy rows remain rendered")
+                               "Both columns extend behind the one shared native header")
+                XCTAssertTrue(panel.superview?.enclosingScrollView === timeline,
+                              "The native header must sample both columns in the same scroll surface")
                 XCTAssertEqual(panel.contentInsets.top, timeline.contentInsets.top, accuracy: 1,
-                               "The initial list content still starts below the toolbar")
+                               "The initial list content must start below the shared header")
                 let hit = hosting.hitTest(NSPoint(x: panelFrame.midX, y: panelFrame.midY))
                 XCTAssertTrue(hit?.enclosingScrollView === panel,
                               "Right-column input must reach its own scroll view: \(String(describing: hit))")
@@ -83,5 +131,20 @@ final class TodayHeaderWindowTests: XCTestCase {
             view.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(30))
         }
+    }
+}
+
+@MainActor
+private final class PlanningZoomState: ObservableObject {
+    @Published var hourHeight: CGFloat = 90
+}
+
+private struct PlanningZoomHarness: View {
+    let day: LocalDay
+    @ObservedObject var zoom: PlanningZoomState
+
+    var body: some View {
+        TodayView(editingItem: .constant(nil), selectedDay: .constant(day),
+                  hourHeight: $zoom.hourHeight, timelineScrollMinute: .constant(nil))
     }
 }

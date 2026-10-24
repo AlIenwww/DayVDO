@@ -3,6 +3,38 @@ import XCTest
 
 final class TodoStoreTests: XCTestCase {
     @MainActor
+    func testSynchronousStartupMakesSavedArrangementsAndIndexesAvailableImmediately() throws {
+        let file = temporaryStoreURL()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let day = LocalDay(year: 2026, month: 10, day: 20)
+        let item = TodoItem(title: "Saved task", dueDate: day.date())
+        let schedule = DaySchedule(startDay: day, startMinute: 547, durationMinutes: 45,
+                                   content: .todo(item.id))
+        let overnight = DaySchedule(startDay: day.adding(days: -1), startMinute: 1410,
+                                    durationMinutes: 60, content: .independent(title: "Overnight", notes: ""))
+        var settings = AppSettings()
+        settings.appearance = .dark
+        let snapshot: [String: Any] = [
+            "version": 4,
+            "items": [try JSONSerialization.jsonObject(with: JSONEncoder().encode(item))],
+            "schedules": try [schedule, overnight].map { try JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) },
+            "settings": try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings))
+        ]
+        let data = try JSONSerialization.data(withJSONObject: snapshot)
+        try data.write(to: file)
+
+        let store = TodoStore(fileURL: file, loadsAsynchronously: false)
+
+        XCTAssertFalse(store.isInitialLoading)
+        XCTAssertTrue(store.canModify)
+        XCTAssertEqual(store.item(withID: item.id), item)
+        XCTAssertEqual(Set(store.schedules(on: day).map(\.id)), [schedule.id, overnight.id])
+        XCTAssertEqual(store.settings.appearance, .dark)
+        XCTAssertFalse(store.hasPendingPersistence)
+        XCTAssertEqual(try Data(contentsOf: file), data, "Startup must not rewrite the saved plan")
+    }
+
+    @MainActor
     func testRuntimeRevisionAndIdentifierIndexFollowMutations() {
         let store = TodoStore(fileURL: temporaryStoreURL())
         let initialRevision = store.contentRevision
@@ -131,6 +163,35 @@ final class TodoStoreTests: XCTestCase {
         store.deleteProject(deletedProject, strategy: .deleteTasks)
 
         XCTAssertEqual(store.items.map(\.title), ["继续存在"])
+    }
+
+    @MainActor
+    func testMovingProjectTaskToBottomPersistsAndSupportsUndo() async throws {
+        let file = temporaryStoreURL()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let store = TodoStore(fileURL: file)
+        let project = TodoProject(title: "Reordering")
+        store.upsertProject(project)
+        let tasks = (0..<3).map { TodoItem(title: "Task \($0)", projectID: project.id) }
+        for task in tasks { store.upsert(task) }
+        let original = store.items(in: project).map(\.id)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        store.undoManager = undo
+        undo.beginUndoGrouping()
+        XCTAssertTrue(store.moveProjectItem(original[0], before: nil, in: project.id))
+        undo.endUndoGrouping()
+        let reordered = Array(original.dropFirst()) + [original[0]]
+        XCTAssertEqual(store.items(in: try XCTUnwrap(store.project(withID: project.id))).map(\.id), reordered)
+        XCTAssertFalse(store.moveProjectItem(original[0], before: nil, in: project.id))
+        XCTAssertFalse(store.moveProjectItem(UUID(), before: nil, in: project.id))
+        undo.undo()
+        XCTAssertEqual(store.items(in: project).map(\.id), original)
+        undo.redo()
+        let saved = await store.flushPersistence()
+        XCTAssertTrue(saved)
+        let reloaded = TodoStore(fileURL: file)
+        XCTAssertEqual(reloaded.items(in: try XCTUnwrap(reloaded.project(withID: project.id))).map(\.id), reordered)
     }
 
     @MainActor

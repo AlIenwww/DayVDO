@@ -25,11 +25,21 @@ struct CalendarDateHitRegions: PreferenceKey {
     }
 }
 
+/// Each hosted week owns geometry without publishing it back into SwiftUI.
+@MainActor
+final class CalendarDateHitRegionSource {
+    let changed = PassthroughSubject<[CalendarDateHitRegion], Never>()
+    var regions: [CalendarDateHitRegion] = [] {
+        didSet { if oldValue != regions { changed.send(regions) } }
+    }
+}
+
 /// One mouse responder owns the entire gesture, even when a lazy week row disappears.
 struct CalendarDateInput: NSViewRepresentable {
     @EnvironmentObject private var selection: CalendarTodoSelection
     @ObservedObject var interaction: CalendarDateInteraction
     let store: TodoStore
+    var regionSource: CalendarDateHitRegionSource? = nil
     var select: (LocalDay) -> Void
     var showMore: (LocalDay) -> Void
     var create: (LocalDay, LocalDay) -> Void
@@ -40,12 +50,15 @@ struct CalendarDateInput: NSViewRepresentable {
     func updateNSView(_ view: InputView, context: Context) {
         view.selection = selection; view.store = store
         view.interaction = interaction
+        view.regionSource = regionSource
         view.resolveItem = { store.item(withID: $0) }
         view.select = select; view.showMore = showMore; view.create = create
         view.change = change; view.edit = edit
-        if view.regions != interaction.hitRegions {
-            view.regions = interaction.hitRegions
+        let regions = regionSource?.regions ?? interaction.hitRegions
+        if view.regions != regions {
+            view.regions = regions
         }
+        if interaction.suppressed { view.stopWeekScrolling() }
     }
     static func dismantleNSView(_ view: InputView, coordinator: ()) { view.stop() }
 
@@ -56,13 +69,20 @@ struct CalendarDateInput: NSViewRepresentable {
         var interaction: CalendarDateInteraction? {
             didSet {
                 guard oldValue !== interaction else { return }
-                regionsSubscription = interaction?.hitRegionsChanged.sink { [weak self] regions in
-                    self?.regions = regions
-                }
-                regions = interaction?.hitRegions ?? []
+                subscribeToRegions()
+            }
+        }
+        var regionSource: CalendarDateHitRegionSource? {
+            didSet {
+                if oldValue !== regionSource { subscribeToRegions() }
             }
         }
         private var regionsSubscription: AnyCancellable?
+        private func subscribeToRegions() {
+            let publisher = regionSource?.changed ?? interaction?.hitRegionsChanged
+            regionsSubscription = publisher?.sink { [weak self] regions in self?.regions = regions }
+            regions = regionSource?.regions ?? interaction?.hitRegions ?? []
+        }
         var regions: [CalendarDateHitRegion] = [] {
             didSet {
                 if oldValue != regions { window?.invalidateCursorRects(for: self) }
@@ -109,6 +129,23 @@ struct CalendarDateInput: NSViewRepresentable {
         private var releaseMonitor: Any?
         private var observers: [NSObjectProtocol] = []
 
+        private var weekViewport: CalendarWeekNativeViewport? {
+            calendarWeekViewport
+        }
+
+        func stopWeekScrolling() {
+            guard let viewport = weekViewport, viewport.dragOwner === self else { return }
+            viewport.endDrag()
+        }
+
+        private func day(at point: CGPoint) -> LocalDay? {
+            if let viewport = weekViewport {
+                guard point.y >= 0, point.y < bounds.height else { return nil }
+                return viewport.day(at: convert(point, to: viewport))
+            }
+            return interaction?.day(at: point)
+        }
+
         override func hitTest(_ point: NSPoint) -> NSView? {
             // Wheel events keep reaching the existing SwiftUI scroll view underneath.
             if NSApp.currentEvent?.type == .scrollWheel { return nil }
@@ -131,7 +168,7 @@ struct CalendarDateInput: NSViewRepresentable {
         }
         override func menu(for event: NSEvent) -> NSMenu? {
             let point = convert(event.locationInWindow, from: nil)
-            guard let day = interaction?.day(at: point), let store else { return nil }
+            guard let day = day(at: point), let store else { return nil }
             window?.makeFirstResponder(self)
             selection?.day = day
             let hit = regions.first { $0.frame.contains(point) }
@@ -185,7 +222,7 @@ struct CalendarDateInput: NSViewRepresentable {
         }
 
         func pointerDown(at point: CGPoint, clickCount: Int) {
-            guard let interaction, !interaction.suppressed, let day = interaction.day(at: point) else { return }
+            guard let interaction, !interaction.suppressed, let day = day(at: point) else { return }
             let region = regions.first { $0.frame.contains(point) }
             var item: TodoItem?
             var more: LocalDay?
@@ -207,25 +244,38 @@ struct CalendarDateInput: NSViewRepresentable {
             guard let press, press.more == nil, let interaction, !interaction.suppressed else { return }
             guard dragging || hypot(point.x - press.point.x, point.y - press.point.y) >= 4 else { return }
             dragging = true
-            interaction.update(origin: press.point, location: point, item: press.item, mode: press.mode)
+            if let target = day(at: point) {
+                interaction.update(anchor: press.day, target: target, item: press.item, mode: press.mode)
+            }
+            if let viewport = weekViewport {
+                viewport.trackDrag(from: self, at: convert(point, to: viewport),
+                    cancel: { [weak self] in self?.cancelPress() }) { [weak self, weak viewport] point in
+                    guard let self, let viewport else { return }
+                    self.pointerDragged(to: self.convert(point, from: viewport))
+                }
+            }
         }
         func pointerUp(at point: CGPoint) {
             defer { resetPress() }
-            guard let press, let interaction, !interaction.suppressed, interaction.day(at: point) != nil else { return }
+            guard let press, let interaction, !interaction.suppressed, day(at: point) != nil else { return }
             if dragging {
                 pointerDragged(to: point)
-                interaction.finish(at: point, create: create, change: change)
+                interaction.finish(isValidTarget: true, create: create, change: change)
             } else if let more = press.more { selection?.selectedID = nil; showMore(more) }
             else if press.clickCount == 2, let item = press.item { edit(resolveItem(item.id) ?? item) }
             else if press.item == nil { selection?.selectedID = nil; selection?.day = press.day; select(press.day) }
         }
         func cancelPress() {
             guard press != nil else { return }
+            stopWeekScrolling()
             interaction?.cancel()
         }
         private func resetPress() {
+            guard press != nil else { return }
+            let viewport = weekViewport
             press = nil; dragging = false
             interaction?.release()
+            viewport?.endDrag()
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()

@@ -36,20 +36,29 @@ final class CalendarDateInteraction: ObservableObject {
     }
 
     func update(origin: CGPoint, location: CGPoint, item: TodoItem?, mode: CalendarDateDragMode) {
+        guard let anchor = drag?.anchor ?? day(at: origin), let target = day(at: location) else { return }
+        update(anchor: anchor, target: target, item: item, mode: mode)
+    }
+
+    func update(anchor: LocalDay, target: LocalDay, item: TodoItem?, mode: CalendarDateDragMode) {
         guard !suppressed else { return }
-        if drag == nil, let anchor = day(at: origin) {
+        if drag == nil {
             drag = Drag(item: item, anchor: anchor, mode: mode,
                         range: (item?.startDay ?? anchor)...(item?.dueDay ?? anchor))
         }
-        guard var current = drag, let target = day(at: location) else { return }
+        guard var current = drag else { return }
         current.range = CalendarDatePolicy.range(start: current.item?.startDay ?? current.anchor,
             end: current.item?.dueDay ?? current.anchor, anchor: current.anchor, target: target, mode: current.mode)
         drag = current
     }
 
     func finish(at point: CGPoint, create: (LocalDay, LocalDay) -> Void, change: (TodoItem) -> Void) {
+        finish(isValidTarget: day(at: point) != nil, create: create, change: change)
+    }
+
+    func finish(isValidTarget: Bool, create: (LocalDay, LocalDay) -> Void, change: (TodoItem) -> Void) {
         defer { drag = nil }
-        guard !suppressed, day(at: point) != nil, let drag else { return }
+        guard !suppressed, isValidTarget, let drag else { return }
         if var item = drag.item {
             guard item.startDay != drag.range.lowerBound || item.dueDay != drag.range.upperBound else { return }
             item.startDay = drag.range.lowerBound; item.dueDay = drag.range.upperBound
@@ -77,6 +86,7 @@ struct CalendarDateWeekRow: View {
     var showsDates = true
     var maxLanes: Int? = nil
     var preparedLayout: CalendarDateLayout? = nil
+    var visibleLanes: Range<Int>? = nil
     var select: (LocalDay) -> Void
     var showMore: (LocalDay) -> Void
     var edit: (TodoItem) -> Void
@@ -117,7 +127,10 @@ struct CalendarDateWeekRow: View {
             let segments = layout.segments
             let columnWidth = geometry.size.width / 7
             let frame = geometry.frame(in: .named("calendarDateViewport"))
-            let visible = segments.filter { $0.lane < capacity }
+            let visible = segments.filter {
+                $0.lane < capacity && ((visibleLanes?.contains($0.lane) ?? true)
+                    || $0.id == selection.selectedID || $0.id == previewID)
+            }
             ZStack(alignment: .topLeading) {
                 HStack(spacing: 0) {
                     ForEach(0..<7, id: \.self) { column in
@@ -126,7 +139,10 @@ struct CalendarDateWeekRow: View {
                     }
                 }
                 ForEach(visible) { segment in
-                    bar(segment)
+                    CalendarDateTaskBar(segment: segment,
+                        selected: selection.selectedID == segment.id,
+                        isDraft: segment.id == draft?.id, edit: edit)
+                        .equatable()
                         .frame(width: barFrame(segment, columnWidth: columnWidth, header: header).width,
                                height: CalendarTodoBar.height)
                         .offset(x: barFrame(segment, columnWidth: columnWidth, header: header).minX,
@@ -197,22 +213,37 @@ struct CalendarDateWeekRow: View {
         .accessibilityLabel(day.date().formatted(.dateTime.year().month().day().locale(L10n.locale)))
     }
 
-    private func bar(_ segment: CalendarDatePolicy.Segment) -> some View {
+}
+
+/// Pointer regions follow the scroll origin, while each card only changes with
+/// its content, selection or draft state. Keep its keyboard and accessibility
+/// tree intact while the surrounding geometry moves.
+private struct CalendarDateTaskBar: View, Equatable {
+    @EnvironmentObject private var store: TodoStore
+    let segment: CalendarDatePolicy.Segment
+    let selected: Bool
+    let isDraft: Bool
+    var edit: (TodoItem) -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.segment == rhs.segment && lhs.selected == rhs.selected && lhs.isDraft == rhs.isDraft
+    }
+
+    var body: some View {
         CalendarTodoBar(item: segment.item, startsHere: segment.startsHere, endsHere: segment.endsHere)
             .overlay {
-                if selection.selectedID == segment.id {
+                if selected {
                     RoundedRectangle(cornerRadius: 3).stroke(Color.accentColor, lineWidth: 1.5)
                 }
             }
-            .focusable(segment.id != draft?.id).focusEffectDisabled()
+            .focusable(!isDraft).focusEffectDisabled()
             .onKeyPress(.return) {
                 if let latest = store.item(withID: segment.id) { edit(latest) }
                 return .handled
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(segment.item.title)
-            .accessibilityHidden(segment.id == draft?.id)
+            .accessibilityHidden(isDraft)
             .accessibilityAction { if let latest = store.item(withID: segment.id) { edit(latest) } }
     }
-
 }

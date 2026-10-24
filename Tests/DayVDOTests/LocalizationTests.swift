@@ -46,6 +46,8 @@ final class LocalizationTests: XCTestCase {
             "取消日期将清除这个待办的全部时间安排。",
             "可以保留各段钟点迁移到新日期，或清除安排后重新规划。",
             "编辑安排", "添加安排", "标记为未完成", "标记为已完成"])
+        required.formUnion(TodoDateFilter.presets.map(\.title))
+        required.formUnion(["自定义范围", "开始日期", "结束日期"])
 
         let pairPattern = try NSRegularExpression(
             pattern: #"\"((?:[^\"\\]|\\.)*)\"\s*="#

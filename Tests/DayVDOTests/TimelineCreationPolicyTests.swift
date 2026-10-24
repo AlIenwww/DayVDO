@@ -183,7 +183,7 @@ final class TimelineCreationPolicyTests: XCTestCase {
         )
     }
 
-    func testCreationStartStaysWithinDayAndLeavesRoomForMinimumDuration() {
+    func testCreationAnchorIncludesBothMidnightBoundaries() {
         XCTAssertEqual(
             TimelineCreationPolicy.startMinute(
                 at: -20, boundaries: [0, 1440], pointsPerMinute: 1.5
@@ -194,7 +194,7 @@ final class TimelineCreationPolicyTests: XCTestCase {
             TimelineCreationPolicy.startMinute(
                 at: 1439, boundaries: [1438, 1440], pointsPerMinute: 1.5
             ),
-            1435
+            1438
         )
         XCTAssertEqual(
             TimelineCreationPolicy.startMinute(
@@ -202,6 +202,32 @@ final class TimelineCreationPolicyTests: XCTestCase {
             ),
             1434
         )
+    }
+
+    func testCreationFromMidnightExtendsUpwardAndKeepsShortDragsInsideTheDay() {
+        for pointsPerMinute in [0.75, 1.5, 3.0] {
+            let start = TimelineCreationPolicy.startMinute(
+                at: 1440, boundaries: [], pointsPerMinute: pointsPerMinute
+            )
+            XCTAssertEqual(start, 1440)
+            XCTAssertEqual(
+                TimelineCreationPolicy.range(
+                    from: 1440, anchoredAt: start, to: 1380,
+                    boundaries: [], pointsPerMinute: pointsPerMinute
+                ),
+                1380..<1440
+            )
+            for minute in [1440.0, 1460.0] {
+                XCTAssertEqual(
+                    TimelineCreationPolicy.range(
+                        from: 1440, anchoredAt: start, to: minute,
+                        boundaries: [], pointsPerMinute: pointsPerMinute
+                    ),
+                    1435..<1440
+                )
+            }
+            XCTAssertEqual(TimelineCreationPolicy.defaultRange(anchoredAt: start), 1410..<1440)
+        }
     }
 
     func testMovingEdgeClampsToMidnightAndRetainsValidMinimumRange() {

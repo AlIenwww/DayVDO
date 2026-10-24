@@ -6,8 +6,8 @@ struct CalendarTodoBar: View {
     var startsHere = true
     var endsHere = true
 
-    static let height: CGFloat = 15
-    static let laneHeight: CGFloat = 20
+    nonisolated static let height: CGFloat = 15
+    nonisolated static let laneHeight: CGFloat = 20
 
     var body: some View {
         let color = item.tagColor?.color ?? .accentColor

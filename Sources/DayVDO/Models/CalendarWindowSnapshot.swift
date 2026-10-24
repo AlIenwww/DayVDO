@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Observation
 
 struct CalendarWindowSnapshot: Equatable, Sendable {
     struct Key: Hashable, Sendable {
@@ -245,4 +246,25 @@ struct CalendarEntryPreparation: Sendable {
 @MainActor
 final class CalendarTimelineSession: ObservableObject {
     var topWeek: LocalDay?
+}
+
+/// Changes are observed where the calendar reads them, rather than invalidating
+/// the entire navigation split view on every vertical scroll or zoom step.
+@MainActor
+@Observable
+final class CalendarWeekViewportPosition {
+    var hourHeight: CGFloat
+    var scrollMinute: CGFloat?
+
+    init(hourHeight: CGFloat = 90, scrollMinute: CGFloat? = nil) {
+        self.hourHeight = hourHeight
+        self.scrollMinute = scrollMinute
+    }
+}
+
+/// Date-card scrolling is local to the week page and does not invalidate its time grid.
+@MainActor
+@Observable
+final class CalendarWeekTodoPosition {
+    var offset: CGFloat = 0
 }

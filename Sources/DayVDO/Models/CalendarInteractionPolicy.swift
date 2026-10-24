@@ -40,16 +40,16 @@ enum CalendarDatePolicy {
 
     /// Input order is stable across a snapshot. Each interval occupies its first free lane.
     static func segments(_ items: [CalendarWindowSnapshot.Item], week: LocalDay) -> [Segment] {
-        var occupied: [Set<Int>] = []
+        var occupied: [UInt8] = []
         let weekEnd = week.adding(days: 6)
         return items.compactMap { item in
             guard item.startDay <= weekEnd, item.dueDay >= week else { return nil }
             let first = max(0, week.distance(to: item.startDay))
             let last = min(6, week.distance(to: item.dueDay))
-            let columns = Set(first...last)
-            let lane = occupied.firstIndex { $0.isDisjoint(with: columns) } ?? occupied.count
+            let columns = UInt8(((1 << (last - first + 1)) - 1) << first)
+            let lane = occupied.firstIndex { $0 & columns == 0 } ?? occupied.count
             if lane == occupied.count { occupied.append(columns) }
-            else { occupied[lane].formUnion(columns) }
+            else { occupied[lane] |= columns }
             return Segment(item: item, firstColumn: first, lastColumn: last, lane: lane,
                            startsHere: item.startDay >= week, endsHere: item.dueDay <= weekEnd)
         }
@@ -66,6 +66,15 @@ struct CalendarDateLayout: Equatable, Sendable {
                           count: max(1, (segments.map(\.lane).max() ?? 0) + 1))
         for segment in segments { lanes[segment.lane].append(segment) }
         self.lanes = lanes
+    }
+}
+
+enum CalendarDateLaneWindow {
+    /// Keep neighboring rows ready while the native scroll view moves between updates.
+    static func range(offset: CGFloat, height: CGFloat) -> Range<Int> {
+        let first = max(0, Int(floor((offset - 4) / CalendarTodoBar.laneHeight)) - 3)
+        let last = max(first + 1, Int(ceil((offset + height - 4) / CalendarTodoBar.laneHeight)) + 3)
+        return first..<last
     }
 }
 

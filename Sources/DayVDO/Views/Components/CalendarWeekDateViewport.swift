@@ -1,5 +1,12 @@
 import AppKit
+import Combine
 import SwiftUI
+
+@MainActor
+final class CalendarWeekPageActivity: ObservableObject {
+    @Published var isActive: Bool
+    init(isActive: Bool) { self.isActive = isActive }
+}
 
 /// AppKit owns the horizontal position throughout tracking, inertia and snapping.
 /// Hosted weeks have fixed frames; changing the clip origin never relays through
@@ -10,6 +17,8 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
     var leadingInset: CGFloat = 0
     var navigationID: UUID?
     var navigationDay: LocalDay?
+    /// Omit scroll positions; bindings and observed models update hosted pages.
+    var contentVersion: AnyHashable?
     var axis: AnyView = AnyView(EmptyView())
     var visibleDayChanged: (LocalDay) -> Void = { _ in }
     var settledAtDay: (LocalDay) -> Void
@@ -33,7 +42,11 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
         private weak var view: CalendarWeekNativeViewport?
         private var anchor: LocalDay
         private let radius = 52
-        private var hosts: [Int: NSHostingView<AnyView>] = [:]
+        private struct HostedWeek {
+            let view: NSHostingView<AnyView>
+            let activity: CalendarWeekPageActivity
+        }
+        private var hosts: [Int: HostedWeek] = [:]
         private var width: CGFloat = 0
         private var height: CGFloat = 0
         private var displayedFirstDay: LocalDay
@@ -43,6 +56,7 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
         private var environment = EnvironmentValues()
         private var layingOut = false
         private var publication: Task<Void, Never>?
+        private var hasRenderedContent = false
         init(_ parent: CalendarWeekDateViewport) {
             self.parent = parent; anchor = parent.week; displayedFirstDay = parent.firstDay
             appliedFirstDay = parent.firstDay
@@ -53,12 +67,29 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
             view.resized = { [weak self] in self?.resize() }
             view.scroll.scrolled = { [weak self] in self?.scrolled() }
             view.scroll.settled = { [weak self] in self?.settled() }
+            view.resolveDay = { [weak self] point in
+                guard let self, let view = self.view, self.columnWidth > 0,
+                      point.x >= self.parent.leadingInset, point.x < view.bounds.width else { return nil }
+                let column = Int(floor((view.scroll.contentView.bounds.minX + point.x) / self.columnWidth))
+                return self.anchor.adding(days: column - self.radius * 7)
+            }
         }
         func update(_ parent: CalendarWeekDateViewport, environment: EnvironmentValues) {
+            let contentChanged = !hasRenderedContent || parent.contentVersion == nil
+                || self.parent.contentVersion != parent.contentVersion
+                || self.environment.colorScheme != environment.colorScheme
+                || self.environment.colorSchemeContrast != environment.colorSchemeContrast
+                || self.environment.locale != environment.locale
+                || self.environment.dynamicTypeSize != environment.dynamicTypeSize
+                || self.environment.layoutDirection != environment.layoutDirection
+                || self.environment.isEnabled != environment.isEnabled
+                || self.environment.accessibilityReduceMotion != environment.accessibilityReduceMotion
             self.parent = parent; self.environment = environment
             guard let view else { return }
             view.leadingInset = parent.leadingInset
-            view.axis.rootView = AnyView(parent.axis.environment(\.self, environment))
+            if contentChanged {
+                view.axis.rootView = AnyView(parent.axis.environment(\.self, environment))
+            }
             let explicitNavigation = lastNavigationID != parent.navigationID
             lastNavigationID = parent.navigationID
             // A native navigation is published on the next SwiftUI turn. An
@@ -74,19 +105,23 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
                 scroll(to: target)
             }
             resize()
-            for (index, host) in hosts { host.rootView = page(index) }
+            if contentChanged {
+                for (index, host) in hosts { host.view.rootView = page(index, activity: host.activity) }
+                hasRenderedContent = true
+            }
             if explicitNavigation { publish(target, settled: true) }
         }
         private var columnWidth: CGFloat { width / 7 }
         private func day(_ index: Int) -> LocalDay { anchor.adding(days: (index - radius) * 7) }
-        private func page(_ index: Int) -> AnyView {
-            AnyView(parent.content(day(index)).environment(\.self, environment))
+        private func page(_ index: Int, activity: CalendarWeekPageActivity) -> AnyView {
+            AnyView(parent.content(day(index)).environmentObject(activity).environment(\.self, environment))
         }
         private func resize() {
             guard let view, !layingOut else { return }
             let newWidth = max(1, view.bounds.width - parent.leadingInset)
             let newHeight = view.bounds.height
             guard newHeight > 0, abs(newWidth - width) > 0.01 || abs(newHeight - height) > 0.01 else { return }
+            view.cancelDrag()
             layingOut = true
             view.scroll.resetGesture()
             width = newWidth; height = newHeight
@@ -94,7 +129,7 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
             view.scroll.leadingInset = parent.leadingInset
             view.document.frame = CGRect(x: 0, y: 0, width: width * CGFloat(radius * 2 + 1), height: height)
             view.scroll.contentInsets = NSEdgeInsets(top: 0, left: parent.leadingInset, bottom: 0, right: 0)
-            for (index, host) in hosts { host.frame = frame(index) }
+            for (index, host) in hosts { host.view.frame = frame(index) }
             scroll(to: displayedFirstDay)
             layingOut = false
             scrolled()
@@ -112,19 +147,26 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
             let rect = view.scroll.contentView.bounds
             // Include the entire covered strip and prebuild neighboring weeks.
             // These are ordinary hosted views, so a covered column is not culled.
-            let first = Int(floor(rect.minX / width))
-            let last = Int(floor(rect.maxX / width))
+            let first = Int(floor((rect.minX + parent.leadingInset) / width))
+            let last = Int(floor((rect.maxX - 0.01) / width))
             let range = max(0, first - 1)...min(radius * 2, last + 1)
+            let column = Int(((rect.minX + parent.leadingInset) / columnWidth).rounded())
+            let active = activeRange(column: column)
             for index in range where hosts[index] == nil {
-                let host = NSHostingView(rootView: page(index))
+                let activity = CalendarWeekPageActivity(isActive: active.contains(index))
+                let host = NSHostingView(rootView: page(index, activity: activity))
                 host.sizingOptions = []
                 host.frame = frame(index)
-                view.document.addSubview(host); hosts[index] = host
+                view.document.addSubview(host)
+                hosts[index] = HostedWeek(view: host, activity: activity)
             }
             for index in Array(hosts.keys) where !range.contains(index) {
-                hosts.removeValue(forKey: index)?.removeFromSuperview()
+                // The native mouse responder keeps receiving the gesture after
+                // its starting week leaves the visible cache.
+                if let owner = view.dragOwner, let host = hosts[index], owner.isDescendant(of: host.view) { continue }
+                hosts.removeValue(forKey: index)?.view.removeFromSuperview()
             }
-            let offset = Int(((rect.minX + parent.leadingInset) / columnWidth).rounded()) - radius * 7
+            let offset = column - radius * 7
             let day = anchor.adding(days: offset)
             guard day != visibleDay else { return }
             visibleDay = day
@@ -135,9 +177,17 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
             // Bounds notifications can arrive during representable layout.
             publication = Task { @MainActor [weak self] in
                 guard let self, !Task.isCancelled else { return }
+                let active = self.activeRange(column: self.radius * 7 + self.anchor.distance(to: day))
+                for (index, host) in self.hosts where host.activity.isActive != active.contains(index) {
+                    host.activity.isActive = active.contains(index)
+                }
                 self.parent.visibleDayChanged(day)
                 if settled { self.parent.settledAtDay(day) }
             }
+        }
+        private func activeRange(column: Int) -> ClosedRange<Int> {
+            let first = max(0, (column - 1) / 7)
+            return first...max(first, min(radius * 2, (column + 7) / 7))
         }
         private func settled() {
             guard let day = visibleDay else { return }
@@ -147,11 +197,13 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
         }
         private func rebase(to day: LocalDay) {
             anchor = anchor.adding(days: Int(floor(Double(anchor.distance(to: day)) / 7)) * 7)
-            hosts.values.forEach { $0.removeFromSuperview() }; hosts.removeAll()
+            hosts.values.forEach { $0.view.removeFromSuperview() }; hosts.removeAll()
         }
         func stop() {
+            view?.endDrag(settles: false)
             publication?.cancel(); view?.scroll.stop()
             view?.resized = nil; view?.scroll.scrolled = nil; view?.scroll.settled = nil
+            view?.resolveDay = nil
         }
     }
 }
@@ -164,6 +216,51 @@ final class CalendarWeekNativeViewport: NSView {
     let axis = NSHostingView(rootView: AnyView(EmptyView()))
     var leadingInset: CGFloat = 0 { didSet { if oldValue != leadingInset { needsLayout = true } } }
     var resized: (() -> Void)?
+    var resolveDay: ((CGPoint) -> LocalDay?)?
+    private(set) weak var dragOwner: NSView?
+    private var dragPoint = CGPoint.zero
+    private var dragUpdate: ((CGPoint) -> Void)?
+    private var dragCancellation: (() -> Void)?
+    private var dragDirection = 0
+    private var dragTimer: Timer?
+
+    func day(at point: CGPoint) -> LocalDay? { resolveDay?(point) }
+
+    func trackDrag(from owner: NSView, at point: CGPoint, cancel: @escaping () -> Void,
+                   update: @escaping (CGPoint) -> Void) {
+        if dragOwner == nil { scroll.resetGesture() }
+        dragOwner = owner; dragPoint = point; dragUpdate = update; dragCancellation = cancel
+        let direction = CalendarWeekDragScrollPolicy.direction(at: point, in: bounds, leadingInset: leadingInset)
+        guard direction != dragDirection else { return }
+        dragTimer?.invalidate(); dragTimer = nil
+        dragDirection = direction
+        guard direction != 0 else { return }
+        let timer = Timer(timeInterval: 0.45, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.dragOwner != nil else { return }
+                self.scroll.scrollDuringDrag(days: self.dragDirection) { [weak self] in
+                    guard let self else { return }
+                    self.dragUpdate?(self.dragPoint)
+                }
+            }
+        }
+        dragTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func endDrag(settles: Bool = true) {
+        guard dragOwner != nil else { return }
+        dragTimer?.invalidate(); dragTimer = nil; dragDirection = 0
+        dragOwner = nil; dragUpdate = nil; dragCancellation = nil
+        scroll.resetGesture()
+        if settles {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.dragOwner == nil else { return }
+                self.scroll.settled?()
+            }
+        }
+    }
+    func cancelDrag() { dragCancellation?() }
     override init(frame: NSRect) {
         super.init(frame: frame)
         scroll.drawsBackground = false
@@ -344,12 +441,80 @@ final class CalendarWeekHorizontalScrollView: NSScrollView {
         motion = .idle; horizontal = nil; contactTime = nil
         start = nil; release = nil; samples.removeAll()
     }
+    func scrollDuringDrag(days: Int, update: @escaping () -> Void) {
+        let maximum = max(-leadingInset, (documentView?.bounds.width ?? 0) - bounds.width)
+        let target = CGPoint(x: min(maximum, max(-leadingInset,
+            contentView.bounds.minX + CGFloat(days) * columnWidth)), y: 0)
+        let apply: (CGPoint) -> Void = { [weak self] point in
+            guard let self else { return }
+            self.contentView.scroll(to: point)
+            self.reflectScrolledClipView(self.contentView)
+            update()
+        }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            apply(target)
+        } else {
+            animator.start(from: contentView.bounds.origin, to: target,
+                framesPerSecond: window?.screen?.maximumFramesPerSecond ?? 60, curve: .easeInOut,
+                update: apply, completion: {})
+        }
+    }
     func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         monitor = nil; boundsObserver = nil; endObserver = nil
         resetGesture()
+    }
+}
+
+enum CalendarWeekDragScrollPolicy {
+    static func direction(at point: CGPoint, in bounds: CGRect, leadingInset: CGFloat) -> Int {
+        guard point.y >= bounds.minY, point.y < bounds.maxY,
+              point.x >= leadingInset, point.x < bounds.maxX else { return 0 }
+        if point.x < leadingInset + 28 { return -1 }
+        if point.x > bounds.maxX - 28 { return 1 }
+        return 0
+    }
+}
+
+/// Keeps the original schedule's gesture attached while its week scrolls away.
+struct CalendarWeekDragAnchor: NSViewRepresentable {
+    let view: AnchorView
+    func makeNSView(context: Context) -> AnchorView { view }
+    func updateNSView(_ view: AnchorView, context: Context) {}
+
+    final class AnchorView: NSView {
+        override var isFlipped: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        private var viewport: CalendarWeekNativeViewport? { calendarWeekViewport }
+        var isInWeekViewport: Bool { viewport != nil }
+        func day(at point: CGPoint) -> LocalDay? {
+            guard point.y >= 0, point.y < bounds.height, let viewport else { return nil }
+            return viewport.day(at: convert(point, to: viewport))
+        }
+        func track(at point: CGPoint, cancel: @escaping () -> Void, update: @escaping (CGPoint) -> Void) {
+            guard let viewport else { return }
+            viewport.trackDrag(from: self, at: convert(point, to: viewport), cancel: cancel) { [weak self, weak viewport] point in
+                guard let self, let viewport else { return }
+                update(self.convert(point, from: viewport))
+            }
+        }
+        func endDrag() {
+            guard let viewport, viewport.dragOwner === self else { return }
+            viewport.endDrag()
+        }
+    }
+}
+
+extension NSView {
+    var calendarWeekViewport: CalendarWeekNativeViewport? {
+        var ancestor = superview
+        while let view = ancestor {
+            if let viewport = view as? CalendarWeekNativeViewport { return viewport }
+            ancestor = view.superview
+        }
+        return nil
     }
 }
 

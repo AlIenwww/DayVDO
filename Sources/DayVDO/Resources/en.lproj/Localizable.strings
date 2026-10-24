@@ -304,3 +304,14 @@
 "删除安排" = "Delete arrangements";
 
 "原日期：%@\n新日期：%@\n需要处理 %lld 段安排。\n\n仅处理新日期范围之外的安排，范围内的安排继续关联此待办。部分超出范围的跨日安排将整段处理。" = "Previous dates: %@\nNew dates: %@\n%lld arrangements need attention.\n\nOnly arrangements outside the new date range will be affected. Arrangements within the range will stay linked to this task. Overnight arrangements partially outside the range will be handled in full.";
+
+"全部日期" = "All dates";
+"明天" = "Tomorrow";
+"本周" = "This week";
+"下周" = "Next week";
+"本月" = "This month";
+"自定义范围" = "Custom range";
+
+"自定义" = "Custom";
+
+"更多" = "More";

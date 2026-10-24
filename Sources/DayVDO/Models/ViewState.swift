@@ -9,6 +9,7 @@ struct TodoFilterState: Hashable, Sendable {
     var priorities: Set<TodoItem.Priority> = []
     var urgencies: Set<TodoItem.Urgency> = []
     var overdueOnly = false
+    var date: TodoDateFilter = .any
 
     var activeCategoryCount: Int {
         [
@@ -17,7 +18,8 @@ struct TodoFilterState: Hashable, Sendable {
             includesUntagged || !tagIDs.isEmpty,
             !priorities.isEmpty,
             !urgencies.isEmpty,
-            overdueOnly
+            overdueOnly,
+            date != .any
         ].filter { $0 }.count
     }
 
@@ -36,7 +38,8 @@ struct TodoFilterState: Hashable, Sendable {
         _ item: TodoItem,
         showCompletedPreference: Bool,
         matchesSearch: Bool = true,
-        today: LocalDay? = nil
+        today: LocalDay? = nil,
+        startsOnMonday: Bool = true
     ) -> Bool {
         guard matchesSearch else { return false }
         let matchesStatus = statuses.isEmpty
@@ -62,6 +65,9 @@ struct TodoFilterState: Hashable, Sendable {
 
         if !priorities.isEmpty, !priorities.contains(item.priority) { return false }
         if !urgencies.isEmpty, !urgencies.contains(item.urgency) { return false }
+        if date != .any && !date.includes(item, today: today ?? LocalDay(.now), startsOnMonday: startsOnMonday) {
+            return false
+        }
         if overdueOnly {
             let referenceDay = today ?? LocalDay(.now)
             guard TaskDateRangePolicy.isOverdue(item, on: referenceDay, today: referenceDay) else { return false }
@@ -75,18 +81,20 @@ struct TodoFilterState: Hashable, Sendable {
 struct TodoFilterContext: Hashable, Sendable {
     let filter: TodoFilterState
     var showCompleted: Bool
-    let overdueReferenceDay: LocalDay?
+    let referenceDay: LocalDay?
+    let weekStartsOnMonday: Bool?
 
     init(filter: TodoFilterState = .init(), showCompleted: Bool,
-         today: LocalDay = LocalDay(.now)) {
+         today: LocalDay = LocalDay(.now), startsOnMonday: Bool = true) {
         self.filter = filter
         self.showCompleted = showCompleted
-        overdueReferenceDay = filter.overdueOnly ? today : nil
+        referenceDay = filter.overdueOnly || filter.date.usesRelativeDate ? today : nil
+        weekStartsOnMonday = filter.date.usesWeekStart ? startsOnMonday : nil
     }
 
     func includes(_ item: TodoItem) -> Bool {
         filter.includes(item, showCompletedPreference: showCompleted,
-                        today: overdueReferenceDay)
+                        today: referenceDay, startsOnMonday: weekStartsOnMonday ?? true)
     }
 }
 

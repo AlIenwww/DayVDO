@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 fileprivate final class ProjectHeightStorage: @unchecked Sendable {
     // SwiftUI Layout callbacks are not main-actor isolated. The lock protects
@@ -63,6 +64,7 @@ struct AllTodosView: View {
             var expanded: Set<UUID>
             var rendered: Set<UUID>
             var today: LocalDay
+            var startsOnMonday = true
             var locale: String
             var dynamicTypeSize: DynamicTypeSize
         }
@@ -79,6 +81,7 @@ struct AllTodosView: View {
             var filter: TodoFilterState
             var showCompleted: Bool
             var today: LocalDay
+            var startsOnMonday: Bool
             var locale: String
             var dynamicTypeSize: DynamicTypeSize
 
@@ -88,6 +91,7 @@ struct AllTodosView: View {
                 filter = key.filter
                 showCompleted = key.showCompleted
                 today = key.today
+                startsOnMonday = key.startsOnMonday
                 locale = key.locale
                 dynamicTypeSize = key.dynamicTypeSize
             }
@@ -125,9 +129,12 @@ struct AllTodosView: View {
     @State private var projectPendingDeletion: TodoProject?
     @State private var hoveredProjectID: UUID?
     @State private var dropTargetItemID: UUID?
+    @State private var dropTargetProjectEndID: UUID?
     @State private var isSearchPresented = false
     @FocusState private var focusedProjectAddButtonID: UUID?
     @FocusState private var focusedEntryID: String?
+    @State private var today = LocalDay(.now)
+    private let dayClock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     init(
         editingItem: Binding<TodoItem?>,
@@ -157,7 +164,7 @@ struct AllTodosView: View {
             revision: store.contentRevision, query: query, filter: filter,
             showCompleted: store.settings.showCompleted,
             expanded: visualExpandedProjectIDs, rendered: renderedProjectIDs,
-            today: LocalDay(.now), locale: L10n.locale.identifier,
+            today: today, startsOnMonday: store.settings.startWeekOnMonday, locale: L10n.locale.identifier,
             dynamicTypeSize: dynamicTypeSize
         ), build: makePresentationSnapshot)
         Group {
@@ -200,6 +207,10 @@ struct AllTodosView: View {
             }
         }
         .navigationTitle(L10n.string("总待办"))
+        .onReceive(dayClock) { _ in today = LocalDay(.now) }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in today = LocalDay(.now) }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in today = LocalDay(.now) }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in today = LocalDay(.now) }
         .searchable(
             text: $query,
             isPresented: $isSearchPresented,
@@ -382,9 +393,25 @@ struct AllTodosView: View {
                             dropTargetItemID = targeted ? item.id : nil
                         }
                 }
+                Color.clear
+                    .frame(height: 20)
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .top) {
+                        if dropTargetProjectEndID == project.id {
+                            Rectangle().fill(Color.accentColor).frame(height: 2)
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                    .padding(.leading, 28)
+                    .dropDestination(for: String.self) { values, _ in
+                        guard let rawID = values.first,
+                              let draggedID = UUID(uuidString: rawID) else { return false }
+                        return store.moveProjectItem(draggedID, before: nil, in: project.id)
+                    } isTargeted: { targeted in
+                        dropTargetProjectEndID = targeted ? project.id : nil
+                    }
             }
             .padding(.top, 5)
-            .padding(.bottom, 12)
         }
     }
 
@@ -550,7 +577,8 @@ struct AllTodosView: View {
             let matchesFilter = filter.includes(
                 item,
                 showCompletedPreference: store.settings.showCompleted,
-                matchesSearch: matchesQuery
+                matchesSearch: matchesQuery,
+                today: today, startsOnMonday: store.settings.startWeekOnMonday
             )
             return matchesFilter
         }
@@ -597,7 +625,8 @@ struct AllTodosView: View {
         return filter.includes(
             item,
             showCompletedPreference: store.settings.showCompleted,
-            matchesSearch: query.isEmpty || itemMatchesQuery(item)
+            matchesSearch: query.isEmpty || itemMatchesQuery(item),
+            today: today, startsOnMonday: store.settings.startWeekOnMonday
         )
     }
 

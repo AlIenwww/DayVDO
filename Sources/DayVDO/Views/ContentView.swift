@@ -4,8 +4,8 @@ import SwiftUI
 
 enum SidebarDestination: String, CaseIterable, Identifiable {
     case today
-    case all
     case calendar
+    case all
     case settings
 
     var id: String { rawValue }
@@ -47,8 +47,7 @@ struct ContentView: View {
     @State private var allTodosScrollPosition = ScrollPosition(y: 0)
     @State private var todayHourHeight: CGFloat = 90
     @State private var todayScrollMinute: CGFloat?
-    @State private var calendarWeekHourHeight: CGFloat = 90
-    @State private var calendarWeekScrollMinute: CGFloat?
+    @State private var calendarWeekPosition = CalendarWeekViewportPosition()
     @State private var calendarSelectedDate = Date.now
     @State private var calendarCurrentMonth = Date.now
     @State private var calendarInspectorPresented = false
@@ -105,8 +104,7 @@ struct ContentView: View {
                         columnVisibility: $columnVisibility,
                         selectedDate: $calendarSelectedDate,
                         currentMonth: $calendarCurrentMonth,
-                        weekHourHeight: $calendarWeekHourHeight,
-                        weekScrollMinute: $calendarWeekScrollMinute,
+                        weekPosition: calendarWeekPosition,
                         isInspectorPresented: $calendarInspectorPresented,
                         windowCache: calendarWindowCache,
                         weekCache: calendarWeekCache,
@@ -269,7 +267,8 @@ struct ContentView: View {
     private var displayedDestination: SidebarDestination { pagePresentation.displayedDestination }
 
     private var calendarFilterContext: TodoFilterContext {
-        .init(filter: calendarFilter, showCompleted: store.settings.showCompleted, today: calendarToday)
+        .init(filter: calendarFilter, showCompleted: store.settings.showCompleted,
+              today: calendarToday, startsOnMonday: store.settings.startWeekOnMonday)
     }
 
     private func refreshCalendarFilterDay() {
@@ -309,7 +308,7 @@ struct ContentView: View {
         cache.prepare(request, priority: priority)
         if isWeek {
             _ = calendarWeekPresentationCache.value(
-                for: .init(week: request.key.firstDay, revision: store.contentRevision,
+                for: .init(week: request.key.firstDay.adding(days: 21), revision: store.contentRevision,
                            visibility: calendarFilterContext),
                 schedules: store.schedules, preview: nil,
                 todo: { store.item(withID: $0) }
@@ -330,8 +329,8 @@ struct ContentView: View {
             )
             return CalendarWindowRequest(
                 key: CalendarWindowSnapshot.Key(
-                    revision: store.contentRevision, firstDay: week,
-                    lastDay: week.adding(days: 6),
+                    revision: store.contentRevision, firstDay: week.adding(days: -21),
+                    lastDay: week.adding(days: 27),
                     timeZoneIdentifier: calendar.timeZone.identifier,
                     firstWeekday: calendar.firstWeekday,
                     visibility: calendarFilterContext

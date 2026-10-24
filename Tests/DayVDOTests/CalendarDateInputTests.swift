@@ -4,6 +4,32 @@ import XCTest
 @testable import DayVDO
 
 final class CalendarDateInputTests: XCTestCase {
+    func testCompactWeekOccupancyPreservesFirstFreeLaneOrdering() {
+        let week = LocalDay(year: 2026, month: 10, day: 19)
+        let items = (0..<300).map { index in
+            let start = week.adding(days: index % 17 - 5)
+            return CalendarWindowSnapshot.Item(id: UUID(), startDay: start,
+                dueDay: start.adding(days: index % 12), title: "Task \(index)",
+                status: .notStarted, hasProject: false, tagColor: nil)
+        }
+        var occupied: [Set<Int>] = []
+        let expected: [Int] = items.compactMap { item in
+            guard item.startDay <= week.adding(days: 6), item.dueDay >= week else { return nil }
+            let columns = Set(max(0, week.distance(to: item.startDay))...min(6, week.distance(to: item.dueDay)))
+            let lane = occupied.firstIndex { $0.isDisjoint(with: columns) } ?? occupied.count
+            if lane == occupied.count { occupied.append(columns) }
+            else { occupied[lane].formUnion(columns) }
+            return lane
+        }
+        XCTAssertEqual(CalendarDatePolicy.segments(items, week: week).map(\.lane), expected)
+    }
+
+    func testVisibleLaneWindowIncludesOverscanAndHandlesBounce() {
+        XCTAssertEqual(CalendarDateLaneWindow.range(offset: 0, height: 100), 0..<8)
+        XCTAssertEqual(CalendarDateLaneWindow.range(offset: 204, height: 100), 7..<18)
+        XCTAssertEqual(CalendarDateLaneWindow.range(offset: -64, height: 100), 0..<5)
+    }
+
     func testExistingPreviewKeepsItsSavedLaneWhenItFits() {
         let week = LocalDay(year: 2026, month: 10, day: 5)
         let items = (0..<3).map { index in
@@ -30,6 +56,26 @@ final class CalendarDateInputTests: XCTestCase {
     }
 
     private let monday = LocalDay(year: 2026, month: 8, day: 31)
+
+    @MainActor
+    func testHostedWeeksKeepIndependentGeometryWithoutPublishingViewUpdates() {
+        let interaction = CalendarDateInteraction()
+        let first = CalendarDateInput.InputView(), second = CalendarDateInput.InputView()
+        first.interaction = interaction; second.interaction = interaction
+        let firstSource = CalendarDateHitRegionSource(), secondSource = CalendarDateHitRegionSource()
+        first.regionSource = firstSource; second.regionSource = secondSource
+        var invalidations = 0
+        let observation = interaction.objectWillChange.sink { invalidations += 1 }
+        let region = CalendarDateHitRegion(frame: CGRect(x: 20, y: 40, width: 100, height: 15),
+                                          target: .item(UUID(), startsHere: true, endsHere: true))
+        firstSource.regions = [region]
+        XCTAssertEqual(first.regions, [region])
+        XCTAssertTrue(second.regions.isEmpty)
+        interaction.hitRegions = []
+        XCTAssertEqual(first.regions, [region])
+        XCTAssertEqual(invalidations, 0)
+        withExtendedLifetime(observation) {}
+    }
 
     @MainActor
     func testGeometryChangesUpdateTheResponderWithoutInvalidatingDateRows() {

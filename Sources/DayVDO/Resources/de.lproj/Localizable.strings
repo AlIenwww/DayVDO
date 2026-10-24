@@ -222,3 +222,14 @@
 "删除安排" = "Zeitblöcke löschen";
 
 "原日期：%@\n新日期：%@\n需要处理 %lld 段安排。\n\n仅处理新日期范围之外的安排，范围内的安排继续关联此待办。部分超出范围的跨日安排将整段处理。" = "Bisherige Daten: %@\nNeue Daten: %@\n%lld Zeitblöcke müssen behandelt werden.\n\nNur Zeitblöcke außerhalb des neuen Datumsbereichs sind betroffen. Zeitblöcke innerhalb des Bereichs bleiben mit dieser Aufgabe verknüpft. Zeitblöcke über Mitternacht, die teilweise außerhalb liegen, werden vollständig behandelt.";
+
+"全部日期" = "Alle Daten";
+"明天" = "Morgen";
+"本周" = "Diese Woche";
+"下周" = "Nächste Woche";
+"本月" = "Dieser Monat";
+"自定义范围" = "Eigener Zeitraum";
+
+"自定义" = "Benutzerdefiniert";
+
+"更多" = "Mehr";

@@ -149,7 +149,7 @@ final class TodoStore: ObservableObject {
     private var recoverySnapshot: Snapshot?
     private var hasUnsavedChanges = false
 
-    init(fileURL: URL? = nil) {
+    init(fileURL: URL? = nil, loadsAsynchronously: Bool? = nil) {
         let resolvedURL = fileURL ?? Self.defaultFileURL
         if fileURL == nil {
             Self.migrateLegacyDataIfNeeded(to: resolvedURL)
@@ -157,7 +157,12 @@ final class TodoStore: ObservableObject {
         self.fileURL = resolvedURL
         persistenceWriter = PersistenceWriter(fileURL: resolvedURL)
         L10n.configure(language: settings.language)
-        if fileURL == nil {
+        if loadsAsynchronously ?? (fileURL == nil) {
+            // Read only preferences before any window is built. Decoding the
+            // task graph and rebuilding its indexes stays off the launch path.
+            isLoading = true
+            settings = Self.startupSettings(from: resolvedURL)
+            isLoading = false
             isInitialLoading = true
             Task { [weak self] in
                 let result = await Task.detached(priority: .userInitiated) {
@@ -168,6 +173,12 @@ final class TodoStore: ObservableObject {
         } else {
             applyLoadResult(PersistenceWriter.load(from: resolvedURL))
         }
+    }
+
+    private static func startupSettings(from fileURL: URL) -> AppSettings {
+        struct Preferences: Decodable { var settings: AppSettings? }
+        return (try? JSONDecoder().decode(Preferences.self,
+            from: Data(contentsOf: fileURL, options: .mappedIfSafe)))?.settings ?? AppSettings()
     }
 
     static var defaultFileURL: URL {
@@ -609,18 +620,19 @@ final class TodoStore: ObservableObject {
     }
 
     @discardableResult
-    func moveProjectItem(_ itemID: UUID, before targetID: UUID, in projectID: UUID) -> Bool {
+    func moveProjectItem(_ itemID: UUID, before targetID: UUID?, in projectID: UUID) -> Bool {
         guard itemID != targetID,
               let projectIndex = projects.firstIndex(where: { $0.id == projectID }) else { return false }
 
         let project = projects[projectIndex]
         var orderedIDs = items(in: project).map(\.id)
         guard let source = orderedIDs.firstIndex(of: itemID),
-              orderedIDs.contains(targetID) else { return false }
+              targetID.map({ orderedIDs.contains($0) }) ?? true else { return false }
 
         orderedIDs.remove(at: source)
-        guard let target = orderedIDs.firstIndex(of: targetID) else { return false }
+        let target = targetID.flatMap { orderedIDs.firstIndex(of: $0) } ?? orderedIDs.endIndex
         orderedIDs.insert(itemID, at: target)
+        guard orderedIDs != items(in: project).map(\.id) else { return false }
         return performUndoable(L10n.string("重新排序")) {
             var updatedItems = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
             for (order, id) in orderedIDs.enumerated() {

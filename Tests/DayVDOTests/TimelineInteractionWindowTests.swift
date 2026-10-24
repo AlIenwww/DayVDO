@@ -89,7 +89,8 @@ final class TimelineInteractionWindowTests: XCTestCase {
         fixture.probe.editingItem = fixture.item
         settle()
         let sheet = try XCTUnwrap(fixture.window.attachedSheet)
-        click(screenPoint(x: 440, yFromTop: 444, in: sheet), in: sheet)
+        // The date section now precedes the estimate row in this fixed-size editor.
+        click(screenPoint(x: 440, yFromTop: 398, in: sheet), in: sheet)
         settle()
         let picker = try XCTUnwrap(NSApp.windows.first { $0.isVisible && $0 !== fixture.window && $0 !== sheet })
         escape(in: picker)

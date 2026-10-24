@@ -1,5 +1,143 @@
 import SwiftUI
 
+/// Keep list input independent while its content shares the timeline's native
+/// scroll backdrop. Unhandled input goes to the page, bypassing the timeline.
+struct PlanningTodoViewport: NSViewRepresentable {
+    var panel: PlanningTodoPanel
+    var isDropTarget: Bool
+    var castsShadow: Bool
+
+    func makeNSView(context: Context) -> AnchorView {
+        let anchor = AnchorView()
+        updateNSView(anchor, context: context)
+        return anchor
+    }
+
+    func updateNSView(_ anchor: AnchorView, context: Context) {
+        anchor.content = { topInset in
+            AnyView(panel
+                .contentMargins(.top, topInset, for: .scrollContent)
+                .background(.background, ignoresSafeAreaEdges: [])
+                .overlay {
+                    if isDropTarget {
+                        Rectangle().fill(Color.accentColor.opacity(0.08))
+                            .overlay { Rectangle().strokeBorder(Color.accentColor, lineWidth: 2) }
+                            .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .leading) {
+                    Color(nsColor: .separatorColor).frame(width: 1)
+                }
+                .shadow(color: .black.opacity(castsShadow ? 0.08 : 0), radius: 8, x: -4)
+                .environment(\.self, context.environment))
+        }
+    }
+
+    static func dismantleNSView(_ anchor: AnchorView, coordinator: ()) {
+        anchor.detach()
+    }
+
+    /// The list stays inside the shared scroll surface, but its frame follows
+    /// native clip bounds immediately rather than a later SwiftUI scroll update.
+    final class AnchorView: NSView {
+        private let host = HostingView(rootView: AnyView(EmptyView()))
+        private weak var clipView: NSClipView?
+        private var topInset: CGFloat = 0
+        var content: ((CGFloat) -> AnyView)? {
+            didSet { updateContent() }
+        }
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            host.safeAreaRegions = []
+            host.sizingOptions = []
+            host.clipsToBounds = false
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            attachIfNeeded()
+        }
+
+        override func layout() {
+            super.layout()
+            attachIfNeeded()
+            updateViewport()
+        }
+
+        private func attachIfNeeded() {
+            guard window != nil, let clip = enclosingScrollView?.contentView else {
+                detach()
+                return
+            }
+            guard clipView !== clip else { return }
+            detach()
+            clipView = clip
+            clip.postsBoundsChangedNotifications = true
+            clip.postsFrameChangedNotifications = true
+            for name in [NSView.boundsDidChangeNotification, NSView.frameDidChangeNotification] {
+                NotificationCenter.default.addObserver(self, selector: #selector(viewportChanged(_:)),
+                                                       name: name, object: clip)
+            }
+            clip.addSubview(host, positioned: .above, relativeTo: clip.documentView)
+            updateViewport()
+        }
+
+        @objc private func viewportChanged(_ notification: Notification) {
+            updateViewport()
+        }
+
+        private func updateViewport() {
+            guard let clip = clipView else { return }
+            let inset = clip.enclosingScrollView?.contentInsets.top ?? 0
+            if topInset != inset {
+                topInset = inset
+                updateContent()
+            }
+            let width = min(bounds.width, clip.bounds.width)
+            let frame = NSRect(x: clip.bounds.maxX - width, y: clip.bounds.minY,
+                               width: width, height: clip.bounds.height)
+            if host.frame != frame { host.frame = frame }
+        }
+
+        private func updateContent() {
+            if let content { host.rootView = content(topInset) }
+        }
+
+        func detach() {
+            if let clip = clipView {
+                for name in [NSView.boundsDidChangeNotification, NSView.frameDidChangeNotification] {
+                    NotificationCenter.default.removeObserver(self, name: name, object: clip)
+                }
+            }
+            host.removeFromSuperview()
+            clipView = nil
+        }
+    }
+
+    final class HostingView: NSHostingView<AnyView> {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            routeInputToPage()
+        }
+
+        override func layout() {
+            super.layout()
+            routeInputToPage()
+        }
+
+        private func routeInputToPage() {
+            if let timeline = enclosingScrollView {
+                nextResponder = timeline.nextResponder
+            }
+        }
+    }
+}
+
 enum PlanningTodoSectionKind: String, CaseIterable, Identifiable {
     case unscheduled = "未安排"
     case scheduled = "已安排"
@@ -126,7 +264,7 @@ struct PlanningTodoPanel: View {
                 .animation(.snappy(duration: 0.28), value: sections)
                 .id(day)
             }
-            .scrollClipDisabled()
+            .scrollBounceBehavior(.always, axes: .vertical)
         }
         .onChange(of: day) { _, _ in selectedID = nil }
     }
@@ -242,12 +380,15 @@ private struct PlanningTodoRow: View {
                 }
 
                 HStack(spacing: 4) {
-                    Image(systemName: item.priority.symbolName)
-                        .foregroundStyle(item.priority.swiftUIColor)
+                    if item.priority != .none {
+                        Image(systemName: item.priority.symbolName)
+                            .foregroundStyle(item.priority.swiftUIColor)
+                    }
                     Text(L10n.string(item.priority.title))
                         .foregroundStyle(.secondary)
                 }
                 .lineLimit(1)
+                .padding(.trailing, 7)
             }
             .font(.caption)
             .fixedSize(horizontal: true, vertical: false)

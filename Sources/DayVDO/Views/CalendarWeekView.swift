@@ -4,11 +4,11 @@ import SwiftUI
 struct CalendarWeekView: View {
     @EnvironmentObject private var store: TodoStore
     @EnvironmentObject private var selection: CalendarTodoSelection
+    @Environment(\.colorScheme) private var colorScheme
     let calendar: Calendar
     let visibility: TodoFilterContext
     @Binding var selectedDate: Date
-    @Binding var hourHeight: CGFloat
-    @Binding var scrollMinute: CGFloat?
+    @Bindable var position: CalendarWeekViewportPosition
     @ObservedObject var windowCache: CalendarWindowCache
     let presentationCache: CalendarWeekPresentationCache
     var navigationID: UUID? = nil
@@ -22,7 +22,8 @@ struct CalendarWeekView: View {
     @AppStorage("calendarWeekTodoFraction") private var todoFraction = CalendarWeekSplitPolicy.defaultFraction
     @State private var firstVisibleDay: LocalDay?
     @State private var scrollingDay: LocalDay?
-    @State private var todoScrollOffset: CGFloat = 0
+    @State private var todoPosition = CalendarWeekTodoPosition()
+    @StateObject private var dateInteraction = CalendarDateInteraction()
 
     private var week: LocalDay {
         LocalDay(calendar.dateInterval(of: .weekOfYear, for: selectedDate)?.start ?? selectedDate,
@@ -40,16 +41,20 @@ struct CalendarWeekView: View {
 
     private var todoContentHeight: CGFloat {
         let snapshot = windowCache.snapshotForDisplay(matching: snapshotKey)
-        let lane = snapshot?.dateLayoutsByWeek.values.flatMap(\.segments).map(\.lane).max() ?? 0
-        return CGFloat(lane + 1) * CalendarTodoBar.laneHeight + 12
+        let lanes = snapshot?.dateLayoutsByWeek.values.map { $0.lanes.count }.max() ?? 1
+        return CGFloat(lanes) * CalendarTodoBar.laneHeight + 12
     }
 
     var body: some View {
         let firstDay = firstVisibleDay ?? week
-        let visibleDay = scrollingDay ?? firstDay
         CalendarWeekDateViewport(week: week, firstDay: firstDay, leadingInset: 54,
             navigationID: navigationID,
             navigationDay: navigationDate.map { LocalDay($0, timeZone: calendar.timeZone) },
+            contentVersion: CalendarWeekContentVersion(
+                revision: store.contentRevision, visibility: visibility, selectedDay: LocalDay(selectedDate),
+                hourHeight: position.hourHeight, todoFraction: todoFraction,
+                snapshot: windowCache.snapshot?.key, minimumContentHeight: todoContentHeight,
+                locale: L10n.locale.identifier, isDark: colorScheme == .dark),
             axis: AnyView(CalendarWeekSplitView(fraction: $todoFraction, showsDividerControl: false) {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: 64)
@@ -57,7 +62,7 @@ struct CalendarWeekView: View {
                     Spacer(minLength: 0)
                 }
             } bottom: {
-                CalendarWeekTimeAxis(hourHeight: hourHeight, scrollMinute: $scrollMinute)
+                CalendarWeekTimeAxis(hourHeight: position.hourHeight, scrollMinute: $position.scrollMinute)
             }),
             visibleDayChanged: { day in
                 scrollingDay = day
@@ -67,20 +72,25 @@ struct CalendarWeekView: View {
                 selection.selectedID = nil
             }) { pageWeek in
                 CalendarWeekPage(calendar: calendar, visibility: visibility,
-                    selectedDate: $selectedDate, hourHeight: $hourHeight, scrollMinute: $scrollMinute,
+                    selectedDate: $selectedDate, hourHeight: $position.hourHeight, scrollMinute: $position.scrollMinute,
                     windowCache: windowCache, presentationCache: presentationCache,
                     createTodo: createTodo, changeTodo: changeTodo, editTodo: editTodo, showMore: showMore,
-                    week: pageWeek, isActive: pageWeek <= visibleDay.adding(days: 7)
-                        && pageWeek.adding(days: 6) >= visibleDay.adding(days: -1),
-                    todoFraction: $todoFraction, todoScrollOffset: $todoScrollOffset,
+                    week: pageWeek,
+                    todoFraction: $todoFraction, todoPosition: todoPosition,
                     minimumTodoContentHeight: todoContentHeight)
+                    .environmentObject(dateInteraction)
                     .environmentObject(store).environmentObject(selection)
             }
             .id(CalendarViewportIdentity(firstWeekday: calendar.firstWeekday,
                                          timeZoneIdentifier: calendar.timeZone.identifier))
         .overlay { CalendarWeekDivider(fraction: $todoFraction) }
         .task(id: snapshotKey) {
-            windowCache.prepare(.init(key: snapshotKey, items: store.items, tags: store.tags))
+            var nearby = snapshotKey
+            nearby.firstDay = cacheWeek.adding(days: -7)
+            nearby.lastDay = cacheWeek.adding(days: 13)
+            if !windowCache.hasSnapshot(covering: nearby) {
+                windowCache.prepare(.init(key: snapshotKey, items: store.items, tags: store.tags))
+            }
         }
         .onChange(of: selectedDate) { _, date in
             let day = LocalDay(date, timeZone: calendar.timeZone)
@@ -88,12 +98,26 @@ struct CalendarWeekView: View {
         }
         .onChange(of: calendar.firstWeekday) { _, _ in firstVisibleDay = week }
         .onChange(of: calendar.timeZone.identifier) { _, _ in firstVisibleDay = week }
+        .onDisappear { dateInteraction.release() }
     }
+}
+
+private struct CalendarWeekContentVersion: Hashable {
+    var revision: UInt64
+    var visibility: TodoFilterContext
+    var selectedDay: LocalDay
+    var hourHeight: CGFloat
+    var todoFraction: Double
+    var snapshot: CalendarWindowSnapshot.Key?
+    var minimumContentHeight: CGFloat
+    var locale: String
+    var isDark: Bool
 }
 
 private struct CalendarWeekPage: View {
     @EnvironmentObject private var selection: CalendarTodoSelection
     @EnvironmentObject private var store: TodoStore
+    @EnvironmentObject private var activity: CalendarWeekPageActivity
     let calendar: Calendar
     let visibility: TodoFilterContext
     @Binding var selectedDate: Date
@@ -106,12 +130,11 @@ private struct CalendarWeekPage: View {
     var editTodo: (TodoItem) -> Void
     var showMore: (LocalDay) -> Void
     let week: LocalDay
-    let isActive: Bool
     @Binding var todoFraction: Double
-    @Binding var todoScrollOffset: CGFloat
+    let todoPosition: CalendarWeekTodoPosition
     let minimumTodoContentHeight: CGFloat
-    @State private var todoPosition = ScrollPosition()
-    @StateObject private var interaction = CalendarDateInteraction()
+    @EnvironmentObject private var interaction: CalendarDateInteraction
+    private var isActive: Bool { activity.isActive }
 
     private var snapshotKey: CalendarWindowSnapshot.Key {
         .init(revision: store.contentRevision, firstDay: week,
@@ -119,7 +142,10 @@ private struct CalendarWeekPage: View {
               firstWeekday: calendar.firstWeekday, visibility: visibility)
     }
 
-    private func contentHeight(for items: [CalendarWindowSnapshot.Item]) -> CGFloat {
+    private func contentHeight(for items: [CalendarWindowSnapshot.Item], layout: CalendarDateLayout?) -> CGFloat {
+        if interaction.drag == nil, selection.draft == nil, let layout {
+            return CGFloat(layout.lanes.count) * CalendarTodoBar.laneHeight + 12
+        }
         var values = items
         if let draft = selection.draft, let start = draft.startDay, let end = draft.dueDay {
             values.insert(.init(id: draft.id, startDay: start, dueDay: end, title: "", status: .notStarted,
@@ -163,60 +189,95 @@ private struct CalendarWeekPage: View {
     var body: some View {
         let snapshot = windowCache.snapshotForDisplay(matching: snapshotKey)
         let items = snapshot?.items(inWeek: week) ?? []
-        let rowHeight = max(minimumTodoContentHeight, contentHeight(for: items))
+        let rowHeight = max(minimumTodoContentHeight,
+                            contentHeight(for: items, layout: snapshot?.dateLayoutsByWeek[week]))
         CalendarWeekSplitView(fraction: $todoFraction, showsDividerControl: false) {
-            GeometryReader { datesGeometry in
-                ScrollView(.vertical) {
-                    CalendarDateWeekRow(interaction: interaction, week: week,
-                        selected: LocalDay(selectedDate), month: week.month,
-                        items: items, visibility: visibility, showsDates: false, maxLanes: Int.max,
-                        preparedLayout: snapshot?.dateLayoutsByWeek[week],
-                        select: { selectedDate = $0.date() }, showMore: showMore, edit: editTodo)
-                        .frame(height: max(rowHeight, datesGeometry.size.height))
-                }
-                .scrollPosition($todoPosition)
-                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, offset in
-                    if isActive && abs(offset - todoScrollOffset) > 1 { todoScrollOffset = offset }
-                }
-                .onChange(of: todoScrollOffset) { _, offset in todoPosition.scrollTo(y: offset) }
-                .onAppear { todoPosition.scrollTo(y: todoScrollOffset) }
-                .scrollClipDisabled()
-                // Keep the native toolbar's sampling area while clipping at the divider.
-                .padding(.top, max(0, datesGeometry.frame(in: .global).minY))
-                .clipped()
-                .padding(.top, -max(0, datesGeometry.frame(in: .global).minY))
-                .scrollIndicators(.hidden)
-                .scrollDisabled(interaction.drag != nil || interaction.suppressed)
-                .coordinateSpace(name: "calendarDateViewport")
-                .onPreferenceChange(CalendarWeekFrames.self) { interaction.frames = $0 }
-                .onPreferenceChange(CalendarDateHitRegions.self) { regions in
-                    let updated = regions.keys.sorted().flatMap { regions[$0] ?? [] }
-                    if interaction.hitRegions != updated { interaction.hitRegions = updated }
-                }
-                .onAppear { interaction.viewport = datesGeometry.size }
-                .onChange(of: datesGeometry.size) { _, size in
-                    if interaction.drag != nil { interaction.cancel() }
-                    interaction.viewport = size
-                }
-                .overlay {
-                    CalendarDateInput(interaction: interaction, store: store,
-                        select: { selectedDate = $0.date() }, showMore: showMore,
-                        create: createTodo, change: changeTodo, edit: editTodo)
-                }
-            }
+            CalendarWeekTodoViewport(interaction: interaction, week: week,
+                selectedDate: $selectedDate, items: items, visibility: visibility,
+                preparedLayout: snapshot?.dateLayoutsByWeek[week], rowHeight: rowHeight,
+                position: todoPosition, isActive: isActive,
+                createTodo: createTodo, changeTodo: changeTodo, editTodo: editTodo, showMore: showMore)
             .pageTopBar { weekdayHeader }
         } bottom: {
             CalendarWeekTimeline(week: week, visibility: visibility, hourHeight: $hourHeight,
                 scrollMinute: $scrollMinute, presentationCache: presentationCache,
                 isActive: isActive, gutter: 0, synchronizesScrolling: true, editTodo: editTodo)
         }
-        .onChange(of: week) { _, _ in interaction.release() }
         .onChange(of: visibility) { _, _ in
             if NSEvent.pressedMouseButtons & 1 != 0 { interaction.cancel() }
             else { interaction.release() }
             interaction.hitRegions = []
         }
-        .onDisappear { interaction.release() }
+    }
+}
+
+private struct CalendarWeekTodoViewport: View {
+    @EnvironmentObject private var store: TodoStore
+    @ObservedObject var interaction: CalendarDateInteraction
+    let week: LocalDay
+    @Binding var selectedDate: Date
+    let items: [CalendarWindowSnapshot.Item]
+    let visibility: TodoFilterContext
+    let preparedLayout: CalendarDateLayout?
+    let rowHeight: CGFloat
+    @Bindable var position: CalendarWeekTodoPosition
+    let isActive: Bool
+    var createTodo: (LocalDay, LocalDay) -> Void
+    var changeTodo: (TodoItem) -> Void
+    var editTodo: (TodoItem) -> Void
+    var showMore: (LocalDay) -> Void
+    @State private var nativePosition = ScrollPosition()
+    @State private var visibleLanes: Range<Int>?
+    @State private var regionSource = CalendarDateHitRegionSource()
+    @State private var clippingTopInset: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { datesGeometry in
+            ScrollView(.vertical) {
+                CalendarDateWeekRow(interaction: interaction, week: week,
+                    selected: LocalDay(selectedDate), month: week.month,
+                    items: items, visibility: visibility, showsDates: false, maxLanes: Int.max,
+                    preparedLayout: preparedLayout,
+                    visibleLanes: visibleLanes ?? CalendarDateLaneWindow.range(
+                        offset: position.offset, height: datesGeometry.size.height),
+                    select: { selectedDate = $0.date() }, showMore: showMore, edit: editTodo)
+                    .frame(height: max(rowHeight, datesGeometry.size.height))
+            }
+            .scrollPosition($nativePosition)
+            .onScrollGeometryChange(for: Range<Int>.self) {
+                CalendarDateLaneWindow.range(offset: $0.contentOffset.y, height: $0.containerSize.height)
+            } action: { _, range in
+                if visibleLanes != range { visibleLanes = range }
+            }
+            .onScrollGeometryChange(for: CGFloat.self) {
+                $0.contentOffset.y + $0.contentInsets.top
+            } action: { _, offset in
+                if isActive && abs(offset - position.offset) > 1 { position.offset = offset }
+            }
+            .onChange(of: position.offset) { _, offset in nativePosition.scrollTo(y: offset) }
+            .onAppear { nativePosition.scrollTo(y: position.offset) }
+            .scrollClipDisabled()
+            // Keep the native toolbar's sampling area while clipping at the divider.
+            .padding(.top, clippingTopInset)
+            .clipped()
+            .padding(.top, -clippingTopInset)
+            .scrollIndicators(.hidden)
+            .scrollDisabled(interaction.drag != nil || interaction.suppressed)
+            .coordinateSpace(name: "calendarDateViewport")
+            .onPreferenceChange(CalendarDateHitRegions.self) { regions in
+                let updated = regions.keys.sorted().flatMap { regions[$0] ?? [] }
+                regionSource.regions = updated
+            }
+            .overlay {
+                CalendarDateInput(interaction: interaction, store: store,
+                    regionSource: regionSource,
+                    select: { selectedDate = $0.date() }, showMore: showMore,
+                    create: createTodo, change: changeTodo, edit: editTodo)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { max(0, $0.frame(in: .global).minY) } action: { _, top in
+            clippingTopInset = top
+        }
     }
 }
 

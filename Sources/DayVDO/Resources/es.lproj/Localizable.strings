@@ -222,3 +222,14 @@
 "删除安排" = "Eliminar bloques";
 
 "原日期：%@\n新日期：%@\n需要处理 %lld 段安排。\n\n仅处理新日期范围之外的安排，范围内的安排继续关联此待办。部分超出范围的跨日安排将整段处理。" = "Fechas anteriores: %@\nFechas nuevas: %@\nHay %lld bloques que requieren atención.\n\nSolo se modificarán los bloques fuera del nuevo intervalo de fechas. Los bloques dentro del intervalo seguirán vinculados a esta tarea. Los bloques que cruzan la medianoche y quedan parcialmente fuera del intervalo se tratarán por completo.";
+
+"全部日期" = "Todas las fechas";
+"明天" = "Mañana";
+"本周" = "Esta semana";
+"下周" = "Próxima semana";
+"本月" = "Este mes";
+"自定义范围" = "Rango personalizado";
+
+"自定义" = "Personalizado";
+
+"更多" = "Más";

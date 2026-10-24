@@ -55,7 +55,7 @@ struct DayTimelineView: View {
     @State private var position = ScrollPosition(y: 0)
     @State private var scrollOffset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 400
-    @State private var topContentInset: CGFloat = 0
+    @State private var maximumScrollOffset: CGFloat = 0
     @State private var viewportWidth: CGFloat = 400
     @State private var isViewportReady = false
     @State private var needsInitialPosition = true
@@ -124,11 +124,6 @@ struct DayTimelineView: View {
             ScrollView(.vertical) {
                 ZStack(alignment: .topLeading) {
                     grid(width: timelineWidth)
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .frame(width: max(1, timelineWidth - gutter), height: hourHeight * 24)
-                        .offset(x: gutter)
-                        .gesture(creationGesture)
                     if day == LocalDay(now) {
                         let lineY = CGFloat(currentMinute) * pixelsPerMinute
                         Rectangle()
@@ -169,35 +164,21 @@ struct DayTimelineView: View {
                             .allowsHitTesting(false)
                     }
                     if let trailingPanel {
-                        // Include the list in the toolbar's native content
-                        // sampling, while counteracting the timeline's scrolling.
-                        // Its viewport must include the toolbar too: otherwise
-                        // LazyVStack evicts fully covered cards before they have
-                        // scrolled out from behind the translucent material.
-                        trailingPanel
-                            .contentMargins(.top, topContentInset, for: .scrollContent)
-                            .frame(width: trailingPanelWidth, height: geometry.size.height + topContentInset)
-                            .background(.background, ignoresSafeAreaEdges: [])
-                            .overlay {
-                                if isReturningToList {
-                                    Rectangle().fill(Color.accentColor.opacity(0.08))
-                                        .overlay { Rectangle().strokeBorder(Color.accentColor, lineWidth: 2) }
-                                        .allowsHitTesting(false)
-                                }
-                            }
-                            .overlay(alignment: .leading) {
-                                Color(nsColor: .separatorColor).frame(width: 1)
-                            }
-                            .shadow(color: .black.opacity(reservedTrailingWidth == 0 ? 0.08 : 0),
-                                    radius: 8, x: -4)
-                            .offset(x: geometry.size.width - trailingPanelWidth,
-                                    y: scrollOffset - 12 - topContentInset)
-                            .zIndex(1)
+                        PlanningTodoViewport(panel: trailingPanel, isDropTarget: isReturningToList,
+                                             castsShadow: reservedTrailingWidth == 0)
+                            .frame(width: trailingPanelWidth, height: 1)
                     }
                 }
                 .frame(width: timelineWidth, height: hourHeight * 24, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 12)
+                .background(alignment: .topLeading) {
+                    Color.clear
+                        .frame(width: max(1, timelineWidth - gutter))
+                        .contentShape(Rectangle())
+                        .offset(x: gutter)
+                        .gesture(creationGesture)
+                }
 
             }
             .contentMargins(.trailing, reservedTrailingWidth, for: .scrollIndicators)
@@ -252,11 +233,13 @@ struct DayTimelineView: View {
             }
             .onScrollGeometryChange(for: TodayTimelineViewport.self) { value in
                 TodayTimelineViewport(offset: value.contentOffset.y + value.contentInsets.top,
-                                      height: value.containerSize.height, topInset: value.contentInsets.top)
+                                      height: value.containerSize.height,
+                                      maximumOffset: max(0, value.contentSize.height + value.contentInsets.top
+                                          + value.contentInsets.bottom - value.containerSize.height))
             } action: { _, value in
                 scrollOffset = value.offset
                 viewportHeight = value.height
-                topContentInset = value.topInset
+                maximumScrollOffset = value.maximumOffset
                 isViewportReady = value.height > 0
                 applyInitialPositionIfReady()
             }
@@ -775,7 +758,7 @@ struct DayTimelineView: View {
                 pointerX = value.location.x; pointerY = value.location.y
                 updatePreview()
                 let movement = value.translation.height + scrollOffset - interaction.originOffset
-                let range = abs(movement) < 4 ? start..<(start + 30) : createRange
+                let range = abs(movement) < 4 ? TimelineCreationPolicy.defaultRange(anchoredAt: start) : createRange
                 guard let range else { return }
                 let horizontal = horizontalPosition
                 let anchor = value.location
@@ -887,7 +870,7 @@ struct DayTimelineView: View {
         guard !isReturningToList, let pointerY, interaction != nil || externalActive else { return }
         let direction: CGFloat = pointerY < 36 ? -1 : (pointerY > viewportHeight - 36 ? 1 : 0)
         guard direction != 0 else { return }
-        let target = min(max(0, hourHeight * 24 + 24 - viewportHeight), max(0, scrollOffset + direction * 12))
+        let target = min(maximumScrollOffset, max(0, scrollOffset + direction * 12))
         scrollOffset = target
         position.scrollTo(y: target)
         updatePreview()
@@ -908,7 +891,7 @@ struct DayTimelineView: View {
     private func locate() {
         let minute = DayPlanningPolicy.initialScrollMinute(schedules: store.schedules, on: day, now: now)
         let target = min(CGFloat(minute) * pixelsPerMinute,
-                         max(0, hourHeight * 24 + 24 - viewportHeight))
+                         maximumScrollOffset)
         scrollOffset = target
         position.scrollTo(y: target)
     }
@@ -944,7 +927,7 @@ struct DayTimelineView: View {
 private struct TodayTimelineViewport: Equatable {
     var offset: CGFloat
     var height: CGFloat
-    var topInset: CGFloat
+    var maximumOffset: CGFloat
 }
 
 struct TimelineControlScrollMonitor: NSViewRepresentable {

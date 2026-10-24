@@ -13,8 +13,7 @@ struct CalendarView: View {
     @AppStorage("calendarDisplayMode") private var displayMode = CalendarDisplayMode.month.rawValue
     @StateObject private var selection = CalendarTodoSelection()
     @State private var dateChange: TodoStore.DateChangeConfirmation?
-    @Binding var weekHourHeight: CGFloat
-    @Binding var weekScrollMinute: CGFloat?
+    let weekPosition: CalendarWeekViewportPosition
     @State private var navigationRequest: CalendarNavigationRequest?
     @State private var visibleWeekFirstDay: LocalDay?
     @State private var isDatePickerPresented = false
@@ -43,7 +42,7 @@ struct CalendarView: View {
             if displayMode == CalendarDisplayMode.week.rawValue {
                 CalendarWeekView(
                     calendar: calendar, visibility: visibility, selectedDate: $selectedDate,
-                    hourHeight: $weekHourHeight, scrollMinute: $weekScrollMinute,
+                    position: weekPosition,
                     windowCache: weekCache,
                     presentationCache: weekPresentationCache,
                     navigationID: navigationRequest?.id, navigationDate: navigationRequest?.date,

@@ -10,14 +10,21 @@ enum TimelineCreationPolicy {
     }
 
     static func startMinute(at minute: Double, boundaries: [Int], pointsPerMinute: Double) -> Int {
-        snapped(minute, boundaries: boundaries, pointsPerMinute: pointsPerMinute, within: 0...1435)
+        snapped(minute, boundaries: boundaries, pointsPerMinute: pointsPerMinute, within: 0...1440)
+    }
+
+    static func defaultRange(anchoredAt start: Int) -> Range<Int> {
+        if start > 1435 { return (start - 30)..<start }
+        return start..<min(1440, start + 30)
     }
 
     /// The fixed anchor can be off-grid; the moving edge follows the absolute
     /// pointer time, not a delta added to the snapped anchor.
     static func range(from origin: Double, anchoredAt start: Int, to minute: Double,
                       boundaries: [Int], pointsPerMinute: Double) -> Range<Int> {
-        if minute < origin, start >= 5 {
+        // At midnight the anchor is the ending edge. Keep even a horizontal
+        // or outward drag inside the day, with room for at least five minutes.
+        if (minute < origin || start > 1435) && start >= 5 {
             let end = snapped(minute, boundaries: boundaries, pointsPerMinute: pointsPerMinute,
                               within: 0...(start - 5))
             return end..<start

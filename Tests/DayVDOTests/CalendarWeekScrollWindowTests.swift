@@ -31,6 +31,59 @@ final class CalendarWeekScrollPolicyTests: XCTestCase {
 
 @MainActor
 final class CalendarWeekScrollWindowTests: XCTestCase {
+    func testDateTaskCanKeepDraggingAcrossWeeksAndCancelWithoutSaving() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DayVDO-WeekDrag-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TodoStore(fileURL: directory.appendingPathComponent("todos.json"))
+        let probe = WeekViewProbe()
+        let task = TodoItem(title: "Cross-week task", dueDate: probe.original.adding(days: 6).date())
+        store.upsert(task)
+        let cache = CalendarWindowCache()
+        let host = NSHostingView(rootView: WeekViewHarness(probe: probe, cache: cache, changeTodo: { store.upsert($0) })
+            .environmentObject(store).environmentObject(CalendarTodoSelection()))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 754, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        defer { cache.cancel(); window.contentView = nil; window.close() }
+        try await settle(host)
+        let viewport = try XCTUnwrap(findRouter(host)?.superview as? CalendarWeekNativeViewport)
+        let input = try XCTUnwrap(inputs(host).first { input in
+            input.regions.contains { if case let .item(id, _, _) = $0.target { return id == task.id }; return false }
+                && input.convert(input.bounds, to: viewport).intersects(viewport.bounds)
+        })
+        let source = try XCTUnwrap(input.regions.first { if case let .item(id, _, _) = $0.target { return id == task.id }; return false }?.frame)
+        let edge = CGPoint(x: viewport.bounds.maxX - 10,
+            y: input.convert(CGPoint(x: source.midX, y: source.midY), to: viewport).y)
+        input.pointerDown(at: CGPoint(x: source.midX, y: source.midY), clickCount: 1)
+        input.pointerDragged(to: input.convert(edge, from: viewport))
+        // A stationary pointer must advance without another mouse-drag event.
+        try await settle(host)
+        let targetDay = try XCTUnwrap(viewport.day(at: edge))
+        XCTAssertGreaterThan(targetDay, probe.original.adding(days: 6))
+        XCTAssertEqual(input.interaction?.drag?.range, targetDay...targetDay)
+        XCTAssertEqual(store.item(withID: task.id), task, "Hovering must only preview the move")
+        input.pointerUp(at: input.convert(edge, from: viewport))
+        XCTAssertEqual(store.item(withID: task.id)?.startDay, targetDay)
+        XCTAssertNil(viewport.dragOwner)
+        XCTAssertNil(input.interaction?.drag)
+        try await settle(host)
+
+        let current = try XCTUnwrap(inputs(host).first { $0.regions.contains {
+            if case let .item(id, _, _) = $0.target { return id == task.id }; return false
+        } && $0.convert($0.bounds, to: viewport).intersects(viewport.bounds) })
+        let frame = try XCTUnwrap(current.regions.first { if case let .item(id, _, _) = $0.target { return id == task.id }; return false }?.frame)
+        current.pointerDown(at: CGPoint(x: frame.midX, y: frame.midY), clickCount: 1)
+        current.pointerDragged(to: current.convert(edge, from: viewport))
+        current.cancelPress()
+        try await settle(host)
+        current.pointerUp(at: current.convert(edge, from: viewport))
+        XCTAssertEqual(store.item(withID: task.id)?.startDay, targetDay)
+        XCTAssertNil(viewport.dragOwner)
+        let saved = await store.flushPersistence()
+        XCTAssertTrue(saved)
+    }
+
     func testSlowNativeGestureMovesOneDayAndVerticalScrollStaysInItsPane() async throws {
         _ = NSApplication.shared
         let probe = WeekPagerProbe()
@@ -95,7 +148,7 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
         let day = probe.original.adding(days: 1)
         let task = TodoItem(title: "Tuesday marker", dueDate: day.date())
         store.upsert(task)
-        for number in 0..<18 {
+        for number in 0..<38 {
             store.upsert(TodoItem(title: "Same week task \(number)", dueDate: day.date()))
         }
         store.upsertSchedule(DaySchedule(startDay: day, startMinute: 540, durationMinutes: 45,
@@ -155,6 +208,8 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
         todoPane.contentView.scroll(to: CGPoint(x: 0, y: 100))
         todoPane.reflectScrolledClipView(todoPane.contentView)
         try await settle(host)
+        XCTAssertEqual(todoPane.contentView.bounds.minY, 100, accuracy: 1,
+                       "Synchronizing panes must not feed the fixed header inset back into the scroll offset")
         for pane in scrollViews(host).filter({ $0 !== axis && $0 !== pager && ($0.documentView?.bounds.height ?? 0) < 2000 && $0.convert($0.bounds, to: host).intersection(dateViewport).width > 1 }) {
             XCTAssertEqual(pane.contentView.bounds.minY, todoPane.contentView.bounds.minY, accuracy: 1,
                 "Empty and populated adjacent weeks share a vertical task viewport")
@@ -224,6 +279,37 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
         XCTAssertEqual(pager.contentView.bounds.minX / 700,
             (pager.contentView.bounds.minX / 700).rounded(), accuracy: 0.01)
         XCTAssertEqual(probe.original.distance(to: probe.firstDay) % 7, 0)
+    }
+
+    func testScrollOnlyRefreshReusesHostedWeeksAndContentChangesStillUpdateThem() {
+        _ = NSApplication.shared
+        let day = LocalDay(year: 2026, month: 10, day: 19)
+        var builds = 0
+        var input = CalendarWeekDateViewport(week: day, firstDay: day,
+            contentVersion: 1, settledAtDay: { _ in }) { _ in
+                builds += 1
+                return Color.clear
+            }
+        let coordinator = input.makeCoordinator()
+        let view = CalendarWeekNativeViewport(frame: CGRect(x: 0, y: 0, width: 700, height: 500))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = view
+        coordinator.attach(view)
+        coordinator.update(input, environment: EnvironmentValues())
+        view.layoutSubtreeIfNeeded()
+        defer { coordinator.stop(); window.contentView = nil; window.close() }
+        let initial = builds
+        XCTAssertGreaterThan(initial, 0)
+        for _ in 0..<20 { coordinator.update(input, environment: EnvironmentValues()) }
+        XCTAssertEqual(builds, initial, "A scroll binding update must not replace all week roots")
+        input.contentVersion = 2
+        coordinator.update(input, environment: EnvironmentValues())
+        XCTAssertGreaterThan(builds, initial)
+        let changed = builds
+        var disabled = EnvironmentValues()
+        disabled.isEnabled = false
+        coordinator.update(input, environment: disabled)
+        XCTAssertGreaterThan(builds, changed, "Native hosts must still receive changed environment values")
     }
 
     func testParentRefreshCannotUndoPendingProgrammaticWeekNavigation() async throws {
@@ -431,8 +517,15 @@ private final class WindowWheelEvent: NSEvent {
 private final class WeekViewProbe: ObservableObject {
     let original = LocalDay(year: 2026, month: 10, day: 12)
     @Published var selectedDate = LocalDay(year: 2026, month: 10, day: 12).date()
-    @Published var height: CGFloat = 90
-    @Published var minute: CGFloat? = 480
+    let position = CalendarWeekViewportPosition(scrollMinute: 480)
+    var height: CGFloat {
+        get { position.hourHeight }
+        set { position.hourHeight = newValue }
+    }
+    var minute: CGFloat? {
+        get { position.scrollMinute }
+        set { position.scrollMinute = newValue }
+    }
     @Published var visibleDay: LocalDay?
     @Published var navigationID: UUID?
     @Published var navigationDate: Date?
@@ -440,14 +533,15 @@ private final class WeekViewProbe: ObservableObject {
 private struct WeekViewHarness: View {
     @ObservedObject var probe: WeekViewProbe
     let cache: CalendarWindowCache
+    var changeTodo: (TodoItem) -> Void = { _ in }
     private let presentation = CalendarWeekPresentationCache()
     var body: some View {
         CalendarWeekView(calendar: AppCalendar.make(locale: L10n.locale, startsOnMonday: true),
             visibility: .init(showCompleted: true), selectedDate: $probe.selectedDate,
-            hourHeight: $probe.height, scrollMinute: $probe.minute,
+            position: probe.position,
             windowCache: cache, presentationCache: presentation,
             navigationID: probe.navigationID, navigationDate: probe.navigationDate,
             visibleRangeChanged: { if probe.visibleDay != $0 { probe.visibleDay = $0 } }, createTodo: { _, _ in },
-            changeTodo: { _ in }, editTodo: { _ in }, showMore: { _ in })
+            changeTodo: changeTodo, editTodo: { _ in }, showMore: { _ in })
     }
 }
