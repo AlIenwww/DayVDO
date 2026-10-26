@@ -130,6 +130,44 @@ final class CalendarWindowSnapshotTests: XCTestCase {
         XCTAssertNil(cache.snapshotForDisplay(matching: filteredKey))
     }
 
+    func testWindowBucketsMatchCalendarAcrossDSTAndWeekStarts() {
+        let first = LocalDay(year: 2026, month: 10, day: 25)
+        let last = first.adding(days: 20)
+        let tasks = (0..<80).map { index -> TodoItem in
+            var item = TodoItem(title: "Task \(index)", priority: TodoItem.Priority(rawValue: index % 4)!)
+            item.startDay = first.adding(days: index % 29 - 7)
+            item.dueDay = item.startDay?.adding(days: index % 17)
+            return item
+        }
+        for zone in ["America/Los_Angeles", "Europe/Berlin", "Asia/Shanghai"] {
+            for firstWeekday in [1, 2] {
+                let key = CalendarWindowSnapshot.Key(revision: 1, firstDay: first, lastDay: last,
+                    timeZoneIdentifier: zone, firstWeekday: firstWeekday, visibility: .init(showCompleted: true))
+                let snapshot = CalendarWindowSnapshot.build(key: key, items: tasks, tags: [])
+                let sorted = tasks.sorted(by: CalendarWindowSnapshot.areInIncreasingOrder)
+                var calendar = Calendar(identifier: .gregorian)
+                calendar.timeZone = TimeZone(identifier: zone)!
+                calendar.firstWeekday = firstWeekday
+                var expectedWeeks: Set<LocalDay> = []
+                for offset in 0...20 {
+                    let day = first.adding(days: offset)
+                    let expected = sorted.filter { $0.startDay! <= day && $0.dueDay! >= day }.map(\.id)
+                    XCTAssertEqual(snapshot.items(on: day).map(\.id), expected, "\(zone) \(day)")
+                    let date = day.date(timeZone: calendar.timeZone)
+                    let week = LocalDay(calendar.dateInterval(of: .weekOfYear, for: date)!.start, timeZone: calendar.timeZone)
+                    expectedWeeks.insert(week)
+                }
+                for week in expectedWeeks {
+                    let start = max(week, first)
+                    let end = min(week.adding(days: 6), last)
+                    let expected = sorted.filter { $0.startDay! <= end && $0.dueDay! >= start }.map(\.id)
+                    XCTAssertEqual(snapshot.items(inWeek: week).map(\.id), expected)
+                    XCTAssertEqual(snapshot.dateLayoutsByWeek[week]?.segments.map(\.id), expected)
+                }
+            }
+        }
+    }
+
     private func makeSnapshot(
         items: [TodoItem],
         tags: [TaskTag] = [],

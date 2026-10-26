@@ -126,7 +126,7 @@ struct CalendarView: View {
             if item == nil { selection.draft = nil }
         }
         .onChange(of: visibility) { _, _ in clearHiddenSelection() }
-        .onChange(of: store.contentRevision) { _, _ in
+        .onChange(of: store.dateContentRevision) { _, _ in
             clearHiddenSelection()
             if let draft = selection.draft, store.item(withID: draft.id) != nil { selection.draft = nil }
             if let id = selection.selectedID, store.item(withID: id) == nil { selection.selectedID = nil }
@@ -643,7 +643,7 @@ private struct CalendarTimeline: View {
             .task { prepareSnapshot() }
             .onChange(of: loadedWeekRange) { _, _ in prepareSnapshot() }
             .onChange(of: timelineAnchorWeek) { _, _ in prepareSnapshot() }
-            .onChange(of: store.contentRevision) { _, _ in prepareSnapshot() }
+            .onChange(of: store.dateContentRevision) { _, _ in prepareSnapshot() }
             .onChange(of: visibility) { _, _ in
                 if NSEvent.pressedMouseButtons & 1 != 0 { dateInteraction.cancel() }
                 else { dateInteraction.release() }
@@ -948,7 +948,7 @@ private struct CalendarTimeline: View {
         let lastDay = LocalDay(lastDate, timeZone: calendar.timeZone)
         return CalendarWindowRequest(
             key: CalendarWindowSnapshot.Key(
-                revision: store.contentRevision,
+                revision: store.dateContentRevision,
                 firstDay: firstDay,
                 lastDay: lastDay,
                 timeZoneIdentifier: calendar.timeZone.identifier,

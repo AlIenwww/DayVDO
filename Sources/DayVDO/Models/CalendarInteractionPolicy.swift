@@ -44,8 +44,8 @@ enum CalendarDatePolicy {
         let weekEnd = week.adding(days: 6)
         return items.compactMap { item in
             guard item.startDay <= weekEnd, item.dueDay >= week else { return nil }
-            let first = max(0, week.distance(to: item.startDay))
-            let last = min(6, week.distance(to: item.dueDay))
+            let first = item.startDay <= week ? 0 : week.distance(to: item.startDay)
+            let last = item.dueDay >= weekEnd ? 6 : week.distance(to: item.dueDay)
             let columns = UInt8(((1 << (last - first + 1)) - 1) << first)
             let lane = occupied.firstIndex { $0 & columns == 0 } ?? occupied.count
             if lane == occupied.count { occupied.append(columns) }

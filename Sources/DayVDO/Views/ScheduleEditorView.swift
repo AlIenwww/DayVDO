@@ -173,7 +173,7 @@ struct ScheduleEditorView: View {
         .padding(20)
         .frame(width: L10n.prefersCompactControls ? 340 : 400)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { wasStored = store.schedules.contains { $0.id == draft.id } }
+        .onAppear { wasStored = store.schedule(withID: draft.id) != nil }
         .onSubmit(saveAndClose)
         .editorReturnSubmission(submit: saveAndClose)
         .onReceive(NotificationCenter.default.publisher(for: .scheduleEditorSubmit)) { notification in
@@ -199,8 +199,8 @@ struct ScheduleEditorView: View {
     private func saveIfValid() -> Bool {
         guard let value = candidate, store.canModify else { return false }
         // Closing after deletion or Undo must not recreate a removed schedule.
-        guard !wasStored || store.schedules.contains(where: { $0.id == value.id }) else { return false }
-        return store.schedules.contains(value) || store.upsertSchedule(value)
+        guard !wasStored || store.schedule(withID: value.id) != nil else { return false }
+        return store.schedule(withID: value.id) == value || store.upsertSchedule(value)
     }
 }
 

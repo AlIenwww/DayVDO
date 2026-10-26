@@ -172,7 +172,7 @@ struct CalendarNativeMonthView: NSViewRepresentable {
                 let lower = min(CalendarNativeMonthGeometry.count - 30, max(0, top - 12))
                 range = lower..<(lower + 30)
             }
-            let key = CalendarWindowSnapshot.Key(revision: parent.store.contentRevision,
+            let key = CalendarWindowSnapshot.Key(revision: parent.store.dateContentRevision,
                 firstDay: week(range.lowerBound), lastDay: week(range.upperBound - 1).adding(days: 6),
                 timeZoneIdentifier: parent.calendar.timeZone.identifier,
                 firstWeekday: parent.calendar.firstWeekday, visibility: parent.visibility)
@@ -423,8 +423,13 @@ final class CalendarNativeScrollAnimator {
         run = Run(startTime: ProcessInfo.processInfo.systemUptime, from: from, to: to, curve: curve,
                   update: update, completion: completion)
         let timer = Timer(timeInterval: 1 / Double(max(30, framesPerSecond)), repeats: true) {
-            [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+            [weak self] timer in
+            let isActive = MainActor.assumeIsolated {
+                guard let self else { return false }
+                self.tick()
+                return true
+            }
+            if !isActive { timer.invalidate() }
         }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)

@@ -84,6 +84,26 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
         XCTAssertTrue(saved)
     }
 
+    func testHeldMouseButtonRejectsWheelWithoutChangingGestureOrPosition() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let router = CalendarWeekHorizontalScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+        router.columnWidth = 100
+        router.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 2100, height: 500))
+        window.contentView = router
+        defer { router.stop(); window.contentView = nil; window.close() }
+        let initial = router.contentView.bounds.origin
+        let event = wheel(dx: -20, dy: 0, phase: 1, in: window)
+        // The wheel events and mouse-button state belong to the same synthetic
+        // gesture. Real hardware activity must not alter its test input.
+        XCTAssertFalse(router.route(event, pressedMouseButtons: 1))
+        XCTAssertEqual(router.contentView.bounds.origin, initial)
+        XCTAssertTrue(router.route(event, pressedMouseButtons: 0))
+        XCTAssertGreaterThan(router.contentView.bounds.minX, initial.x)
+    }
+
     func testSlowNativeGestureMovesOneDayAndVerticalScrollStaysInItsPane() async throws {
         _ = NSApplication.shared
         let probe = WeekPagerProbe()
@@ -108,7 +128,7 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
                 let event = wheel(dx: step == 0 || step == 20 ? 0 : sign * 5.3, dy: 0,
                                   phase: step == 0 ? 1 : (step == 20 ? 4 : 2), in: window)
                 if step == 20 { XCTAssertEqual(event.phase, .ended) }
-                let handled = router.route(event)
+                let handled = router.route(event, pressedMouseButtons: 0)
                 if step > 0 { XCTAssertTrue(handled, "Window \(event.windowNumber) vs \(window.windowNumber), phase \(event.phase)") }
                 if !handled { pane.scrollWheel(with: event) }
                 try await Task.sleep(for: .milliseconds(30))
@@ -123,7 +143,7 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
         for step in 0...10 {
             let event = wheel(dx: 0, dy: step == 0 || step == 10 ? 0 : -25,
                               phase: step == 0 ? 1 : (step == 10 ? 4 : 2), in: window)
-            XCTAssertFalse(router.route(event))
+            XCTAssertFalse(router.route(event, pressedMouseButtons: 0))
             pane.scrollWheel(with: event)
             try await Task.sleep(for: .milliseconds(12))
         }
@@ -247,7 +267,7 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
         let router = try XCTUnwrap(findRouter(host))
         for step in 0...12 {
             _ = router.route(wheel(dx: step == 0 || step == 12 ? 0 : -8, dy: 0,
-                phase: step == 0 ? 1 : (step == 12 ? 4 : 2), in: window))
+                phase: step == 0 ? 1 : (step == 12 ? 4 : 2), in: window), pressedMouseButtons: 0)
             try await Task.sleep(for: .milliseconds(8))
         }
         try await settle(host)
@@ -255,7 +275,7 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
         XCTAssertEqual(pager.contentView.bounds.minX, 53 * 700, accuracy: 1)
         for step in 0...12 {
             _ = router.route(wheel(dx: step == 0 || step == 12 ? 0 : -50, dy: 0,
-                phase: step == 0 ? 1 : (step == 12 ? 4 : 2), in: window))
+                phase: step == 0 ? 1 : (step == 12 ? 4 : 2), in: window), pressedMouseButtons: 0)
             try await Task.sleep(for: .milliseconds(8))
         }
         let releasedX = pager.contentView.bounds.minX
@@ -266,7 +286,7 @@ final class CalendarWeekScrollWindowTests: XCTestCase {
             let event = wheel(dx: step == 30 ? 0 : -30, dy: 0, phase: 0,
                 momentum: step == 0 ? 1 : (step == 30 ? 3 : 2), in: window)
             if step == 30 { XCTAssertEqual(event.momentumPhase, .ended) }
-            XCTAssertTrue(router.route(event))
+            XCTAssertTrue(router.route(event, pressedMouseButtons: 0))
             if step < 30 {
                 pager.contentView.scroll(to: CGPoint(x: releasedX + CGFloat(step + 1) * 30, y: 0))
                 pager.reflectScrolledClipView(pager.contentView)

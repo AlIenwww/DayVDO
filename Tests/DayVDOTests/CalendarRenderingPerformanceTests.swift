@@ -37,7 +37,7 @@ final class CalendarRenderingPerformanceTests: XCTestCase {
         let store = TodoStore(fileURL: file)
         let cache = CalendarWindowCache()
         let calendar = AppCalendar.make(locale: L10n.locale, startsOnMonday: true)
-        let key = CalendarWindowSnapshot.Key(revision: store.contentRevision,
+        let key = CalendarWindowSnapshot.Key(revision: store.dateContentRevision,
             firstDay: monday.adding(days: -21), lastDay: monday.adding(days: 27),
             timeZoneIdentifier: calendar.timeZone.identifier, firstWeekday: 2,
             visibility: .init(showCompleted: true))

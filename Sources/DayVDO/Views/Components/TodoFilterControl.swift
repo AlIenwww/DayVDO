@@ -52,6 +52,8 @@ struct TodoFilterPopover: View {
     }
 
     var body: some View {
+        let sortedProjects = self.sortedProjects
+        let sortedTags = store.sortedTags
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(L10n.string("筛选"))
@@ -178,7 +180,7 @@ struct TodoFilterPopover: View {
                                     filter.includesUntagged.toggle()
                                 }
 
-                                ForEach(store.sortedTags) { tag in
+                                ForEach(sortedTags) { tag in
                                     filterListChoice(
                                         title: tag.name,
                                         isSelected: filter.tagIDs.contains(tag.id),
@@ -189,8 +191,8 @@ struct TodoFilterPopover: View {
                                 }
                             }
                         }
-                        .scrollIndicators(store.sortedTags.count > 3 ? .visible : .hidden)
-                        .frame(height: listHeight(itemCount: store.sortedTags.count + 1))
+                        .scrollIndicators(sortedTags.count > 3 ? .visible : .hidden)
+                        .frame(height: listHeight(itemCount: sortedTags.count + 1))
                     }
 
                     filterSection(L10n.string("重要度")) {

@@ -8,34 +8,20 @@ private struct EditorReturnSubmission: NSViewRepresentable {
     var submit: () -> Void
 
     func makeNSView(context: Context) -> MonitorView { MonitorView() }
-    func updateNSView(_ view: MonitorView, context: Context) { view.enabled = enabled; view.submit = submit }
+    func updateNSView(_ view: MonitorView, context: Context) { view.submit = submit; view.enabled = enabled }
     static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.stop() }
 
-    final class MonitorView: NSView {
+    final class MonitorView: WindowKeyMonitorView {
         var submit: () -> Void = {}
-        var enabled = true
-        private var monitor: Any?
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            stop()
-            guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.enabled, let window = self.window, event.window === window,
-                      window.attachedSheet == nil, event.keyCode == 36 || event.keyCode == 76,
-                      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return event }
-                // Return must confirm an active input method before saving.
-                if let editor = window.firstResponder as? NSTextView, editor.hasMarkedText() { return event }
-                guard window.makeFirstResponder(nil) else { return event }
-                DispatchQueue.main.async { [weak self] in self?.submit() }
-                return nil
-            }
-        }
-
-        func stop() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
+        override func handleKeyDown(_ event: NSEvent, in window: NSWindow) -> Bool {
+            guard event.keyCode == 36 || event.keyCode == 76,
+                  event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
+            // Return must confirm an active input method before saving.
+            if let editor = window.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
+            guard window.makeFirstResponder(nil) else { return false }
+            performDeferred { [weak self] in self?.submit() }
+            return true
         }
     }
 }

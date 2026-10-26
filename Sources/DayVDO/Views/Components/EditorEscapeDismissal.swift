@@ -10,33 +10,18 @@ private struct EditorEscapeDismissal: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MonitorView { MonitorView() }
     func updateNSView(_ view: MonitorView, context: Context) {
-        view.enabled = enabled
         view.cancel = cancel
+        view.enabled = enabled
     }
     static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.stop() }
 
-    final class MonitorView: NSView {
-        var enabled = true
+    final class MonitorView: WindowKeyMonitorView {
         var cancel: () -> Void = {}
-        private var monitor: Any?
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            stop()
-            guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.enabled, event.keyCode == 53,
-                      let window = self.window, event.window === window,
-                      window.attachedSheet == nil else { return event }
-                DispatchQueue.main.async { [weak self] in self?.cancel() }
-                return nil
-            }
-        }
-
-        func stop() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
+        override func handleKeyDown(_ event: NSEvent, in window: NSWindow) -> Bool {
+            guard event.keyCode == 53 else { return false }
+            performDeferred { [weak self] in self?.cancel() }
+            return true
         }
     }
 }

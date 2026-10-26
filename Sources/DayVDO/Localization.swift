@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 enum L10n {
     private static var language = AppLanguage.system
+    private static var bundles: [AppLanguage: Bundle] = [:]
 
     static func configure(language: AppLanguage) {
         self.language = language
@@ -38,6 +39,13 @@ enum L10n {
     }
 
     private static var localizedBundle: Bundle {
+        if let cached = bundles[language] { return cached }
+        let bundle = resolveBundle()
+        bundles[language] = bundle
+        return bundle
+    }
+
+    private static func resolveBundle() -> Bundle {
         guard let identifier = language.localizationIdentifier ?? systemLocalization,
               let path = resources.path(forResource: identifier, ofType: "lproj")
                 ?? resources.path(forResource: identifier.lowercased(), ofType: "lproj"),

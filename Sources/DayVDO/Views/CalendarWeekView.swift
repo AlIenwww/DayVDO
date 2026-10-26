@@ -34,7 +34,7 @@ struct CalendarWeekView: View {
         return week.adding(days: Int(floor(Double(week.distance(to: day)) / 7)) * 7)
     }
     private var snapshotKey: CalendarWindowSnapshot.Key {
-        .init(revision: store.contentRevision, firstDay: cacheWeek.adding(days: -21),
+        .init(revision: store.dateContentRevision, firstDay: cacheWeek.adding(days: -21),
               lastDay: cacheWeek.adding(days: 27), timeZoneIdentifier: calendar.timeZone.identifier,
               firstWeekday: calendar.firstWeekday, visibility: visibility)
     }
@@ -51,7 +51,7 @@ struct CalendarWeekView: View {
             navigationID: navigationID,
             navigationDay: navigationDate.map { LocalDay($0, timeZone: calendar.timeZone) },
             contentVersion: CalendarWeekContentVersion(
-                revision: store.contentRevision, visibility: visibility, selectedDay: LocalDay(selectedDate),
+                revision: store.timelineContentRevision, visibility: visibility, selectedDay: LocalDay(selectedDate),
                 hourHeight: position.hourHeight, todoFraction: todoFraction,
                 snapshot: windowCache.snapshot?.key, minimumContentHeight: todoContentHeight,
                 locale: L10n.locale.identifier, isDark: colorScheme == .dark),
@@ -137,7 +137,7 @@ private struct CalendarWeekPage: View {
     private var isActive: Bool { activity.isActive }
 
     private var snapshotKey: CalendarWindowSnapshot.Key {
-        .init(revision: store.contentRevision, firstDay: week,
+        .init(revision: store.dateContentRevision, firstDay: week,
               lastDay: week.adding(days: 6), timeZoneIdentifier: calendar.timeZone.identifier,
               firstWeekday: calendar.firstWeekday, visibility: visibility)
     }

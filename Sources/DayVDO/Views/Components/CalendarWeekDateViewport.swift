@@ -331,9 +331,9 @@ final class CalendarWeekHorizontalScrollView: NSScrollView {
         // Never convert them to a horizontal gesture.
         if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) { _ = route(event) }
     }
-    @discardableResult func route(_ event: NSEvent) -> Bool {
+    @discardableResult func route(_ event: NSEvent, pressedMouseButtons: Int = NSEvent.pressedMouseButtons) -> Bool {
         guard event.window === window, bounds.contains(convert(event.locationInWindow, from: nil)),
-              !event.modifierFlags.contains(.control), NSEvent.pressedMouseButtons == 0 else { return false }
+              !event.modifierFlags.contains(.control), pressedMouseButtons == 0 else { return false }
         let directBegin = event.phase.contains(.began) || event.phase.contains(.mayBegin)
         if directBegin {
             resetGesture(); ignoresMomentum = false

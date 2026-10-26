@@ -5,9 +5,9 @@ enum LocalizedControlSizing {
         clamped(maximumTextWidth(in: titles) + 58, minimum: 92, maximum: 176)
     }
 
-    static func segmentedWidth(for titles: [String]) -> CGFloat {
+    static func segmentedWidth(for titles: [String], minimumSegmentWidth: CGFloat = 70) -> CGFloat {
         guard !titles.isEmpty else { return 220 }
-        let segmentWidth = clamped(maximumTextWidth(in: titles) + 30, minimum: 70, maximum: 112)
+        let segmentWidth = clamped(maximumTextWidth(in: titles) + 30, minimum: minimumSegmentWidth, maximum: 112)
         return segmentWidth * CGFloat(titles.count)
     }
 

@@ -160,14 +160,20 @@ struct PlanningTodoSection: Identifiable, Equatable {
 enum PlanningTodoPanelPolicy {
     static func sections(items: [TodoItem], schedules: [DaySchedule], showCompleted: Bool) -> [PlanningTodoSection] {
         let scheduledIDs = Set(schedules.compactMap(\.todoID))
+        var unscheduled: [TodoItem] = [], scheduled: [TodoItem] = [], completed: [TodoItem] = []
+        for item in items {
+            if item.isCompleted {
+                if showCompleted { completed.append(item) }
+            } else if scheduledIDs.contains(item.id) {
+                scheduled.append(item)
+            } else {
+                unscheduled.append(item)
+            }
+        }
         return [
-            PlanningTodoSection(kind: .unscheduled, items: items.filter {
-                !$0.isCompleted && !scheduledIDs.contains($0.id)
-            }),
-            PlanningTodoSection(kind: .scheduled, items: items.filter {
-                !$0.isCompleted && scheduledIDs.contains($0.id)
-            }),
-            PlanningTodoSection(kind: .completed, items: showCompleted ? items.filter(\.isCompleted) : [])
+            PlanningTodoSection(kind: .unscheduled, items: unscheduled),
+            PlanningTodoSection(kind: .scheduled, items: scheduled),
+            PlanningTodoSection(kind: .completed, items: completed)
         ].filter { !$0.items.isEmpty }
     }
 }
@@ -193,6 +199,7 @@ struct PlanningTodoPanel: View {
     }
 
     var body: some View {
+        let sections = self.sections
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {

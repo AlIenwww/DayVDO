@@ -34,6 +34,31 @@ struct LocalDay: Hashable, Comparable, Sendable, Codable {
         ) ?? .distantPast
     }
 
+    // Date-only arithmetic must not follow the system time zone or DST.
+    private static let arithmeticCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
+    }()
+
+    private var arithmeticDate: Date {
+        Self.arithmeticCalendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12))
+            ?? .distantPast
+    }
+
+    func adding(days: Int) -> LocalDay {
+        guard days != 0 else { return self }
+        let calendar = Self.arithmeticCalendar
+        let date = calendar.date(byAdding: .day, value: days, to: arithmeticDate)!
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return LocalDay(year: parts.year!, month: parts.month!, day: parts.day!)
+    }
+
+    func distance(to other: LocalDay) -> Int {
+        guard self != other else { return 0 }
+        return Self.arithmeticCalendar.dateComponents([.day], from: arithmeticDate, to: other.arithmeticDate).day!
+    }
+
     static func < (lhs: LocalDay, rhs: LocalDay) -> Bool {
         (lhs.year, lhs.month, lhs.day) < (rhs.year, rhs.month, rhs.day)
     }

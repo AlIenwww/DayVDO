@@ -43,7 +43,6 @@ struct ContentView: View {
     @State private var allTodosFilter = TodoFilterState()
     @State private var calendarFilter = TodoFilterState()
     @State private var calendarToday = LocalDay(.now)
-    private let calendarDayClock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
     @State private var allTodosScrollPosition = ScrollPosition(y: 0)
     @State private var todayHourHeight: CGFloat = 90
     @State private var todayScrollMinute: CGFloat?
@@ -210,20 +209,10 @@ struct ContentView: View {
             if case .recoveryRequired = store.persistenceIssue {
                 isRecoveryPromptPresented = true
             }
-            updateLoadingIndicator()
             refreshCalendarFilterDay()
             sanitizeCalendarFilter()
         }
-        .onReceive(calendarDayClock) { _ in refreshCalendarFilterDay() }
-        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
-            refreshCalendarFilterDay()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshCalendarFilterDay()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
-            refreshCalendarFilterDay()
-        }
+        .onReceive(AppClock.refreshes) { _ in refreshCalendarFilterDay() }
         .onChange(of: store.projects) { _, _ in sanitizeCalendarFilter() }
         .onChange(of: store.tags) { _, _ in sanitizeCalendarFilter() }
         .onChange(of: store.persistenceIssue) { _, issue in
@@ -231,7 +220,13 @@ struct ContentView: View {
                 isRecoveryPromptPresented = true
             }
         }
-        .onChange(of: store.isInitialLoading) { _, _ in updateLoadingIndicator() }
+        .task(id: store.isInitialLoading) {
+            showsLoadingIndicator = false
+            guard store.isInitialLoading else { return }
+            do { try await Task.sleep(for: .milliseconds(150)) }
+            catch { return }
+            showsLoadingIndicator = store.isInitialLoading
+        }
         .task(id: calendarPrewarmTrigger) {
             guard !store.isInitialLoading else { return }
             try? await Task.sleep(for: .milliseconds(180))
@@ -284,7 +279,7 @@ struct ContentView: View {
 
     private var calendarPrewarmTrigger: CalendarPrewarmTrigger {
         CalendarPrewarmTrigger(
-            revision: store.contentRevision,
+            revision: store.dateContentRevision,
             visibility: calendarFilterContext,
             startsOnMonday: store.settings.startWeekOnMonday,
             timeZoneIdentifier: TimeZone.autoupdatingCurrent.identifier,
@@ -308,9 +303,9 @@ struct ContentView: View {
         cache.prepare(request, priority: priority)
         if isWeek {
             _ = calendarWeekPresentationCache.value(
-                for: .init(week: request.key.firstDay.adding(days: 21), revision: store.contentRevision,
+                for: .init(week: request.key.firstDay.adding(days: 21), revision: store.timelineContentRevision,
                            visibility: calendarFilterContext),
-                schedules: store.schedules, preview: nil,
+                schedulesOnDay: { store.schedules(on: $0) }, preview: nil,
                 todo: { store.item(withID: $0) }
             )
         }
@@ -329,7 +324,7 @@ struct ContentView: View {
             )
             return CalendarWindowRequest(
                 key: CalendarWindowSnapshot.Key(
-                    revision: store.contentRevision, firstDay: week.adding(days: -21),
+                    revision: store.dateContentRevision, firstDay: week.adding(days: -21),
                     lastDay: week.adding(days: 27),
                     timeZoneIdentifier: calendar.timeZone.identifier,
                     firstWeekday: calendar.firstWeekday,
@@ -358,7 +353,7 @@ struct ContentView: View {
         let lastDay = LocalDay(lastDate, timeZone: calendar.timeZone)
         return CalendarWindowRequest(
             key: CalendarWindowSnapshot.Key(
-                revision: store.contentRevision,
+                revision: store.dateContentRevision,
                 firstDay: firstDay,
                 lastDay: lastDay,
                 timeZoneIdentifier: calendar.timeZone.identifier,
@@ -415,19 +410,7 @@ struct ContentView: View {
         }
     }
 
-    private func updateLoadingIndicator() {
-        guard store.isInitialLoading else {
-            showsLoadingIndicator = false
-            return
-        }
-        showsLoadingIndicator = false
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(150))
-            if store.isInitialLoading {
-                showsLoadingIndicator = true
-            }
-        }
-    }
+
 }
 
 private struct SidebarDestinationList: View {

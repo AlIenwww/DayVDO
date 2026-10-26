@@ -8,6 +8,107 @@ import XCTest
 final class TimelineInteractionWindowTests: XCTestCase {
     private let day = LocalDay(year: 2026, month: 10, day: 5)
 
+    func testBlankTimelineClickClearsSelectionBeforeDelete() throws {
+        let fixture = makeWindow()
+        defer { close(fixture) }
+        let card = screenPoint(x: 620, yFromTop: 145, in: fixture.window)
+        for x: CGFloat in [300, 20] {
+            click(card, in: fixture.window)
+            settle()
+            click(screenPoint(x: x, yFromTop: 260, in: fixture.window), in: fixture.window)
+            settle()
+            pressDelete(in: fixture.window)
+            settle()
+            XCTAssertEqual(fixture.store.schedules, [fixture.schedule])
+        }
+        click(card, in: fixture.window)
+        settle()
+        pressDelete(in: fixture.window)
+        settle()
+        XCTAssertTrue(fixture.store.schedules.isEmpty)
+    }
+
+    func testConsecutiveArrangementsKeepTheirAbsoluteTimeHitRegions() throws {
+        let additional = [(600, 30), (630, 25), (655, 90)].map { minute, duration in
+            DaySchedule(startDay: day, startMinute: minute, durationMinutes: duration,
+                content: .independent(title: "Plan \(minute)", notes: ""))
+        }
+        let fixture = makeWindow(additionalSchedules: additional)
+        defer { close(fixture) }
+        let schedules = [fixture.schedule] + additional
+        let view = try XCTUnwrap(fixture.window.contentView)
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let scaleX = CGFloat(bitmap.pixelsWide) / view.bounds.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / view.bounds.height
+        for schedule in schedules {
+            let middle = CGFloat(schedule.startMinute - 480) * 1.5 + 12
+                + CGFloat(schedule.durationMinutes) * 0.75
+            let color = try XCTUnwrap(bitmap.colorAt(x: Int(620 * scaleX), y: Int(middle * scaleY)))
+            assertCardPaint(color, schedule: schedule)
+        }
+        if let path = ProcessInfo.processInfo.environment["DAYVDO_TIMELINE_SNAPSHOT"] {
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+        for schedule in schedules {
+            let middle = CGFloat(schedule.startMinute - 480) * 1.5 + 12
+                + CGFloat(schedule.durationMinutes) * 0.75
+            doubleClick(screenPoint(x: 620, yFromTop: middle, in: fixture.window), in: fixture.window)
+            settle()
+            XCTAssertEqual(fixture.probe.presentation?.scheduleID, schedule.id,
+                "Card hit region must match its time, without stacking previous card heights")
+            if let editor = editorWindow(fixture) { escape(in: editor); settle() }
+        }
+        XCTAssertEqual(Set(fixture.store.schedules.map(\.id)), Set(schedules.map(\.id)))
+    }
+
+    func testWeekArrangementsPaintAtTheirAbsoluteTimes() throws {
+        let additional = [(600, 30), (630, 25), (655, 90)].map { minute, duration in
+            DaySchedule(startDay: day, startMinute: minute, durationMinutes: duration,
+                content: .independent(title: "Plan \(minute)", notes: ""))
+        }
+        let fixture = makeWindow(additionalSchedules: additional)
+        defer { close(fixture) }
+        let host = NSHostingView(rootView: CalendarWeekTimeline(week: day,
+            visibility: .init(showCompleted: true), hourHeight: .constant(90),
+            scrollMinute: .constant(480), presentationCache: CalendarWeekPresentationCache(),
+            editTodo: { _ in }).environmentObject(fixture.store))
+        fixture.window.contentView = host
+        settle()
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let scaleX = CGFloat(bitmap.pixelsWide) / host.bounds.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / host.bounds.height
+        for schedule in [fixture.schedule] + additional {
+            let middle = CGFloat(schedule.startMinute - 480) * 1.5 + 12
+                + CGFloat(schedule.durationMinutes) * 0.75
+            let color = try XCTUnwrap(bitmap.colorAt(x: Int(130 * scaleX), y: Int(middle * scaleY)))
+            assertCardPaint(color, schedule: schedule)
+        }
+    }
+
+    private func assertCardPaint(_ color: NSColor, schedule: DaySchedule,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        if schedule.todoID == nil {
+            // Independent cards use secondaryLabelColor (itself translucent)
+            // at 14% opacity. These sample points avoid text, borders and grid lines.
+            XCTAssertEqual(color.alphaComponent, NSColor.secondaryLabelColor.alphaComponent * 0.14,
+                accuracy: 0.01, "Card must paint at minute \(schedule.startMinute)", file: file, line: line)
+        } else {
+            XCTAssertGreaterThan(color.alphaComponent, 0.1,
+                "Linked card must paint at minute \(schedule.startMinute)", file: file, line: line)
+        }
+    }
+
+    private func pressDelete(in window: NSWindow) {
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}",
+            isARepeat: false, keyCode: 51)!
+        dispatch(event)
+    }
+
     func testSavedHorizontalPositionUpdatesNativeCardHitRegions() throws {
         let fixture = makeWindow()
         defer { close(fixture) }
@@ -161,7 +262,7 @@ final class TimelineInteractionWindowTests: XCTestCase {
         var window: NSWindow
     }
 
-    private func makeWindow() -> Fixture {
+    private func makeWindow(additionalSchedules: [DaySchedule] = []) -> Fixture {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         app.activate(ignoringOtherApps: true)
@@ -171,6 +272,7 @@ final class TimelineInteractionWindowTests: XCTestCase {
         XCTAssertTrue(store.upsert(item))
         let schedule = DaySchedule(startDay: day, startMinute: 540, durationMinutes: 60, content: .todo(item.id))
         XCTAssertTrue(store.upsertSchedule(schedule))
+        for value in additionalSchedules { XCTAssertTrue(store.upsertSchedule(value)) }
         let probe = TimelineWindowProbe()
         let window = NSWindow(contentRect: NSRect(x: 180, y: 180, width: 680, height: 560),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)

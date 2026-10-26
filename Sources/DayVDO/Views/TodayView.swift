@@ -17,7 +17,6 @@ struct TodayView: View {
     @State private var queuedTodo: TodoItem?
     @State private var pending: PendingSchedule?
     @State private var timelineActive = false
-    private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     private struct PendingSchedule {
         var schedule: DaySchedule
@@ -81,10 +80,7 @@ struct TodayView: View {
         } message: {
             Text(L10n.string("这个待办已安排足够时间，仍要再添加一段吗？"))
         }
-        .onReceive(clock) { _ in refreshClock() }
-        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in refreshClock() }
-        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in refreshClock() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshClock() }
+        .onReceive(AppClock.refreshes) { _ in refreshClock() }
         .onChange(of: isBusy) { _, busy in if !busy { refreshClock() } }
     }
 

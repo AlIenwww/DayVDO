@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 fileprivate final class ProjectHeightStorage: @unchecked Sendable {
     // SwiftUI Layout callbacks are not main-actor isolated. The lock protects
@@ -125,16 +126,15 @@ struct AllTodosView: View {
     let presentationCache: PresentationCache
     @State private var visualExpandedProjectIDs: Set<UUID> = []
     @State private var renderedProjectIDs: Set<UUID> = []
-    @State private var pendingCollapseTokens: [UUID: UUID] = [:]
+    @State private var pendingCollapseDeadlines: [UUID: ContinuousClock.Instant] = [:]
     @State private var projectPendingDeletion: TodoProject?
     @State private var hoveredProjectID: UUID?
-    @State private var dropTargetItemID: UUID?
-    @State private var dropTargetProjectEndID: UUID?
+    @State private var taskDrag: ProjectTaskDragPreview?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSearchPresented = false
     @FocusState private var focusedProjectAddButtonID: UUID?
     @FocusState private var focusedEntryID: String?
     @State private var today = LocalDay(.now)
-    private let dayClock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     init(
         editingItem: Binding<TodoItem?>,
@@ -207,10 +207,7 @@ struct AllTodosView: View {
             }
         }
         .navigationTitle(L10n.string("总待办"))
-        .onReceive(dayClock) { _ in today = LocalDay(.now) }
-        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in today = LocalDay(.now) }
-        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in today = LocalDay(.now) }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in today = LocalDay(.now) }
+        .onReceive(AppClock.refreshes) { _ in today = LocalDay(.now) }
         .searchable(
             text: $query,
             isPresented: $isSearchPresented,
@@ -223,6 +220,31 @@ struct AllTodosView: View {
             }
         }
         .onAppear { synchronizeProjectExpansion(animated: false) }
+        .onDisappear {
+            taskDrag = nil
+            finishPendingProjectCollapses()
+        }
+        .task(id: pendingCollapseDeadlines.values.min()) {
+            guard let deadline = pendingCollapseDeadlines.values.min() else { return }
+            do { try await Task.sleep(until: deadline, clock: .continuous) }
+            catch { return }
+            let due = Set(pendingCollapseDeadlines.compactMap { $0.value <= .now ? $0.key : nil })
+            renderedProjectIDs.subtract(due.subtracting(visualExpandedProjectIDs))
+            for id in due { pendingCollapseDeadlines.removeValue(forKey: id) }
+        }
+        .task(id: taskDrag?.itemID) {
+            guard taskDrag != nil else { return }
+            // A native drag runs its own event loop. Check the system button state
+            // as well as successful drops so Escape and drops outside restore order.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { return }
+                if NSEvent.pressedMouseButtons & 1 == 0 {
+                    withAnimation(taskReorderAnimation) { taskDrag = nil }
+                    return
+                }
+            }
+        }
         .task(id: searchFocusRequest) {
             guard searchFocusRequest > 0 else { return }
             await Task.yield()
@@ -356,7 +378,7 @@ struct AllTodosView: View {
                 .padding(.bottom, 12)
         } else {
             VStack(spacing: 0) {
-                ForEach(Array(children.enumerated()), id: \.element.id) { index, item in
+                ForEach(Array(dragOrderedChildren(children, in: project.id).enumerated()), id: \.element.id) { index, item in
                     let isFirst = index == 0
                     let isLast = index == children.count - 1
                     let shape = UnevenRoundedRectangle(
@@ -375,44 +397,48 @@ struct AllTodosView: View {
                         .padding(.horizontal, 10)
                         .background(Color.secondary.opacity(0.055), in: shape)
                         .overlay { shape.stroke(Color.secondary.opacity(0.12), lineWidth: 0.5) }
-                        .overlay(alignment: .top) {
-                            if dropTargetItemID == item.id {
-                                Rectangle()
-                                    .fill(Color.accentColor)
-                                    .frame(height: 2)
-                                    .padding(.horizontal, 8)
-                            }
-                        }
                         .padding(.leading, 28)
-                        .draggable(item.id.uuidString)
-                        .dropDestination(for: String.self) { values, _ in
-                            guard let rawID = values.first,
-                                  let draggedID = UUID(uuidString: rawID) else { return false }
-                            return store.moveProjectItem(draggedID, before: item.id, in: project.id)
-                        } isTargeted: { targeted in
-                            dropTargetItemID = targeted ? item.id : nil
+                        .opacity(taskDrag?.itemID == item.id ? 0.35 : 1)
+                        .onDrag {
+                            taskDrag = ProjectTaskDragPreview(itemID: item.id, projectID: project.id,
+                                orderedIDs: store.items(in: project).map(\.id))
+                            return NSItemProvider(object: item.id.uuidString as NSString)
                         }
+                        .onDrop(of: [.text], delegate: taskDropDelegate(project: project, targetID: item.id))
                 }
                 Color.clear
                     .frame(height: 20)
                     .contentShape(Rectangle())
-                    .overlay(alignment: .top) {
-                        if dropTargetProjectEndID == project.id {
-                            Rectangle().fill(Color.accentColor).frame(height: 2)
-                                .padding(.horizontal, 8)
-                        }
-                    }
                     .padding(.leading, 28)
-                    .dropDestination(for: String.self) { values, _ in
-                        guard let rawID = values.first,
-                              let draggedID = UUID(uuidString: rawID) else { return false }
-                        return store.moveProjectItem(draggedID, before: nil, in: project.id)
-                    } isTargeted: { targeted in
-                        dropTargetProjectEndID = targeted ? project.id : nil
-                    }
+                    .onDrop(of: [.text], delegate: taskDropDelegate(project: project, targetID: nil))
             }
             .padding(.top, 5)
         }
+    }
+
+    private var taskReorderAnimation: Animation? {
+        reduceMotion ? nil : .spring(duration: 0.32, bounce: 0.16)
+    }
+
+    private func dragOrderedChildren(_ children: [TodoItem], in projectID: UUID) -> [TodoItem] {
+        guard let taskDrag, taskDrag.projectID == projectID else { return children }
+        let positions = Dictionary(uniqueKeysWithValues: taskDrag.orderedIDs.enumerated().map { ($1, $0) })
+        return children.sorted { positions[$0.id, default: Int.max] < positions[$1.id, default: Int.max] }
+    }
+
+    private func taskDropDelegate(project: TodoProject, targetID: UUID?) -> ProjectTaskDropDelegate {
+        ProjectTaskDropDelegate(accepts: {
+            store.canModify && taskDrag?.projectID == project.id
+        }, enter: {
+            withAnimation(taskReorderAnimation) { taskDrag?.move(over: targetID) }
+        }, commit: {
+            guard let drag = taskDrag else { return false }
+            withAnimation(taskReorderAnimation) {
+                _ = store.moveProjectItem(drag.itemID, before: drag.followingID, in: project.id)
+                taskDrag = nil
+            }
+            return true
+        })
     }
 
     private func projectHeader(
@@ -570,21 +596,17 @@ struct AllTodosView: View {
         }
     }
 
-    private func filteredChildren(in project: TodoProject) -> [TodoItem] {
+    private func filteredChildren(in project: TodoProject, criteria: TodoFilterContext) -> [TodoItem] {
         let projectMatches = projectMatchesQuery(project)
         return store.items(in: project).filter { item in
             let matchesQuery = query.isEmpty || projectMatches || itemMatchesQuery(item)
-            let matchesFilter = filter.includes(
-                item,
-                showCompletedPreference: store.settings.showCompleted,
-                matchesSearch: matchesQuery,
-                today: today, startsOnMonday: store.settings.startWeekOnMonday
-            )
-            return matchesFilter
+            return matchesQuery && criteria.includes(item)
         }
     }
 
     private func makePresentationSnapshot() -> PresentationSnapshot {
+        let criteria = TodoFilterContext(filter: filter, showCompleted: store.settings.showCompleted,
+            today: today, startsOnMonday: store.settings.startWeekOnMonday)
         var childrenByProject: [UUID: [TodoItem]] = [:]
         var projectEntries: [TopLevelEntry] = []
 
@@ -592,7 +614,7 @@ struct AllTodosView: View {
             let needsChildren = hasActiveFiltering
                 || isExpanded(project)
                 || renderedProjectIDs.contains(project.id)
-            let children = needsChildren ? filteredChildren(in: project) : []
+            let children = needsChildren ? filteredChildren(in: project, criteria: criteria) : []
             if needsChildren { childrenByProject[project.id] = children }
 
             let isVisible: Bool
@@ -609,7 +631,8 @@ struct AllTodosView: View {
         }
 
         let todoEntries = store.items.lazy
-            .filter { $0.projectID == nil && itemMatches($0) }
+            .filter { $0.projectID == nil && criteria.includes($0)
+                && (query.isEmpty || itemMatchesQuery($0)) }
             .map(TopLevelEntry.todo)
         let entries = (projectEntries + todoEntries).sorted {
             if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
@@ -618,15 +641,6 @@ struct AllTodosView: View {
         return PresentationSnapshot(
             topLevelEntries: entries,
             childrenByProject: childrenByProject
-        )
-    }
-
-    private func itemMatches(_ item: TodoItem) -> Bool {
-        return filter.includes(
-            item,
-            showCompletedPreference: store.settings.showCompleted,
-            matchesSearch: query.isEmpty || itemMatchesQuery(item),
-            today: today, startsOnMonday: store.settings.startWeekOnMonday
         )
     }
 
@@ -651,7 +665,7 @@ struct AllTodosView: View {
         expansionState.setExpanded(expanded, for: projectID)
 
         if expanded {
-            pendingCollapseTokens.removeValue(forKey: projectID)
+            pendingCollapseDeadlines.removeValue(forKey: projectID)
             renderedProjectIDs.insert(projectID)
             let update = { _ = visualExpandedProjectIDs.insert(projectID) }
             if animated {
@@ -667,25 +681,15 @@ struct AllTodosView: View {
         }
 
         if animated {
-            let token = UUID()
-            pendingCollapseTokens[projectID] = token
+            pendingCollapseDeadlines[projectID] = .now + .milliseconds(180)
             visualExpandedProjectIDs.remove(projectID)
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(180))
-                if pendingCollapseTokens[projectID] == token,
-                   !visualExpandedProjectIDs.contains(projectID),
-                   !isExpansionForced {
-                    renderedProjectIDs.remove(projectID)
-                    pendingCollapseTokens.removeValue(forKey: projectID)
-                }
-            }
         } else {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 visualExpandedProjectIDs.remove(projectID)
                 renderedProjectIDs.remove(projectID)
-                pendingCollapseTokens.removeValue(forKey: projectID)
+                pendingCollapseDeadlines.removeValue(forKey: projectID)
             }
         }
     }
@@ -714,7 +718,7 @@ struct AllTodosView: View {
         expansionState.synchronize(projectIDs: projectIDs, completedIDs: completedIDs)
         let desired = expansionState.expandedIDs
         for projectID in desired {
-            pendingCollapseTokens.removeValue(forKey: projectID)
+            pendingCollapseDeadlines.removeValue(forKey: projectID)
         }
         if !desired.isSubset(of: renderedProjectIDs) {
             renderedProjectIDs.formUnion(desired)
@@ -725,37 +729,22 @@ struct AllTodosView: View {
             if visualExpandedProjectIDs != desired { visualExpandedProjectIDs = desired }
         }
         if animated {
-            let tokens = Dictionary(uniqueKeysWithValues: removed.map { ($0, UUID()) })
-            pendingCollapseTokens.merge(tokens) { _, new in new }
+            let deadline = ContinuousClock.now + .milliseconds(180)
+            for projectID in removed { pendingCollapseDeadlines[projectID] = deadline }
             update()
-            if !removed.isEmpty {
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(180))
-                    let stillPending = Set(tokens.compactMap { projectID, token in
-                        pendingCollapseTokens[projectID] == token
-                            && !visualExpandedProjectIDs.contains(projectID)
-                            ? projectID
-                            : nil
-                    })
-                    renderedProjectIDs.subtract(stillPending)
-                    for projectID in stillPending {
-                        pendingCollapseTokens.removeValue(forKey: projectID)
-                    }
-                }
-            }
         } else {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 update()
                 if renderedProjectIDs != desired { renderedProjectIDs = desired }
-                if !pendingCollapseTokens.isEmpty { pendingCollapseTokens.removeAll() }
+                if !pendingCollapseDeadlines.isEmpty { pendingCollapseDeadlines.removeAll() }
             }
         }
     }
 
     private func finishPendingProjectCollapses() {
-        let collapsedIDs = Set(pendingCollapseTokens.keys)
+        let collapsedIDs = Set(pendingCollapseDeadlines.keys)
             .subtracting(visualExpandedProjectIDs)
         guard !collapsedIDs.isEmpty else { return }
 
@@ -764,7 +753,7 @@ struct AllTodosView: View {
         withTransaction(transaction) {
             renderedProjectIDs.subtract(collapsedIDs)
             for projectID in collapsedIDs {
-                pendingCollapseTokens.removeValue(forKey: projectID)
+                pendingCollapseDeadlines.removeValue(forKey: projectID)
             }
         }
     }

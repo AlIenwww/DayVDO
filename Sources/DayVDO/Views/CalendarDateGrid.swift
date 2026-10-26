@@ -47,8 +47,10 @@ final class CalendarDateInteraction: ObservableObject {
                         range: (item?.startDay ?? anchor)...(item?.dueDay ?? anchor))
         }
         guard var current = drag else { return }
-        current.range = CalendarDatePolicy.range(start: current.item?.startDay ?? current.anchor,
+        let range = CalendarDatePolicy.range(start: current.item?.startDay ?? current.anchor,
             end: current.item?.dueDay ?? current.anchor, anchor: current.anchor, target: target, mode: current.mode)
+        guard range != current.range else { return }
+        current.range = range
         drag = current
     }
 
@@ -120,11 +122,19 @@ struct CalendarDateWeekRow: View {
         GeometryReader { geometry in
             let header: CGFloat = showsDates ? Self.dateHeaderHeight : 4
             let capacity = maxLanes ?? max(1, Int((geometry.size.height - header - 19) / CalendarTodoBar.laneHeight))
+            let draft = self.draft
             let previewID = interaction.drag.map { $0.item?.id ?? interaction.draftID } ?? draft?.id
             let layout = (interaction.drag == nil && draft == nil ? preparedLayout : nil)
                 ?? CalendarDateLayout(segments: CalendarDatePolicy.previewSegments(
                     displayed, draft: draft, previewID: previewID, week: week, maxLanes: capacity))
             let segments = layout.segments
+            let hiddenCounts: [Int] = {
+                var counts = Array(repeating: 0, count: 7)
+                for segment in segments where segment.item.id != draft?.id && segment.lane >= capacity {
+                    for column in segment.firstColumn...segment.lastColumn { counts[column] += 1 }
+                }
+                return counts
+            }()
             let columnWidth = geometry.size.width / 7
             let frame = geometry.frame(in: .named("calendarDateViewport"))
             let visible = segments.filter {
@@ -135,18 +145,17 @@ struct CalendarDateWeekRow: View {
                 HStack(spacing: 0) {
                     ForEach(0..<7, id: \.self) { column in
                         dayBackground(week.adding(days: column), column: column,
-                            hidden: segments.filter { $0.item.id != draft?.id && $0.lane >= capacity && ($0.firstColumn...$0.lastColumn).contains(column) }.count)
+                            hidden: hiddenCounts[column])
                     }
                 }
                 ForEach(visible) { segment in
+                    let rect = barFrame(segment, columnWidth: columnWidth, header: header)
                     CalendarDateTaskBar(segment: segment,
                         selected: selection.selectedID == segment.id,
                         isDraft: segment.id == draft?.id, edit: edit)
                         .equatable()
-                        .frame(width: barFrame(segment, columnWidth: columnWidth, header: header).width,
-                               height: CalendarTodoBar.height)
-                        .offset(x: barFrame(segment, columnWidth: columnWidth, header: header).minX,
-                                y: barFrame(segment, columnWidth: columnWidth, header: header).minY)
+                        .frame(width: rect.width, height: CalendarTodoBar.height)
+                        .offset(x: rect.minX, y: rect.minY)
                 }
             }
             .preference(key: CalendarWeekFrames.self, value: [week: frame])
@@ -156,7 +165,7 @@ struct CalendarDateWeekRow: View {
                         .offsetBy(dx: frame.minX, dy: frame.minY),
                         target: .item(segment.id, startsHere: segment.startsHere, endsHere: segment.endsHere))
                 } + (0..<7).compactMap { column in
-                    guard segments.contains(where: { $0.item.id != draft?.id && $0.lane >= capacity && ($0.firstColumn...$0.lastColumn).contains(column) }) else { return nil }
+                    guard hiddenCounts[column] > 0 else { return nil }
                     return CalendarDateHitRegion(frame: CGRect(x: frame.minX + CGFloat(column) * columnWidth,
                         y: frame.maxY - 19, width: columnWidth, height: 19),
                         target: .more(week.adding(days: column)))

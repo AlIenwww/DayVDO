@@ -4,18 +4,24 @@ import Foundation
 final class TodoStore: ObservableObject {
     @Published private(set) var items: [TodoItem] = [] {
         didSet {
+            guard items != oldValue else { return }
+            itemIndexDirty = true
             guard !isLoading else { return }
             rebuildIndexes()
         }
     }
     @Published private(set) var projects: [TodoProject] = [] {
         didSet {
+            guard projects != oldValue else { return }
+            projectIndexDirty = true
             guard !isLoading else { return }
             rebuildIndexes()
         }
     }
     @Published private(set) var tags: [TaskTag] = [] {
         didSet {
+            guard tags != oldValue else { return }
+            tagIndexDirty = true
             guard !isLoading else { return }
             rebuildIndexes()
         }
@@ -23,11 +29,21 @@ final class TodoStore: ObservableObject {
     @Published var settings = AppSettings() {
         didSet {
             L10n.configure(language: settings.language)
-            scheduleSave()
+            if settings != oldValue { scheduleSave() }
         }
     }
-    @Published private(set) var schedules: [DaySchedule] = []
+    @Published private(set) var schedules: [DaySchedule] = [] {
+        didSet {
+            guard schedules != oldValue else { return }
+            scheduleIndexDirty = true
+            if !isLoading { rebuildIndexes() }
+        }
+    }
     @Published private(set) var contentRevision: UInt64 = 0
+    /// Date bars do not depend on arrangements or project metadata.
+    @Published private(set) var dateContentRevision: UInt64 = 0
+    /// Arrangement presentation also depends on task filtering and labels.
+    @Published private(set) var timelineContentRevision: UInt64 = 0
 
     @Published private(set) var persistenceIssue: PersistenceIssue?
     @Published private(set) var isReadOnly = false
@@ -62,64 +78,6 @@ final class TodoStore: ObservableObject {
         }
     }
 
-    private struct Snapshot: Codable, Sendable, Equatable {
-        static let currentVersion = 4
-
-        var version: Int
-        var items: [TodoItem]
-        var projects: [TodoProject]
-        var tags: [TaskTag]
-        var settings: AppSettings
-        var schedules: [DaySchedule]
-
-        private enum CodingKeys: String, CodingKey {
-            case version
-            case items
-            case projects
-            case tags
-            case settings
-            case schedules
-        }
-
-        init(
-            items: [TodoItem],
-            projects: [TodoProject],
-            tags: [TaskTag],
-            settings: AppSettings,
-            schedules: [DaySchedule] = []
-        ) {
-            version = Self.currentVersion
-            self.items = items
-            self.projects = projects
-            self.tags = tags
-            self.settings = settings
-            self.schedules = schedules
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
-            guard version <= Self.currentVersion else {
-                throw DecodingError.dataCorruptedError(
-                    forKey: .version,
-                    in: container,
-                    debugDescription: "Unsupported DayVDO data version \(version)"
-                )
-            }
-            items = try container.decodeIfPresent([TodoItem].self, forKey: .items) ?? []
-            projects = try container.decodeIfPresent([TodoProject].self, forKey: .projects) ?? []
-            tags = try container.decodeIfPresent([TaskTag].self, forKey: .tags) ?? []
-            schedules = try container.decodeIfPresent([DaySchedule].self, forKey: .schedules) ?? []
-            guard schedules.allSatisfy(\.isValid),
-                  items.allSatisfy(\.hasValidDateRange),
-                  Set(schedules.map(\.id)).count == schedules.count,
-                  Set(items.map(\.id)).count == items.count else {
-                throw DecodingError.dataCorruptedError(forKey: .schedules, in: container, debugDescription: "Invalid schedule or duplicate identifier")
-            }
-            settings = try container.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
-        }
-    }
-
     private struct ProjectSummary: Sendable {
         var completed = 0
         var total = 0
@@ -127,26 +85,32 @@ final class TodoStore: ObservableObject {
         var isCompleted: Bool { total > 0 && completed == total }
     }
 
-    private struct LoadResult {
-        var snapshot: Snapshot?
-        var recoverySnapshot: Snapshot?
-        var recoveryDate: Date?
-        var failedPrimary = false
-    }
-
     private let fileURL: URL
-    private let persistenceWriter: PersistenceWriter
+    private let persistenceWriter: TodoPersistence
     private var itemsByProject: [UUID: [TodoItem]] = [:]
     private var itemsByID: [UUID: TodoItem] = [:]
     private var projectSummaries: [UUID: ProjectSummary] = [:]
     private var projectsByID: [UUID: TodoProject] = [:]
     private var tagsByID: [UUID: TaskTag] = [:]
     private var tagUsageCounts: [UUID: Int] = [:]
+    private var schedulesByID: [UUID: DaySchedule] = [:]
+    private var schedulesByDay: [LocalDay: [DaySchedule]] = [:]
+    private var schedulesByTodo: [UUID: [DaySchedule]] = [:]
+    private var scheduledMinutesByTodo: [UUID: Int] = [:]
+    private var orderedProjectItems: [UUID: [TodoItem]] = [:]
+    private var orderedItems: [TodoItem] = []
+    private var orderedProjects: [TodoProject] = []
+    private var orderedTags: [TaskTag] = []
+    private var itemIndexDirty = true
+    private var projectIndexDirty = true
+    private var tagIndexDirty = true
+    private var scheduleIndexDirty = true
     private var isLoading = false
     private var isApplyingUndo = false
+    private var saveGeneration: UInt64 = 0
     private var pendingSaveTask: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
-    private var recoverySnapshot: Snapshot?
+    private var recoverySnapshot: TodoSnapshot?
     private var hasUnsavedChanges = false
 
     init(fileURL: URL? = nil, loadsAsynchronously: Bool? = nil) {
@@ -155,7 +119,7 @@ final class TodoStore: ObservableObject {
             Self.migrateLegacyDataIfNeeded(to: resolvedURL)
         }
         self.fileURL = resolvedURL
-        persistenceWriter = PersistenceWriter(fileURL: resolvedURL)
+        persistenceWriter = TodoPersistence(fileURL: resolvedURL)
         L10n.configure(language: settings.language)
         if loadsAsynchronously ?? (fileURL == nil) {
             // Read only preferences before any window is built. Decoding the
@@ -166,12 +130,12 @@ final class TodoStore: ObservableObject {
             isInitialLoading = true
             Task { [weak self] in
                 let result = await Task.detached(priority: .userInitiated) {
-                    PersistenceWriter.load(from: resolvedURL)
+                    TodoPersistence.load(from: resolvedURL)
                 }.value
                 self?.applyLoadResult(result)
             }
         } else {
-            applyLoadResult(PersistenceWriter.load(from: resolvedURL))
+            applyLoadResult(TodoPersistence.load(from: resolvedURL))
         }
     }
 
@@ -208,78 +172,57 @@ final class TodoStore: ObservableObject {
     }
 
     var visibleItems: [TodoItem] {
-        items.filter { settings.showCompleted || !$0.isCompleted }.sorted(by: TodoStore.areInIncreasingOrder)
+        settings.showCompleted ? orderedItems : orderedItems.filter { !$0.isCompleted }
     }
 
-    var sortedProjects: [TodoProject] {
-        projects.sorted {
-            if projectIsCompleted($0) != projectIsCompleted($1) {
-                return !projectIsCompleted($0)
-            }
-            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
-            return $0.createdAt < $1.createdAt
-        }
-    }
-
-    var sortedTags: [TaskTag] {
-        tags.sorted {
-            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
-            return $0.createdAt < $1.createdAt
-        }
-    }
+    var sortedProjects: [TodoProject] { orderedProjects }
+    var sortedTags: [TaskTag] { orderedTags }
 
     func allItems(on day: LocalDay) -> [TodoItem] {
         allItems(on: day, today: LocalDay(.now, timeZone: Calendar.current.timeZone))
     }
 
     func allItems(on day: LocalDay, today: LocalDay) -> [TodoItem] {
-        items.filter {
-            TaskDateRangePolicy.isVisible(
-                $0,
-                on: day,
-                today: today,
-                includeCompleted: true,
-                timeZone: Calendar.current.timeZone
-            )
-        }.sorted(by: Self.areInIncreasingOrder)
+        let timeZone = Calendar.current.timeZone
+        return orderedItems.filter {
+            TaskDateRangePolicy.isVisible($0, on: day, today: today, includeCompleted: true, timeZone: timeZone)
+        }
     }
 
     func planningItems(on day: LocalDay, today: LocalDay) -> [TodoItem] {
         let scheduledIDs = Set(schedules(on: day).compactMap(\.todoID))
         var result = allItems(on: day, today: today)
         let includedIDs = Set(result.map(\.id))
-        result.append(contentsOf: items.filter {
+        result.append(contentsOf: orderedItems.filter {
             scheduledIDs.contains($0.id) && !includedIDs.contains($0.id)
         })
+        // Keep date-visible tasks ahead of schedule-only tasks when all sort
+        // fields tie, as the previous stable ordering did.
         return result.sorted(by: Self.areInIncreasingOrder)
     }
 
-    func schedules(on day: LocalDay) -> [DaySchedule] {
-        schedules.filter { $0.interval(on: day) != nil }
+    func schedule(withID id: UUID?) -> DaySchedule? {
+        guard let id else { return nil }
+        return schedulesByID[id]
     }
 
-    func schedules(for todoID: UUID) -> [DaySchedule] {
-        schedules.filter { $0.todoID == todoID }.sorted {
-            if $0.startDay != $1.startDay { return $0.startDay < $1.startDay }
-            return $0.startMinute < $1.startMinute
-        }
-    }
+    func schedules(on day: LocalDay) -> [DaySchedule] { schedulesByDay[day] ?? [] }
 
-    func scheduledMinutes(for todoID: UUID) -> Int {
-        schedules(for: todoID).reduce(0) { $0 + $1.durationMinutes }
-    }
+    func schedules(for todoID: UUID) -> [DaySchedule] { schedulesByTodo[todoID] ?? [] }
+
+    func scheduledMinutes(for todoID: UUID) -> Int { scheduledMinutesByTodo[todoID] ?? 0 }
 
     @discardableResult
     func upsertSchedule(_ schedule: DaySchedule) -> Bool {
         guard schedule.isValid else { return false }
         if let id = schedule.todoID {
-            guard items.contains(where: { $0.id == id }) else { return false }
+            guard itemsByID[id] != nil else { return false }
         }
         var normalized = schedule
         if case .independent(let title, let notes) = normalized.content {
             normalized.content = .independent(title: title.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes)
         }
-        return performUndoable(L10n.string(schedules.contains { $0.id == schedule.id } ? "编辑安排" : "添加安排")) {
+        return performUndoable(L10n.string(schedulesByID[schedule.id] != nil ? "编辑安排" : "添加安排")) {
             if let index = schedules.firstIndex(where: { $0.id == schedule.id }) {
                 schedules[index] = normalized
             } else {
@@ -297,7 +240,7 @@ final class TodoStore: ObservableObject {
         let timeZone = Calendar.current.timeZone
         let day = LocalDay(date, timeZone: timeZone)
         let today = LocalDay(.now, timeZone: timeZone)
-        return items.filter {
+        return orderedItems.filter {
             TaskDateRangePolicy.isVisible(
                 $0,
                 on: day,
@@ -305,7 +248,7 @@ final class TodoStore: ObservableObject {
                 includeCompleted: settings.showCompleted,
                 timeZone: timeZone
             )
-        }.sorted(by: Self.areInIncreasingOrder)
+        }
     }
 
     func calendarItems(on date: Date, visibility: TodoFilterContext? = nil) -> [TodoItem] {
@@ -313,7 +256,7 @@ final class TodoStore: ObservableObject {
         let day = LocalDay(date, timeZone: timeZone)
         let today = LocalDay(.now, timeZone: timeZone)
         let criteria = visibility ?? TodoFilterContext(showCompleted: settings.showCompleted, today: today)
-        return items.filter {
+        return orderedItems.filter {
             criteria.includes($0) && TaskDateRangePolicy.isVisibleInCalendar(
                 $0,
                 on: day,
@@ -321,7 +264,7 @@ final class TodoStore: ObservableObject {
                 includeCompleted: true,
                 timeZone: timeZone
             )
-        }.sorted(by: Self.areInIncreasingOrder)
+        }
     }
 
     /// A confirmation authorizes exactly the displayed item and schedule versions.
@@ -524,7 +467,7 @@ final class TodoStore: ObservableObject {
 
     @discardableResult
     func toggle(_ item: TodoItem) -> Bool {
-        guard let current = items.first(where: { $0.id == item.id }) else { return false }
+        guard let current = itemsByID[item.id] else { return false }
         let nextStatus: TodoItem.Status = current.isCompleted
             ? current.previousIncompleteStatus
             : .completed
@@ -594,11 +537,13 @@ final class TodoStore: ObservableObject {
     }
 
     func items(in project: TodoProject) -> [TodoItem] {
-        let children = itemsByProject[project.id] ?? []
-        if project.usesManualTaskOrder {
-            return children.sorted(by: areProjectItemsManuallyOrdered)
+        // Callers can retain an older project value across an edit or undo.
+        guard project.usesManualTaskOrder == projectsByID[project.id]?.usesManualTaskOrder else {
+            let children = itemsByProject[project.id] ?? []
+            return children.sorted(by: project.usesManualTaskOrder
+                ? areProjectItemsManuallyOrdered : areProjectItemsInDefaultOrder)
         }
-        return children.sorted(by: areProjectItemsInDefaultOrder)
+        return orderedProjectItems[project.id] ?? []
     }
 
     func newItem(in project: TodoProject) -> TodoItem {
@@ -701,7 +646,7 @@ final class TodoStore: ObservableObject {
     }
 
     func continueWithEmptyDataNow() async {
-        let empty = Snapshot(items: [], projects: [], tags: [], settings: settings)
+        let empty = TodoSnapshot(items: [], projects: [], tags: [], settings: settings)
         do {
             try await persistenceWriter.replaceCorruptPrimary(with: empty)
             applyLoadedSnapshot(empty)
@@ -720,20 +665,28 @@ final class TodoStore: ObservableObject {
 
     @discardableResult
     func flushPersistence() async -> Bool {
-        pendingSaveTask?.cancel()
-        pendingSaveTask = nil
-        guard !isReadOnly else {
-            if case .saveFailed = persistenceIssue { return false }
-            return true
-        }
-        do {
-            try await persistenceWriter.save(currentSnapshot())
-            hasUnsavedChanges = false
-            if case .saveFailed = persistenceIssue { persistenceIssue = nil }
-            return true
-        } catch {
-            persistenceIssue = .saveFailed(message: error.localizedDescription)
-            return false
+        saveGeneration &+= 1
+        while true {
+            let generation = saveGeneration
+            pendingSaveTask?.cancel()
+            pendingSaveTask = nil
+            guard !isReadOnly else {
+                if case .saveFailed = persistenceIssue { return false }
+                return true
+            }
+            do {
+                try await persistenceWriter.save(currentSnapshot(), generation: generation)
+                // Edits may arrive while the writer is working. Flush their
+                // snapshot too; never mark a newer edit as already saved.
+                guard generation == saveGeneration else { continue }
+                hasUnsavedChanges = false
+                if case .saveFailed = persistenceIssue { persistenceIssue = nil }
+                return true
+            } catch {
+                guard generation == saveGeneration else { continue }
+                persistenceIssue = .saveFailed(message: error.localizedDescription)
+                return false
+            }
         }
     }
 
@@ -745,7 +698,7 @@ final class TodoStore: ObservableObject {
         return await flushPersistence()
     }
 
-    private func applyLoadResult(_ result: LoadResult) {
+    private func applyLoadResult(_ result: TodoLoadResult) {
         var needsDateMigration = false
         isLoading = true
         defer {
@@ -758,7 +711,7 @@ final class TodoStore: ObservableObject {
         }
 
         if let snapshot = result.snapshot {
-            needsDateMigration = snapshot.version < Snapshot.currentVersion
+            needsDateMigration = snapshot.version < TodoSnapshot.currentVersion
             applyLoadedSnapshot(snapshot)
         } else if result.failedPrimary {
             recoverySnapshot = result.recoverySnapshot
@@ -773,9 +726,14 @@ final class TodoStore: ObservableObject {
         }
     }
 
-    private func applyLoadedSnapshot(_ snapshot: Snapshot, preservingSettings: Bool = false) {
+    private func applyLoadedSnapshot(_ snapshot: TodoSnapshot, preservingSettings: Bool = false) {
         let currentSettings = settings
+        let wasLoading = isLoading
         isLoading = true
+        defer {
+            isLoading = wasLoading
+            if !wasLoading { rebuildIndexes() }
+        }
         tags = snapshot.tags
         let validTagIDs = Set(tags.map(\.id))
         projects = snapshot.projects.map { project in
@@ -802,38 +760,38 @@ final class TodoStore: ObservableObject {
             return validItems[id] != nil
         }
         settings = preservingSettings ? currentSettings : snapshot.settings
-        isLoading = false
-        rebuildIndexes()
     }
 
     private func scheduleSave(delayNanoseconds: UInt64 = 150_000_000) {
         guard !isLoading, !isReadOnly else { return }
         hasUnsavedChanges = true
+        saveGeneration &+= 1
+        let generation = saveGeneration
         pendingSaveTask?.cancel()
-        let snapshot = currentSnapshot()
         pendingSaveTask = Task { [weak self] in
-            guard let self else { return }
             do {
-                if delayNanoseconds > 0 {
-                    try await Task.sleep(nanoseconds: delayNanoseconds)
-                }
+                if delayNanoseconds > 0 { try await Task.sleep(nanoseconds: delayNanoseconds) }
                 try Task.checkCancellation()
-                try await persistenceWriter.save(snapshot)
-                guard !Task.isCancelled else { return }
-                pendingSaveTask = nil
-                hasUnsavedChanges = false
-                if case .saveFailed = persistenceIssue { persistenceIssue = nil }
+                // Capture only after debouncing, without retaining the store
+                // or its arrays throughout the wait.
+                guard let self, generation == self.saveGeneration else { return }
+                try await self.persistenceWriter.save(self.currentSnapshot(), generation: generation)
+                guard !Task.isCancelled, generation == self.saveGeneration else { return }
+                self.pendingSaveTask = nil
+                self.hasUnsavedChanges = false
+                if case .saveFailed = self.persistenceIssue { self.persistenceIssue = nil }
             } catch is CancellationError {
-                // A newer snapshot superseded this pending write.
+                // A newer request superseded this write.
             } catch {
-                pendingSaveTask = nil
-                persistenceIssue = .saveFailed(message: error.localizedDescription)
+                guard let self, !Task.isCancelled, generation == self.saveGeneration else { return }
+                self.pendingSaveTask = nil
+                self.persistenceIssue = .saveFailed(message: error.localizedDescription)
             }
         }
     }
 
-    private func currentSnapshot() -> Snapshot {
-        Snapshot(items: items, projects: projects, tags: tags, settings: settings, schedules: schedules)
+    private func currentSnapshot() -> TodoSnapshot {
+        TodoSnapshot(items: items, projects: projects, tags: tags, settings: settings, schedules: schedules)
     }
 
     @discardableResult
@@ -843,9 +801,15 @@ final class TodoStore: ObservableObject {
         isLoading = true
         mutation()
         isLoading = false
-        rebuildIndexes()
         let after = currentSnapshot()
+        // A mutation can assign and then normalize back to its original value.
+        // Decide the actual changes before invalidating any derived cache.
+        itemIndexDirty = before.items != after.items
+        projectIndexDirty = before.projects != after.projects
+        tagIndexDirty = before.tags != after.tags
+        scheduleIndexDirty = before.schedules != after.schedules
         guard before != after else { return false }
+        rebuildIndexes()
 
         if !isApplyingUndo, let undoManager {
             undoManager.registerUndo(withTarget: self) { target in
@@ -857,7 +821,7 @@ final class TodoStore: ObservableObject {
         return true
     }
 
-    private func restoreSnapshot(_ snapshot: Snapshot, actionName: String) {
+    private func restoreSnapshot(_ snapshot: TodoSnapshot, actionName: String) {
         let inverse = currentSnapshot()
         isApplyingUndo = true
         applyLoadedSnapshot(snapshot, preservingSettings: true)
@@ -873,34 +837,81 @@ final class TodoStore: ObservableObject {
     }
 
     private func rebuildIndexes() {
-        var projectIndex: [UUID: [TodoItem]] = [:]
-        var summaries: [UUID: ProjectSummary] = [:]
-        var usageCounts: [UUID: Int] = [:]
-
-        for item in items {
-            if let projectID = item.projectID {
-                projectIndex[projectID, default: []].append(item)
-                summaries[projectID, default: ProjectSummary()].total += 1
-                if item.isCompleted {
-                    summaries[projectID, default: ProjectSummary()].completed += 1
+        guard itemIndexDirty || projectIndexDirty || tagIndexDirty || scheduleIndexDirty else { return }
+        let datesChanged = itemIndexDirty || tagIndexDirty
+        let timelineChanged = datesChanged || scheduleIndexDirty
+        if itemIndexDirty {
+            itemsByProject = [:]
+            itemsByID = [:]
+            projectSummaries = [:]
+            for item in items {
+                itemsByID[item.id] = item
+                if let id = item.projectID {
+                    itemsByProject[id, default: []].append(item)
+                    projectSummaries[id, default: ProjectSummary()].total += 1
+                    if item.isCompleted { projectSummaries[id, default: ProjectSummary()].completed += 1 }
                 }
             }
-            if let tagID = item.tagID {
-                usageCounts[tagID, default: 0] += 1
+            orderedItems = items.sorted(by: Self.areInIncreasingOrder)
+        }
+        if projectIndexDirty {
+            projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+        }
+        if itemIndexDirty || projectIndexDirty {
+            orderedProjectItems = itemsByProject.mapValues { children in
+                let manual = children.first?.projectID.flatMap { projectsByID[$0] }?.usesManualTaskOrder == true
+                return children.sorted(by: manual ? areProjectItemsManuallyOrdered : areProjectItemsInDefaultOrder)
+            }
+            orderedProjects = projects.sorted {
+                if projectIsCompleted($0) != projectIsCompleted($1) { return !projectIsCompleted($0) }
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                return $0.createdAt < $1.createdAt
+            }
+            tagUsageCounts = [:]
+            for item in items {
+                if let id = item.tagID { tagUsageCounts[id, default: 0] += 1 }
+            }
+            for project in projects {
+                if let id = project.tagID { tagUsageCounts[id, default: 0] += 1 }
             }
         }
-        for project in projects {
-            if let tagID = project.tagID {
-                usageCounts[tagID, default: 0] += 1
+        if tagIndexDirty {
+            tagsByID = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
+            orderedTags = tags.sorted {
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                return $0.createdAt < $1.createdAt
             }
         }
-        itemsByProject = projectIndex
-        itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        projectSummaries = summaries
-        projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
-        tagsByID = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0) })
-        tagUsageCounts = usageCounts
+        if scheduleIndexDirty {
+            schedulesByID = Dictionary(uniqueKeysWithValues: schedules.map { ($0.id, $0) })
+            schedulesByDay = [:]
+            schedulesByTodo = [:]
+            scheduledMinutesByTodo = [:]
+            for schedule in schedules {
+                // Valid persisted arrangements occupy at most two local days.
+                for offset in 0...((schedule.endMinute - 1) / 1440) {
+                    let day = offset == 0 ? schedule.startDay : schedule.startDay.adding(days: offset)
+                    schedulesByDay[day, default: []].append(schedule)
+                }
+                if let id = schedule.todoID {
+                    schedulesByTodo[id, default: []].append(schedule)
+                    scheduledMinutesByTodo[id, default: 0] += schedule.durationMinutes
+                }
+            }
+            for id in schedulesByTodo.keys {
+                schedulesByTodo[id]?.sort {
+                    if $0.startDay != $1.startDay { return $0.startDay < $1.startDay }
+                    return $0.startMinute < $1.startMinute
+                }
+            }
+        }
+        itemIndexDirty = false
+        projectIndexDirty = false
+        tagIndexDirty = false
+        scheduleIndexDirty = false
         contentRevision &+= 1
+        if datesChanged { dateContentRevision &+= 1 }
+        if timelineChanged { timelineContentRevision &+= 1 }
     }
 
     static func areInIncreasingOrder(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {
@@ -939,109 +950,4 @@ final class TodoStore: ObservableObject {
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
-    private actor PersistenceWriter {
-        private let fileURL: URL
-        private let fileManager = FileManager.default
-        private let encoder: JSONEncoder = {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            return encoder
-        }()
-
-        init(fileURL: URL) {
-            self.fileURL = fileURL
-        }
-
-        static func load(from fileURL: URL) -> LoadResult {
-            let manager = FileManager.default
-            guard manager.fileExists(atPath: fileURL.path) else { return LoadResult() }
-            if let data = try? Data(contentsOf: fileURL),
-               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
-                return LoadResult(snapshot: snapshot)
-            }
-
-            let backupDirectory = fileURL.deletingLastPathComponent()
-                .appendingPathComponent("Backups", isDirectory: true)
-            let candidates = ((try? manager.contentsOfDirectory(
-                at: backupDirectory,
-                includingPropertiesForKeys: [.contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )) ?? []).sorted { left, right in
-                let leftDate = (try? left.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                let rightDate = (try? right.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                return leftDate > rightDate
-            }
-            for url in candidates {
-                guard let data = try? Data(contentsOf: url),
-                      let recovery = try? JSONDecoder().decode(Snapshot.self, from: data) else {
-                    continue
-                }
-                let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate
-                return LoadResult(
-                    recoverySnapshot: recovery,
-                    recoveryDate: date,
-                    failedPrimary: true
-                )
-            }
-            return LoadResult(failedPrimary: true)
-        }
-
-        func save(_ snapshot: Snapshot) throws {
-            let directory = fileURL.deletingLastPathComponent()
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            let newData = try encoder.encode(snapshot)
-
-            if fileManager.fileExists(atPath: fileURL.path),
-               let oldData = try? Data(contentsOf: fileURL),
-               oldData != newData,
-               (try? JSONDecoder().decode(Snapshot.self, from: oldData)) != nil {
-                try createBackup(from: oldData)
-            }
-            try newData.write(to: fileURL, options: .atomic)
-        }
-
-        func replaceCorruptPrimary(with snapshot: Snapshot) throws {
-            let directory = fileURL.deletingLastPathComponent()
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            if fileManager.fileExists(atPath: fileURL.path) {
-                let corruptDirectory = directory.appendingPathComponent("Corrupt", isDirectory: true)
-                try fileManager.createDirectory(at: corruptDirectory, withIntermediateDirectories: true)
-                let destination = corruptDirectory.appendingPathComponent(
-                    "todos-corrupt-\(Self.timestamp()).json"
-                )
-                try fileManager.moveItem(at: fileURL, to: destination)
-            }
-            try encoder.encode(snapshot).write(to: fileURL, options: .atomic)
-        }
-
-        private func createBackup(from data: Data) throws {
-            let directory = fileURL.deletingLastPathComponent()
-                .appendingPathComponent("Backups", isDirectory: true)
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            let destination = directory.appendingPathComponent("todos-\(Self.timestamp()).json")
-            try data.write(to: destination, options: .atomic)
-
-            let backups = ((try? fileManager.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.contentModificationDateKey],
-                options: [.skipsHiddenFiles]
-            )) ?? []).sorted { left, right in
-                let leftDate = (try? left.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                let rightDate = (try? right.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate ?? .distantPast
-                return leftDate > rightDate
-            }
-            for oldBackup in backups.dropFirst(5) {
-                try? fileManager.removeItem(at: oldBackup)
-            }
-        }
-
-        nonisolated private static func timestamp() -> String {
-            "\(Int(Date().timeIntervalSince1970 * 1_000))-\(UUID().uuidString)"
-        }
-    }
 }

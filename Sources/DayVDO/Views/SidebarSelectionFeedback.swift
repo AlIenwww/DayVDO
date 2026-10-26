@@ -34,7 +34,6 @@ final class SidebarPagePresentation {
             async let calendarReady = preparation?.wait(until: deadline) ?? true
             await windowUpdate.wait()
             let ready = await calendarReady
-            guard !Task.isCancelled else { return }
             guard !Task.isCancelled, self.requestID == id,
                   destination == (self.selection ?? .today) else { return }
             self.calendarPreparationTimedOut = destination == .calendar && (preparation == nil || !ready)

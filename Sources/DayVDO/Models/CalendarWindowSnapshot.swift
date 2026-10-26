@@ -60,50 +60,57 @@ struct CalendarWindowSnapshot: Equatable, Sendable {
                 return start <= key.lastDay && end >= key.firstDay
             }
             .sorted(by: areInIncreasingOrder)
-        var result: [LocalDay: [Item]] = [:]
-        var ranged: [Item] = []
+        guard !sortedItems.isEmpty else {
+            return CalendarWindowSnapshot(key: key, rangedItems: [], itemsByDay: [:])
+        }
 
+        // Resolve the bounded window's dates and week boundaries once. Long
+        // and overlapping tasks then reuse them without repeating calendar work.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: key.timeZoneIdentifier) ?? .autoupdatingCurrent
+        calendar.firstWeekday = key.firstWeekday
+        let firstDate = key.firstDay.date(timeZone: calendar.timeZone)
+        let weekStart = calendar.dateInterval(of: .weekOfYear, for: firstDate)?.start ?? firstDate
+        var week = LocalDay(weekStart, timeZone: calendar.timeZone)
+        var weekEnd = week.adding(days: 6)
+        var days: [LocalDay] = []
+        var dayIndices: [LocalDay: Int] = [:]
+        var weekIndices: [Int] = []
+        var weekStarts = [week]
+        var day = key.firstDay
+        while day <= key.lastDay && !Task.isCancelled {
+            if day > weekEnd {
+                week = week.adding(days: 7)
+                weekEnd = week.adding(days: 6)
+                weekStarts.append(week)
+            }
+            dayIndices[day] = days.count
+            days.append(day)
+            weekIndices.append(weekStarts.count - 1)
+            day = day.adding(days: 1)
+        }
+
+        var result: [LocalDay: [Item]] = [:]
+        var weeks: [LocalDay: [Item]] = [:]
+        var ranged: [Item] = []
+        ranged.reserveCapacity(sortedItems.count)
         for item in sortedItems {
             if Task.isCancelled { break }
-            guard let itemStart = item.startDay,
-                  let itemEnd = item.dueDay,
-                  itemStart <= itemEnd else { continue }
-            let first = max(itemStart, key.firstDay)
-            let last = min(itemEnd, key.lastDay)
-            guard first <= last else { continue }
-
+            guard let itemStart = item.startDay, let itemEnd = item.dueDay,
+                  let first = dayIndices[max(itemStart, key.firstDay)],
+                  let last = dayIndices[min(itemEnd, key.lastDay)] else { continue }
             let summary = Item(
-                id: item.id,
-                startDay: itemStart,
-                dueDay: itemEnd,
-                title: item.title,
-                status: item.status,
+                id: item.id, startDay: itemStart, dueDay: itemEnd,
+                title: item.title, status: item.status,
                 hasProject: item.projectID != nil,
                 tagColor: item.tagID.flatMap { colorsByTag[$0] }
             )
             ranged.append(summary)
-            var day = first
-            while day <= last {
-                if Task.isCancelled { break }
-                result[day, default: []].append(summary)
-                day = day.adding(days: 1)
+            for index in first...last {
+                result[days[index], default: []].append(summary)
             }
-        }
-
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: key.timeZoneIdentifier) ?? .autoupdatingCurrent
-        calendar.firstWeekday = key.firstWeekday
-        var weeks: [LocalDay: [Item]] = [:]
-        for item in ranged {
-            if Task.isCancelled { break }
-            let first = max(item.startDay, key.firstDay)
-            let last = min(item.dueDay, key.lastDay)
-            let date = first.date(timeZone: calendar.timeZone)
-            let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
-            var week = LocalDay(start, timeZone: calendar.timeZone)
-            while week <= last {
-                weeks[week, default: []].append(item)
-                week = week.adding(days: 7)
+            for index in weekIndices[first]...weekIndices[last] {
+                weeks[weekStarts[index], default: []].append(summary)
             }
         }
         let dateLayouts = Dictionary(uniqueKeysWithValues: weeks.map { week, items in

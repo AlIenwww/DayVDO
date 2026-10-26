@@ -10,39 +10,24 @@ struct TimelineSelectionKeyMonitor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MonitorView { MonitorView() }
     func updateNSView(_ view: MonitorView, context: Context) {
-        view.enabled = enabled; view.delete = delete; view.clear = clear
+        view.delete = delete; view.clear = clear; view.enabled = enabled
     }
     static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.stop() }
 
-    final class MonitorView: NSView {
-        var enabled = false
+    final class MonitorView: WindowKeyMonitorView {
         var delete: () -> Void = {}
         var clear: () -> Void = {}
-        private var monitor: Any?
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            stop()
-            guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.enabled, let window = self.window,
-                      event.window === window, window.attachedSheet == nil,
-                      event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-                      !(window.firstResponder is NSTextView),
-                      !(window.firstResponder is NSTextField),
-                      !(window.firstResponder is NSDatePicker) else { return event }
-                switch event.keyCode {
-                case 51, 117: self.delete(); return nil
-                case 53: self.clear(); return nil
-                default: return event
-                }
+        override func handleKeyDown(_ event: NSEvent, in window: NSWindow) -> Bool {
+            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                  !(window.firstResponder is NSTextView),
+                  !(window.firstResponder is NSTextField),
+                  !(window.firstResponder is NSDatePicker) else { return false }
+            switch event.keyCode {
+            case 51, 117: delete(); return true
+            case 53: clear(); return true
+            default: return false
             }
-        }
-
-        func stop() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
         }
     }
 }

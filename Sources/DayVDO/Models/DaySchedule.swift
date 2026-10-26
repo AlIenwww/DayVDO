@@ -42,29 +42,17 @@ struct DaySchedule: Identifiable, Codable, Equatable, Sendable {
     }
 
     func interval(on day: LocalDay) -> Range<Int>? {
-        let offset = startDay.distance(to: day) * 1440
+        guard day >= startDay else { return nil }
+        if day > startDay && endMinute <= 1440 { return nil }
+        let offset = day == startDay ? 0 : startDay.distance(to: day) * 1440
         let lower = max(0, startMinute - offset)
         let upper = min(1440, endMinute - offset)
         return lower < upper ? lower..<upper : nil
     }
 }
 
-extension LocalDay {
-    func adding(days: Int) -> LocalDay {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        return LocalDay(calendar.date(byAdding: .day, value: days, to: date(timeZone: calendar.timeZone))!, timeZone: calendar.timeZone)
-    }
-
-    func distance(to other: LocalDay) -> Int {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        return calendar.dateComponents([.day], from: date(timeZone: calendar.timeZone), to: other.date(timeZone: calendar.timeZone)).day!
-    }
-}
-
 enum DayPlanningPolicy {
-    struct Placement: Identifiable, Equatable {
+    struct Placement: Identifiable, Equatable, Sendable {
         var id: UUID
         var interval: Range<Int>
         var column: Int

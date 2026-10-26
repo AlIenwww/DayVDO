@@ -3,59 +3,6 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
-@MainActor
-final class CalendarWeekPresentationCache: ObservableObject {
-    @Published var dragPreview: DaySchedule?
-    struct Key: Equatable {
-        var week: LocalDay
-        var revision: UInt64
-        var visibility: TodoFilterContext
-    }
-
-    struct Snapshot {
-        var schedulesByID: [UUID: DaySchedule]
-        var placementsByDay: [LocalDay: [DayPlanningPolicy.Placement]]
-    }
-
-    private var snapshots: [LocalDay: (key: Key, value: Snapshot)] = [:]
-
-    func value(
-        for key: Key,
-        schedules: [DaySchedule],
-        preview: DaySchedule?,
-        prioritizing activeID: UUID? = nil,
-        todo: (UUID) -> TodoItem?
-    ) -> Snapshot {
-        if preview == nil, let cached = snapshots[key.week], cached.key == key { return cached.value }
-
-        var values = schedules.map { $0.id == preview?.id ? preview! : $0 }
-        if let preview, !values.contains(where: { $0.id == preview.id }) { values.append(preview) }
-        let visible = values.compactMap { current -> DaySchedule? in
-            let lastDay = current.startDay.adding(days: (current.endMinute - 1) / 1440)
-            guard current.startDay <= key.week.adding(days: 6), lastDay >= key.week else { return nil }
-            if let id = current.todoID {
-                guard let item = todo(id), key.visibility.includes(item) else { return nil }
-            }
-            return current
-        }
-        let byID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
-        var placements: [LocalDay: [DayPlanningPolicy.Placement]] = [:]
-        for offset in 0..<7 {
-            let day = key.week.adding(days: offset)
-            placements[day] = DayPlanningPolicy.placements(visible, on: day, prioritizing: activeID)
-        }
-        let result = Snapshot(schedulesByID: byID, placementsByDay: placements)
-        if preview == nil {
-            snapshots = snapshots.filter { $0.value.key.revision == key.revision && $0.value.key.visibility == key.visibility }
-            snapshots[key.week] = (key, result)
-            if snapshots.count > 7, let farthest = snapshots.keys.max(by: {
-                abs(key.week.distance(to: $0)) < abs(key.week.distance(to: $1))
-            }) { snapshots.removeValue(forKey: farthest) }
-        }
-        return result
-    }
-}
-
 struct CalendarWeekTimeline: View {
     @EnvironmentObject private var store: TodoStore
     let week: LocalDay
@@ -67,7 +14,6 @@ struct CalendarWeekTimeline: View {
     var editTodo: (TodoItem) -> Void
     @State private var hasRestoredScroll = false
     @State private var now = Date.now
-    private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
     @State private var position = ScrollPosition()
     @State private var initialScrollMinute: CGFloat
     @State private var offset: CGFloat = 0
@@ -75,6 +21,7 @@ struct CalendarWeekTimeline: View {
     @State private var drag: Interaction?
     @State private var dragAnchor = CalendarWeekDragAnchor.AnchorView()
     @State private var preview: DaySchedule?
+    @StateObject private var previewUpdates = FrameUpdateScheduler()
     @State private var creation: Creation?
     @State private var draftID = UUID()
     @State private var positionUpdatedAt = Date.now
@@ -208,7 +155,7 @@ struct CalendarWeekTimeline: View {
         }
         .coordinateSpace(name: "weekTimeViewport")
         .popover(item: $presentation) { request in
-            if let schedule = store.schedules.first(where: { $0.id == request.scheduleID }) {
+            if let schedule = store.schedule(withID: request.scheduleID) {
                 SchedulePopoverView(schedule: schedule, startsEditing: request.mode == .editor,
                     editTodo: { item in presentation = nil; DispatchQueue.main.async { editTodo(item) } },
                     close: { presentation = nil })
@@ -225,7 +172,7 @@ struct CalendarWeekTimeline: View {
         } message: {
             Text(L10n.string("这个待办已安排足够时间，仍要再添加一段吗？"))
         }
-        .onReceive(clock) { now = $0 }
+        .onReceive(AppClock.ticks) { now = $0 }
         .background(TimelineSelectionKeyMonitor(
             enabled: isActive && selectedID != nil && presentation == nil && draft == nil && drag == nil && !suppressed,
             delete: {
@@ -246,7 +193,8 @@ struct CalendarWeekTimeline: View {
             else { clearDrag(); suppressed = false }
             clearHiddenSelection()
         }
-        .onChange(of: store.contentRevision) { _, _ in clearHiddenSelection() }
+        .onChange(of: store.timelineContentRevision) { _, _ in clearHiddenSelection() }
+        .background(FrameUpdateAnchor(scheduler: previewUpdates))
         .onDisappear { clearDrag() }
     }
 
@@ -254,10 +202,10 @@ struct CalendarWeekTimeline: View {
         presentationCache.value(
             for: .init(
                 week: week,
-                revision: store.contentRevision,
+                revision: store.timelineContentRevision,
                 visibility: visibility
             ),
-            schedules: store.schedules,
+            schedulesOnDay: { store.schedules(on: $0) },
             preview: activePreview,
             prioritizing: drag?.original != nil && drag?.mode != .move ? nil : activePreview?.id,
             todo: { store.item(withID: $0) }
@@ -266,7 +214,7 @@ struct CalendarWeekTimeline: View {
 
     private func renderVersion(width: CGFloat) -> CalendarWeekTimelineRenderVersion {
         let time = Calendar.current.dateComponents([.hour, .minute], from: now)
-        return CalendarWeekTimelineRenderVersion(week: week, revision: store.contentRevision,
+        return CalendarWeekTimelineRenderVersion(week: week, revision: store.timelineContentRevision,
             visibility: visibility, width: width, hourHeight: hourHeight,
             selectedID: selectedID, preview: activePreview,
             prioritizing: drag?.original != nil && drag?.mode != .move ? nil : activePreview?.id,
@@ -300,6 +248,13 @@ struct CalendarWeekTimeline: View {
             ForEach(0..<7, id: \.self) { column in
                 let day = week.adding(days: column)
                 let placements = presentation.placementsByDay[day] ?? []
+                let schedules = placements.compactMap { presentation.schedulesByID[$0.id] }
+                CalendarWeekDayContent(version: CalendarWeekDayVersion(day: day,
+                    revision: store.timelineContentRevision, schedules: schedules, placements: placements,
+                    width: columnWidth, hourHeight: hourHeight,
+                    selectedID: schedules.contains(where: { $0.id == selectedID }) ? selectedID : nil,
+                    draftID: draftID, minute: day == LocalDay(now) ? Calendar.current.component(.hour, from: now) * 60 + Calendar.current.component(.minute, from: now) : nil,
+                    locale: L10n.locale.identifier)) {
                 ForEach(placements) { placement in
                     if let schedule = presentation.schedulesByID[placement.id] {
                         let arrangementWidth = max(1, columnWidth - 2) / CGFloat(placement.columnCount)
@@ -319,11 +274,12 @@ struct CalendarWeekTimeline: View {
                                     y: 12 + CGFloat(placement.interval.lowerBound) * ppm)
                     }
                 }
+                }.equatable()
             }
-            TimelineView(.periodic(from: .now, by: 30)) { context in
-                let today = LocalDay(context.date)
+            Group {
+                let today = LocalDay(now)
                 if (week...week.adding(days: 6)).contains(today) {
-                    let components = Calendar.current.dateComponents([.hour, .minute], from: context.date)
+                    let components = Calendar.current.dateComponents([.hour, .minute], from: now)
                     let minute = (components.hour ?? 0) * 60 + (components.minute ?? 0)
                     Rectangle().fill(.red).frame(width: columnWidth, height: 1)
                         .offset(x: gutter + CGFloat(week.distance(to: today)) * columnWidth, y: 12 + CGFloat(minute) * ppm)
@@ -432,17 +388,18 @@ struct CalendarWeekTimeline: View {
                     drag = Interaction(original: original, mode: mode, column: column,
                         originY: value.startLocation.y, originOffset: offset, creationStart: start, creationOrigin: minute)
                 }
-                updateDrag(at: value.location)
+                previewUpdates.submit { updateDrag(at: value.location) }
                 if drag?.original != nil {
-                    dragAnchor.track(at: value.location, cancel: cancel) { location in updateDrag(at: location) }
+                    dragAnchor.track(at: value.location, cancel: cancel) { location in previewUpdates.submit { updateDrag(at: location) } }
                 }
             }
             .onEnded { value in
                 defer { clearDrag() }
                 guard !suppressed, targetDay(at: value.location) != nil else { return }
+                previewUpdates.cancel()
                 updateDrag(at: value.location)
                 if let preview, let original = drag?.original, preview != original,
-                   store.schedules.first(where: { $0.id == original.id }) == original {
+                   store.schedule(withID: original.id) == original {
                     _ = store.upsertSchedule(preview)
                 }
                 else if let drag, drag.original == nil {
@@ -477,8 +434,8 @@ struct CalendarWeekTimeline: View {
             if drag.mode == .move {
                 value.setHorizontalPosition(horizontalPosition(at: location, column: targetColumn), at: positionUpdatedAt)
             }
-            preview = value
-            presentationCache.dragPreview = value
+            if preview != value { preview = value }
+            if presentationCache.dragPreview != value { presentationCache.dragPreview = value }
         } else {
             updateCreation(drag, at: location)
         }
@@ -509,16 +466,20 @@ struct CalendarWeekTimeline: View {
             },
             update: { location in
                 guard externalLocation != nil else { return }
-                externalLocation = location
-                updateExternalPreview()
+                previewUpdates.submit {
+                    guard externalLocation != nil else { return }
+                    externalLocation = location
+                    updateExternalPreview()
+                }
             },
             identify: { id in
                 guard externalLocation != nil else { return }
                 externalTodoID = id
                 updateExternalPreview()
             },
-            exit: { externalLocation = nil; externalTodoID = nil; creation = nil },
+            exit: { previewUpdates.cancel(); externalLocation = nil; externalTodoID = nil; creation = nil },
             prepare: { location in
+                previewUpdates.cancel()
                 let targetColumn = column(at: location) ?? 0
                 let day = week.adding(days: targetColumn)
                 let minute = dropMinute(at: location)
@@ -557,7 +518,7 @@ struct CalendarWeekTimeline: View {
 
     private func clearHiddenSelection() {
         func isVisible(_ id: UUID) -> Bool {
-            guard let schedule = store.schedules.first(where: { $0.id == id }) else { return false }
+            guard let schedule = store.schedule(withID: id) else { return false }
             guard let todoID = schedule.todoID else { return true }
             return store.item(withID: todoID).map { visibility.includes($0) } == true
         }
@@ -567,6 +528,7 @@ struct CalendarWeekTimeline: View {
 
     private func cancel() { suppressed = true; clearDrag() }
     private func clearDrag() {
+        previewUpdates.cancel()
         if let original = drag?.original, presentationCache.dragPreview?.id == original.id {
             presentationCache.dragPreview = nil
         }
@@ -602,5 +564,27 @@ private struct CalendarWeekTimelineContent<Content: View>: View, Equatable {
 
     var body: some View { content() }
 
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.version == rhs.version }
+}
+
+/// Only days whose cards or geometry changed need to rebuild during a shared drag.
+private struct CalendarWeekDayVersion: Equatable, Sendable {
+    var day: LocalDay
+    var revision: UInt64
+    var schedules: [DaySchedule]
+    var placements: [DayPlanningPolicy.Placement]
+    var width: CGFloat
+    var hourHeight: CGFloat
+    var selectedID: UUID?
+    var draftID: UUID
+    var minute: Int?
+    var locale: String
+}
+
+private struct CalendarWeekDayContent<Content: View>: View, Equatable {
+    nonisolated let version: CalendarWeekDayVersion
+    @ViewBuilder var content: () -> Content
+    // Each day's offsets are absolute against the timeline, never cumulative.
+    var body: some View { ZStack(alignment: .topLeading) { content() } }
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.version == rhs.version }
 }

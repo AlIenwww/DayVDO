@@ -13,7 +13,10 @@ struct CalendarDisplayModePicker: View {
                 picker
             }
         }
-        .frame(minWidth: LocalizedControlSizing.segmentedWidth(for: modes.map { title(for: $0) }))
+        .frame(width: LocalizedControlSizing.segmentedWidth(
+            for: modes.map { title(for: $0) },
+            minimumSegmentWidth: 48
+        ))
     }
 
     private var picker: some View {

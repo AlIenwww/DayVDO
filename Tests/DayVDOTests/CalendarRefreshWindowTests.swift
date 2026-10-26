@@ -37,7 +37,7 @@ final class CalendarRefreshWindowTests: XCTestCase {
             var moving = TodoItem(title: "Moving", dueDate: monday.adding(days: 1).date())
             XCTAssertTrue(store.upsert(existing))
             XCTAssertTrue(store.upsert(moving))
-            let key = CalendarWindowSnapshot.Key(revision: store.contentRevision,
+            let key = CalendarWindowSnapshot.Key(revision: store.dateContentRevision,
                 firstDay: monday, lastDay: monday.adding(days: 13),
                 timeZoneIdentifier: TimeZone.current.identifier, firstWeekday: 2,
                 visibility: .init(showCompleted: true))
@@ -89,7 +89,7 @@ final class CalendarRefreshWindowTests: XCTestCase {
         let weekCache = CalendarWindowCache()
         let visibility = TodoFilterContext(showCompleted: true)
         let calendar = AppCalendar.make(locale: L10n.locale, startsOnMonday: true)
-        let initialKey = CalendarWindowSnapshot.Key(revision: store.contentRevision,
+        let initialKey = CalendarWindowSnapshot.Key(revision: store.dateContentRevision,
             firstDay: monday.adding(days: -84), lastDay: monday.adding(days: 125),
             timeZoneIdentifier: calendar.timeZone.identifier, firstWeekday: 2, visibility: visibility)
         for cache in [monthCache, weekCache] {
