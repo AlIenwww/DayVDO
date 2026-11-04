@@ -1,6 +1,5 @@
 import SwiftUI
 import Combine
-import UniformTypeIdentifiers
 
 fileprivate final class ProjectHeightStorage: @unchecked Sendable {
     // SwiftUI Layout callbacks are not main-actor isolated. The lock protects
@@ -129,7 +128,6 @@ struct AllTodosView: View {
     @State private var pendingCollapseDeadlines: [UUID: ContinuousClock.Instant] = [:]
     @State private var projectPendingDeletion: TodoProject?
     @State private var hoveredProjectID: UUID?
-    @State private var taskDrag: ProjectTaskDragPreview?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSearchPresented = false
     @FocusState private var focusedProjectAddButtonID: UUID?
@@ -221,7 +219,6 @@ struct AllTodosView: View {
         }
         .onAppear { synchronizeProjectExpansion(animated: false) }
         .onDisappear {
-            taskDrag = nil
             finishPendingProjectCollapses()
         }
         .task(id: pendingCollapseDeadlines.values.min()) {
@@ -231,19 +228,6 @@ struct AllTodosView: View {
             let due = Set(pendingCollapseDeadlines.compactMap { $0.value <= .now ? $0.key : nil })
             renderedProjectIDs.subtract(due.subtracting(visualExpandedProjectIDs))
             for id in due { pendingCollapseDeadlines.removeValue(forKey: id) }
-        }
-        .task(id: taskDrag?.itemID) {
-            guard taskDrag != nil else { return }
-            // A native drag runs its own event loop. Check the system button state
-            // as well as successful drops so Escape and drops outside restore order.
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(120))
-                guard !Task.isCancelled else { return }
-                if NSEvent.pressedMouseButtons & 1 == 0 {
-                    withAnimation(taskReorderAnimation) { taskDrag = nil }
-                    return
-                }
-            }
         }
         .task(id: searchFocusRequest) {
             guard searchFocusRequest > 0 else { return }
@@ -377,68 +361,8 @@ struct AllTodosView: View {
                 .padding(.leading, 28)
                 .padding(.bottom, 12)
         } else {
-            VStack(spacing: 0) {
-                ForEach(Array(dragOrderedChildren(children, in: project.id).enumerated()), id: \.element.id) { index, item in
-                    let isFirst = index == 0
-                    let isLast = index == children.count - 1
-                    let shape = UnevenRoundedRectangle(
-                        cornerRadii: RectangleCornerRadii(
-                            topLeading: isFirst ? 10 : 0,
-                            bottomLeading: isLast ? 10 : 0,
-                            bottomTrailing: isLast ? 10 : 0,
-                            topTrailing: isFirst ? 10 : 0
-                        ),
-                        style: .continuous
-                    )
-
-                    TodoRow(item: item, showsProject: false, showsOverdue: true) {
-                        editingItem = item
-                    }
-                        .padding(.horizontal, 10)
-                        .background(Color.secondary.opacity(0.055), in: shape)
-                        .overlay { shape.stroke(Color.secondary.opacity(0.12), lineWidth: 0.5) }
-                        .padding(.leading, 28)
-                        .opacity(taskDrag?.itemID == item.id ? 0.35 : 1)
-                        .onDrag {
-                            taskDrag = ProjectTaskDragPreview(itemID: item.id, projectID: project.id,
-                                orderedIDs: store.items(in: project).map(\.id))
-                            return NSItemProvider(object: item.id.uuidString as NSString)
-                        }
-                        .onDrop(of: [.text], delegate: taskDropDelegate(project: project, targetID: item.id))
-                }
-                Color.clear
-                    .frame(height: 20)
-                    .contentShape(Rectangle())
-                    .padding(.leading, 28)
-                    .onDrop(of: [.text], delegate: taskDropDelegate(project: project, targetID: nil))
-            }
-            .padding(.top, 5)
+            ProjectTaskList(project: project, children: children, editingItem: $editingItem, today: today)
         }
-    }
-
-    private var taskReorderAnimation: Animation? {
-        reduceMotion ? nil : .spring(duration: 0.32, bounce: 0.16)
-    }
-
-    private func dragOrderedChildren(_ children: [TodoItem], in projectID: UUID) -> [TodoItem] {
-        guard let taskDrag, taskDrag.projectID == projectID else { return children }
-        let positions = Dictionary(uniqueKeysWithValues: taskDrag.orderedIDs.enumerated().map { ($1, $0) })
-        return children.sorted { positions[$0.id, default: Int.max] < positions[$1.id, default: Int.max] }
-    }
-
-    private func taskDropDelegate(project: TodoProject, targetID: UUID?) -> ProjectTaskDropDelegate {
-        ProjectTaskDropDelegate(accepts: {
-            store.canModify && taskDrag?.projectID == project.id
-        }, enter: {
-            withAnimation(taskReorderAnimation) { taskDrag?.move(over: targetID) }
-        }, commit: {
-            guard let drag = taskDrag else { return false }
-            withAnimation(taskReorderAnimation) {
-                _ = store.moveProjectItem(drag.itemID, before: drag.followingID, in: project.id)
-                taskDrag = nil
-            }
-            return true
-        })
     }
 
     private func projectHeader(

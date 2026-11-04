@@ -61,6 +61,6 @@ struct SettingsView: View {
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             // `swift run` launches a bare executable without an Info.plist. The
             // shipped app always takes the version from its bundle above.
-            ?? "0.8.1"
+            ?? "0.8.2"
     }
 }

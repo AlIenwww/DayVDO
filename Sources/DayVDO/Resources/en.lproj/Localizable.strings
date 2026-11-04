@@ -315,3 +315,10 @@
 "自定义" = "Custom";
 
 "更多" = "More";
+
+/* Searchable project and tag filters */
+"不限" = "Any";
+"已选 %lld 项" = "%lld selected";
+"清除此项" = "Clear selection";
+"搜索项目" = "Search projects";
+"搜索标签" = "Search tags";

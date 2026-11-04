@@ -40,6 +40,7 @@ struct TodoFilterPopover: View {
     @Binding var filter: TodoFilterState
     @State private var isPickingStart = false
     @State private var isPickingEnd = false
+    @State private var selectionCategory: TodoFilterSelectionCategory?
 
     private let gridColumns = [
         GridItem(.adaptive(minimum: 136), spacing: 8)
@@ -52,8 +53,8 @@ struct TodoFilterPopover: View {
     }
 
     var body: some View {
-        let sortedProjects = self.sortedProjects
-        let sortedTags = store.sortedTags
+        let projectOptions = sortedProjects.map { TodoFilterSelectionOption(id: $0.id, title: $0.title) }
+        let tagOptions = store.sortedTags.map { TodoFilterSelectionOption(id: $0.id, title: $0.name, tag: $0) }
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(L10n.string("筛选"))
@@ -144,55 +145,15 @@ struct TodoFilterPopover: View {
                     }
 
                     filterSection(L10n.string("所属项目")) {
-                        ScrollView {
-                            LazyVStack(spacing: 3) {
-                                filterListChoice(
-                                    title: L10n.string("无归类"),
-                                    symbol: "tray",
-                                    isSelected: filter.includesUnassignedProject
-                                ) {
-                                    filter.includesUnassignedProject.toggle()
-                                }
-
-                                ForEach(sortedProjects) { project in
-                                    filterListChoice(
-                                        title: project.title,
-                                        symbol: "folder",
-                                        isSelected: filter.projectIDs.contains(project.id)
-                                    ) {
-                                        toggle(project.id, at: \.projectIDs)
-                                    }
-                                }
-                            }
-                        }
-                        .scrollIndicators(sortedProjects.count > 3 ? .visible : .hidden)
-                        .frame(height: listHeight(itemCount: sortedProjects.count + 1))
+                        selectionEntry(.projects, options: projectOptions,
+                                       selectedIDs: $filter.projectIDs,
+                                       includesNone: $filter.includesUnassignedProject)
                     }
 
                     filterSection(L10n.string("标签")) {
-                        ScrollView {
-                            LazyVStack(spacing: 3) {
-                                filterListChoice(
-                                    title: L10n.string("无标签"),
-                                    symbol: "tag.slash",
-                                    isSelected: filter.includesUntagged
-                                ) {
-                                    filter.includesUntagged.toggle()
-                                }
-
-                                ForEach(sortedTags) { tag in
-                                    filterListChoice(
-                                        title: tag.name,
-                                        isSelected: filter.tagIDs.contains(tag.id),
-                                        leading: { TaskTagDot(tag: tag, size: 9) }
-                                    ) {
-                                        toggle(tag.id, at: \.tagIDs)
-                                    }
-                                }
-                            }
-                        }
-                        .scrollIndicators(sortedTags.count > 3 ? .visible : .hidden)
-                        .frame(height: listHeight(itemCount: sortedTags.count + 1))
+                        selectionEntry(.tags, options: tagOptions,
+                                       selectedIDs: $filter.tagIDs,
+                                       includesNone: $filter.includesUntagged)
                     }
 
                     filterSection(L10n.string("重要度")) {
@@ -231,7 +192,7 @@ struct TodoFilterPopover: View {
         }
         .padding(16)
         .frame(width: 340)
-        .editorEscapeDismissal(enabled: !isPickingStart && !isPickingEnd) { dismiss() }
+        .editorEscapeDismissal(enabled: !isPickingStart && !isPickingEnd && selectionCategory == nil) { dismiss() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L10n.string("筛选待办"))
     }
@@ -329,26 +290,185 @@ struct TodoFilterPopover: View {
         }
     }
 
-    private func filterListChoice(
-        title: String,
-        symbol: String,
-        isSelected: Bool,
-        action: @escaping () -> Void
+    private func selectionEntry(
+        _ category: TodoFilterSelectionCategory,
+        options: [TodoFilterSelectionOption],
+        selectedIDs: Binding<Set<UUID>>,
+        includesNone: Binding<Bool>
     ) -> some View {
-        filterListChoice(
-            title: title,
-            isSelected: isSelected,
-            leading: {
-                Image(systemName: symbol)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 15)
-                    .accessibilityHidden(true)
-            },
-            action: action
+        let names = (includesNone.wrappedValue ? [category.noneTitle] : [])
+            + options.filter { selectedIDs.wrappedValue.contains($0.id) }.map(\.title)
+        let summary = names.isEmpty ? L10n.string("不限")
+            : names.count == 1 ? names[0] : L10n.format("已选 %lld 项", names.count)
+        let presentation = Binding(
+            get: { selectionCategory == category },
+            set: { isPresented in
+                if isPresented { selectionCategory = category }
+                else if selectionCategory == category { selectionCategory = nil }
+            }
         )
+
+        return Button { selectionCategory = category } label: {
+            HStack(spacing: 8) {
+                Image(systemName: category.symbol)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(summary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 9)
+            .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .background(
+                names.isEmpty ? Color.secondary.opacity(0.07) : Color.accentColor.opacity(0.1),
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .accessibilityLabel(category.title)
+        .accessibilityValue(names.isEmpty ? summary : names.joined(separator: ", "))
+        .help(names.isEmpty ? summary : names.joined(separator: "\n"))
+        .popover(isPresented: presentation, arrowEdge: .trailing) {
+            TodoFilterSelectionPopover(category: category, options: options,
+                                       selectedIDs: selectedIDs, includesNone: includesNone)
+        }
     }
 
-    private func filterListChoice<Leading: View>(
+    private func toggle<Value: Hashable>(
+        _ value: Value,
+        at keyPath: WritableKeyPath<TodoFilterState, Set<Value>>
+    ) {
+        var updated = filter
+        if updated[keyPath: keyPath].contains(value) {
+            updated[keyPath: keyPath].remove(value)
+        } else {
+            updated[keyPath: keyPath].insert(value)
+        }
+        filter = updated
+    }
+}
+
+@MainActor
+private enum TodoFilterSelectionCategory {
+    case projects, tags
+
+    var title: String {
+        switch self {
+        case .projects: L10n.string("所属项目")
+        case .tags: L10n.string("标签")
+        }
+    }
+
+    var searchPrompt: String {
+        switch self {
+        case .projects: L10n.string("搜索项目")
+        case .tags: L10n.string("搜索标签")
+        }
+    }
+
+    var noneTitle: String {
+        switch self {
+        case .projects: L10n.string("无归类")
+        case .tags: L10n.string("无标签")
+        }
+    }
+
+    var symbol: String { self == .projects ? "folder" : "tag" }
+    var noneSymbol: String { self == .projects ? "tray" : "tag.slash" }
+}
+
+private struct TodoFilterSelectionOption: Identifiable {
+    let id: UUID
+    let title: String
+    var tag: TaskTag?
+}
+
+private struct TodoFilterSelectionPopover: View {
+    @Environment(\.dismiss) private var dismiss
+    let category: TodoFilterSelectionCategory
+    let options: [TodoFilterSelectionOption]
+    @Binding var selectedIDs: Set<UUID>
+    @Binding var includesNone: Bool
+    @State private var search = ""
+    @FocusState private var isSearching: Bool
+
+    var body: some View {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches = options.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(category.title).font(.headline)
+                Spacer(minLength: 8)
+                Button(L10n.string("清除此项")) {
+                    selectedIDs = []
+                    includesNone = false
+                }
+                .buttonStyle(.borderless)
+                .disabled(selectedIDs.isEmpty && !includesNone)
+            }
+
+            TextField(category.searchPrompt, text: $search)
+                .textFieldStyle(.roundedBorder)
+                .focused($isSearching)
+                .accessibilityLabel(category.searchPrompt)
+
+            selectionRow(title: category.noneTitle, isSelected: includesNone) {
+                Image(systemName: category.noneSymbol)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 15)
+            } action: { includesNone.toggle() }
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    if matches.isEmpty {
+                        Text(L10n.string("没有找到结果"))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                            .padding(.horizontal, 8)
+                    }
+                    ForEach(matches) { option in
+                        selectionRow(title: option.title, isSelected: selectedIDs.contains(option.id)) {
+                            if let tag = option.tag {
+                                TaskTagDot(tag: tag, size: 9)
+                                    .frame(width: 15)
+                            } else {
+                                Image(systemName: category.symbol)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 15)
+                            }
+                        } action: {
+                            if selectedIDs.contains(option.id) { selectedIDs.remove(option.id) }
+                            else { selectedIDs.insert(option.id) }
+                        }
+                    }
+                }
+                .padding(1)
+            }
+            .frame(height: min(CGFloat(max(matches.count, 1)) * 31 - 1, 320))
+            .id(query)
+        }
+        .padding(16)
+        .frame(width: 340)
+        .onAppear {
+            search = ""
+            isSearching = true
+        }
+        .editorEscapeDismissal { dismiss() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(category.title)
+    }
+
+    private func selectionRow<Leading: View>(
         title: String,
         isSelected: Bool,
         @ViewBuilder leading: () -> Leading,
@@ -356,7 +476,7 @@ struct TodoFilterPopover: View {
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                leading()
+                leading().accessibilityHidden(true)
                 Text(title)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -378,24 +498,8 @@ struct TodoFilterPopover: View {
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
+        .help(title)
         .accessibilityValue(L10n.string(isSelected ? "已选择" : "未选择"))
-    }
-
-    private func toggle<Value: Hashable>(
-        _ value: Value,
-        at keyPath: WritableKeyPath<TodoFilterState, Set<Value>>
-    ) {
-        var updated = filter
-        if updated[keyPath: keyPath].contains(value) {
-            updated[keyPath: keyPath].remove(value)
-        } else {
-            updated[keyPath: keyPath].insert(value)
-        }
-        filter = updated
-    }
-
-    private func listHeight(itemCount: Int) -> CGFloat {
-        min(CGFloat(max(itemCount, 1)) * 31, 112)
     }
 }
 

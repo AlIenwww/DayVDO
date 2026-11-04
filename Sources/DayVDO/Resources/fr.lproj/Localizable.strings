@@ -233,3 +233,10 @@
 "自定义" = "Personnalisé";
 
 "更多" = "Plus";
+
+/* Searchable project and tag filters */
+"不限" = "Sans restriction";
+"已选 %lld 项" = "%lld sélectionnés";
+"清除此项" = "Effacer la sélection";
+"搜索项目" = "Rechercher un projet";
+"搜索标签" = "Rechercher une étiquette";
