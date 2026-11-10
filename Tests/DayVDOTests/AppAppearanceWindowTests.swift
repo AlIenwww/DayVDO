@@ -56,8 +56,9 @@ final class AppAppearanceWindowTests: XCTestCase {
 
         let mainProbe = AppearanceProbe()
         let settingsProbe = AppearanceProbe()
-        let main = makeWindow(ContentView().environmentObject(store), probe: mainProbe)
-        let settings = makeWindow(SettingsView().environmentObject(store), probe: settingsProbe)
+        let navigation = AppNavigation(store: store)
+        let main = makeWindow(ContentView().environmentObject(store).environmentObject(navigation), probe: mainProbe)
+        let settings = makeWindow(SettingsView().environmentObject(store).environmentObject(navigation), probe: settingsProbe)
         defer {
             for window in [main, settings] { window.contentView = nil; window.close() }
             delegate.store = nil

@@ -5,6 +5,11 @@ import SwiftUI
 @MainActor
 @Observable
 final class SidebarPagePresentation {
+    init(initialDestination: SidebarDestination = .today) {
+        selection = initialDestination
+        displayedDestination = initialDestination
+    }
+
     var selection: SidebarDestination? = .today
     private(set) var displayedDestination: SidebarDestination = .today
     @ObservationIgnored let feedback = SidebarSelectionFeedback()

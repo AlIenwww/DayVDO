@@ -47,6 +47,7 @@ struct SchedulePopoverView: View {
 }
 
 struct ScheduleEditorView: View {
+    @Environment(\.practiceDay) private var practiceDay
     @EnvironmentObject private var store: TodoStore
     @Environment(\.dismiss) private var dismiss
     @State private var draft: DaySchedule
@@ -121,6 +122,7 @@ struct ScheduleEditorView: View {
                 DatePicker(L10n.string("开始日期"), selection: Binding(
                     get: { draft.startDay.date() }, set: { draft.startDay = LocalDay($0) }
                 ), displayedComponents: .date)
+                .disabled(practiceDay != nil)
                 .datePickerStyle(.stepperField)
                 .labelsHidden()
                 .fixedSize()

@@ -51,7 +51,7 @@ struct ProjectTaskList: View {
     }
 
     private var animation: Animation? {
-        reduceMotion ? nil : .spring(duration: 0.32, bounce: 0.16)
+        store.settings.animation(.spring(duration: 0.32, bounce: 0.16), for: .projectReorder, reduceMotion: reduceMotion)
     }
 }
 
@@ -151,7 +151,7 @@ private struct ProjectTaskDragRow: View, Equatable {
     }
 
     private var animation: Animation? {
-        reduceMotion ? nil : .spring(duration: 0.32, bounce: 0.16)
+        store.settings.animation(.spring(duration: 0.32, bounce: 0.16), for: .projectReorder, reduceMotion: reduceMotion)
     }
 }
 

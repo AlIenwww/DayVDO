@@ -22,36 +22,89 @@ extension FocusedValues {
 
 private struct DayVDOCommands: Commands {
     @FocusedValue(\.dayVDOCommandActions) private var actions
+    @Environment(\.openWindow) private var openWindow
+    @ObservedObject var navigation: AppNavigation
+    @ObservedObject var store: TodoStore
+
+    private func navigate(_ destination: SidebarDestination) {
+        if destination != .settings, let actions {
+            actions.navigate(destination)
+        } else {
+            navigation.navigate(to: destination)
+        }
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
     var body: some Commands {
+        PracticeUndoCommands(guide: navigation.guide, formalUndoManager: navigation.undoManager,
+                             settings: store.settings)
+        CommandGroup(replacing: .appSettings) {
+            Button(L10n.string("设置…")) { navigate(.settings) }
+                .keyboardShortcut(store.settings.shortcut(for: .settings).keyboardShortcut)
+        }
         CommandGroup(replacing: .newItem) {
             Button(L10n.string("新建待办")) { actions?.newTodo() }
-                .keyboardShortcut("n", modifiers: .command)
+                .keyboardShortcut(store.settings.shortcut(for: .newTodo).keyboardShortcut)
                 .disabled(actions == nil)
 
             Button(L10n.string("新建大项目…")) { actions?.newProject() }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .keyboardShortcut(store.settings.shortcut(for: .newProject).keyboardShortcut)
                 .disabled(actions == nil)
         }
         CommandGroup(after: .pasteboard) {
             Button(L10n.string("搜索待办")) { actions?.focusSearch() }
-                .keyboardShortcut("f", modifiers: .command)
+                .keyboardShortcut(store.settings.shortcut(for: .search).keyboardShortcut)
                 .disabled(actions == nil)
         }
         CommandGroup(after: .sidebar) {
-            Button(L10n.string("今日待办")) { actions?.navigate(.today) }
-                .keyboardShortcut("1", modifiers: .command)
-                .disabled(actions == nil)
-            Button(L10n.string("日历")) { actions?.navigate(.calendar) }
-                .keyboardShortcut("2", modifiers: .command)
-                .disabled(actions == nil)
-            Button(L10n.string("总待办")) { actions?.navigate(.all) }
-                .keyboardShortcut("3", modifiers: .command)
-                .disabled(actions == nil)
-            Button(L10n.string("设置")) { actions?.navigate(.settings) }
-                .keyboardShortcut("4", modifiers: .command)
-                .disabled(actions == nil)
+            Button(L10n.string("今日待办")) { navigate(.today) }
+                .keyboardShortcut(store.settings.shortcut(for: .today).keyboardShortcut)
+            Button(L10n.string("日历")) { navigate(.calendar) }
+                .keyboardShortcut(store.settings.shortcut(for: .calendar).keyboardShortcut)
+            Button(L10n.string("总待办")) { navigate(.all) }
+                .keyboardShortcut(store.settings.shortcut(for: .all).keyboardShortcut)
+            Button(L10n.string("设置")) { navigate(.settings) }
+                .keyboardShortcut(store.settings.shortcut(for: .settingsAlternate).keyboardShortcut)
         }
+    }
+}
+
+/// Do not let the formal window's undo history receive an undo while practicing.
+/// Native text fields retain their own text undo; all other practice actions use the isolated manager.
+private struct PracticeUndoCommands: Commands {
+    @StateObject private var undoChanges = UndoMenuChanges()
+    @ObservedObject var guide: OnboardingSession
+    let formalUndoManager: UndoManager
+    let settings: AppSettings
+    private var manager: UndoManager? {
+        if let text = NSApp.keyWindow?.firstResponder as? NSTextView { return text.undoManager }
+        return guide.isPresented ? guide.undoManager : formalUndoManager
+    }
+    var body: some Commands {
+        let _ = undoChanges.revision
+        CommandGroup(replacing: .undoRedo) {
+            Button(L10n.string("撤销")) { manager?.undo() }
+                .keyboardShortcut(settings.shortcut(for: .undo).keyboardShortcut)
+                .disabled(manager?.canUndo != true)
+            Button(L10n.string("重做")) { manager?.redo() }
+                .keyboardShortcut(settings.shortcut(for: .redo).keyboardShortcut)
+                .disabled(manager?.canRedo != true)
+        }
+    }
+}
+
+@MainActor
+private final class UndoMenuChanges: ObservableObject {
+    @Published var revision = 0
+    private var subscription: AnyCancellable?
+    init() {
+        subscription = Publishers.MergeMany([
+            Notification.Name.NSUndoManagerDidCloseUndoGroup, Notification.Name.NSUndoManagerDidUndoChange,
+            Notification.Name.NSUndoManagerDidRedoChange, NSWindow.didBecomeKeyNotification
+        ].map { NotificationCenter.default.publisher(for: $0) })
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in self?.revision += 1 }
     }
 }
 
@@ -66,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     private var appearanceSubscription: AnyCancellable?
+    weak var guide: OnboardingSession?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -73,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let guide, guide.isPresented, !guide.needsReset, !guide.persist() { return .terminateCancel }
         guard let store, store.hasPendingPersistence else { return .terminateNow }
         Task {
             let didSave = await store.prepareForTermination()
@@ -86,11 +141,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct DayVDOApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: TodoStore
+    @StateObject private var navigation: AppNavigation
 
     init() {
         let initialStore = Self.makeStore()
         _store = StateObject(wrappedValue: initialStore)
+        let initialNavigation = AppNavigation(store: initialStore)
+        _navigation = StateObject(wrappedValue: initialNavigation)
         appDelegate.store = initialStore
+        appDelegate.guide = initialNavigation.guide
     }
 
     private static func makeStore() -> TodoStore {
@@ -116,22 +175,18 @@ struct DayVDOApp: App {
 
     var body: some Scene {
         Window("DayVDO", id: "main") {
-            ContentView()
+            AppRootView(store: store, navigation: navigation, guide: navigation.guide)
                 .background { IconOnlyWindowToolbar() }
                 .environmentObject(store)
                 .environment(\.locale, store.settings.language.locale)
+                .accentColor(store.settings.themeColor?.color)
+                .tint(store.settings.themeColor?.color)
                 .frame(minWidth: 760, minHeight: 468)
         }
         .defaultSize(width: 1080, height: 720)
         .commands {
-            DayVDOCommands()
+            DayVDOCommands(navigation: navigation, store: store)
         }
 
-        Settings {
-            SettingsView()
-                .environmentObject(store)
-                .environment(\.locale, store.settings.language.locale)
-                .frame(width: 520, height: 480)
-        }
     }
 }

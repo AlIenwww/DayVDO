@@ -456,7 +456,7 @@ struct AllTodosView: View {
             .focused($focusedProjectAddButtonID, equals: project.id)
             .opacity(showsAddButton ? 1 : 0)
             .allowsHitTesting(showsAddButton)
-            .animation(.easeOut(duration: 0.1), value: showsAddButton)
+            .animation(listControlAnimation, value: showsAddButton)
             .help(L10n.string("添加子任务"))
         }
         .frame(minHeight: 38, alignment: .center)
@@ -481,7 +481,7 @@ struct AllTodosView: View {
         }
         .onHover { isHovering in
             guard isHovering != (hoveredProjectID == project.id) else { return }
-            withAnimation(.easeOut(duration: 0.1)) {
+            withAnimation(listControlAnimation) {
                 if isHovering {
                     hoveredProjectID = project.id
                 } else if hoveredProjectID == project.id {
@@ -592,7 +592,7 @@ struct AllTodosView: View {
             pendingCollapseDeadlines.removeValue(forKey: projectID)
             renderedProjectIDs.insert(projectID)
             let update = { _ = visualExpandedProjectIDs.insert(projectID) }
-            if animated {
+            if animated && projectDisclosureAnimation != nil {
                 Task { @MainActor in
                     await Task.yield()
                     guard expansionState.isExpanded(projectID) else { return }
@@ -604,7 +604,7 @@ struct AllTodosView: View {
             return
         }
 
-        if animated {
+        if animated && projectDisclosureAnimation != nil {
             pendingCollapseDeadlines[projectID] = .now + .milliseconds(180)
             visualExpandedProjectIDs.remove(projectID)
         } else {
@@ -618,8 +618,12 @@ struct AllTodosView: View {
         }
     }
 
-    private var projectDisclosureAnimation: Animation {
-        .easeInOut(duration: 0.16)
+    private var projectDisclosureAnimation: Animation? {
+        store.settings.animation(.easeInOut(duration: 0.16), for: .projectDisclosure, reduceMotion: reduceMotion)
+    }
+
+    private var listControlAnimation: Animation? {
+        store.settings.animation(.easeOut(duration: 0.1), for: .listControls, reduceMotion: reduceMotion)
     }
 
     private var hasActiveFiltering: Bool {
@@ -652,7 +656,7 @@ struct AllTodosView: View {
         let update = {
             if visualExpandedProjectIDs != desired { visualExpandedProjectIDs = desired }
         }
-        if animated {
+        if animated && projectDisclosureAnimation != nil {
             let deadline = ContinuousClock.now + .milliseconds(180)
             for projectID in removed { pendingCollapseDeadlines[projectID] = deadline }
             update()

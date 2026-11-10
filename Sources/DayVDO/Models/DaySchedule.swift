@@ -71,8 +71,8 @@ enum DayPlanningPolicy {
         return min(last, max(first, snapped(minute)))
     }
 
-    static func defaultDuration(estimated: Int?, scheduled: Int) -> Int {
-        guard let estimated, estimated > scheduled else { return 30 }
+    static func defaultDuration(estimated: Int?, scheduled: Int, fallback: Int = 30) -> Int {
+        guard let estimated, estimated > scheduled else { return min(1440, max(1, fallback)) }
         return min(1440, estimated - scheduled)
     }
 

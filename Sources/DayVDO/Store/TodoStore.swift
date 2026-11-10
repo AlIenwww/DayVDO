@@ -28,7 +28,7 @@ final class TodoStore: ObservableObject {
     }
     @Published var settings = AppSettings() {
         didSet {
-            L10n.configure(language: settings.language)
+            if persistsToDisk { L10n.configure(language: settings.language) }
             if settings != oldValue { scheduleSave() }
         }
     }
@@ -85,7 +85,18 @@ final class TodoStore: ObservableObject {
         var isCompleted: Bool { total > 0 && completed == total }
     }
 
-    private let fileURL: URL
+    let fileURL: URL
+    private let persistsToDisk: Bool
+    private(set) var isNewInstallation = false
+
+    /// Tutorial mutations use the same model and undo behavior, without disk or global locale effects.
+    init(practiceSnapshot: TodoSnapshot) {
+        persistsToDisk = false
+        fileURL = URL(fileURLWithPath: "/dev/null")
+        persistenceWriter = TodoPersistence(fileURL: fileURL)
+        applyLoadedSnapshot(practiceSnapshot)
+    }
+
     private let persistenceWriter: TodoPersistence
     private var itemsByProject: [UUID: [TodoItem]] = [:]
     private var itemsByID: [UUID: TodoItem] = [:]
@@ -114,9 +125,18 @@ final class TodoStore: ObservableObject {
     private var hasUnsavedChanges = false
 
     init(fileURL: URL? = nil, loadsAsynchronously: Bool? = nil) {
+        persistsToDisk = true
         let resolvedURL = fileURL ?? Self.defaultFileURL
         if fileURL == nil {
             Self.migrateLegacyDataIfNeeded(to: resolvedURL)
+        }
+        // A present (even empty or corrupt) data file identifies an existing installation.
+        // An inaccessible directory must never be treated as first launch.
+        let parent = resolvedURL.deletingLastPathComponent()
+        isNewInstallation = Self.isNewDataLocation(resolvedURL)
+        if fileURL == nil {
+            let legacy = parent.deletingLastPathComponent().appendingPathComponent("Daymark/todos.json")
+            if FileManager.default.fileExists(atPath: legacy.path) { isNewInstallation = false }
         }
         self.fileURL = resolvedURL
         persistenceWriter = TodoPersistence(fileURL: resolvedURL)
@@ -136,6 +156,17 @@ final class TodoStore: ObservableObject {
             }
         } else {
             applyLoadResult(TodoPersistence.load(from: resolvedURL))
+        }
+    }
+
+    static func isNewDataLocation(_ url: URL) -> Bool {
+        do {
+            let names = try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)
+            return !names.contains(url.lastPathComponent) && !names.contains("Backups") && !names.contains("Corrupt")
+        } catch let error as NSError {
+            // Missing is new; unreadable or otherwise inaccessible is not.
+            return error.domain == NSCocoaErrorDomain
+                && [NSFileReadNoSuchFileError, NSFileNoSuchFileError].contains(error.code)
         }
     }
 
@@ -546,13 +577,10 @@ final class TodoStore: ObservableObject {
         return orderedProjectItems[project.id] ?? []
     }
 
-    func newItem(in project: TodoProject) -> TodoItem {
-        TodoItem(
-            title: "",
-            priority: settings.defaultPriority,
-            projectID: project.id,
-            tagID: project.tagID
-        )
+    func newItem(startDate: Date? = nil, dueDate: Date? = nil, in project: TodoProject? = nil) -> TodoItem {
+        TodoItem(title: "", startDate: startDate, dueDate: dueDate,
+                 priority: settings.defaultPriority, urgency: settings.defaultUrgency,
+                 projectID: project?.id, tagID: project?.tagID)
     }
 
     func projectIsCompleted(_ project: TodoProject) -> Bool {
@@ -610,7 +638,7 @@ final class TodoStore: ObservableObject {
     }
 
     func restoreLatestBackup() {
-        guard recoveryTask == nil else { return }
+        guard persistsToDisk, recoveryTask == nil else { return }
         recoveryTask = Task { [weak self] in
             guard let self else { return }
             await restoreLatestBackupNow()
@@ -619,7 +647,7 @@ final class TodoStore: ObservableObject {
     }
 
     func restoreLatestBackupNow() async {
-        guard let recoverySnapshot else { return }
+        guard persistsToDisk, let recoverySnapshot else { return }
         do {
             try await persistenceWriter.replaceCorruptPrimary(with: recoverySnapshot)
             applyLoadedSnapshot(recoverySnapshot)
@@ -637,7 +665,7 @@ final class TodoStore: ObservableObject {
     }
 
     func continueWithEmptyData() {
-        guard recoveryTask == nil else { return }
+        guard persistsToDisk, recoveryTask == nil else { return }
         recoveryTask = Task { [weak self] in
             guard let self else { return }
             await continueWithEmptyDataNow()
@@ -646,6 +674,7 @@ final class TodoStore: ObservableObject {
     }
 
     func continueWithEmptyDataNow() async {
+        guard persistsToDisk else { return }
         let empty = TodoSnapshot(items: [], projects: [], tags: [], settings: settings)
         do {
             try await persistenceWriter.replaceCorruptPrimary(with: empty)
@@ -665,6 +694,7 @@ final class TodoStore: ObservableObject {
 
     @discardableResult
     func flushPersistence() async -> Bool {
+        guard persistsToDisk else { return true }
         saveGeneration &+= 1
         while true {
             let generation = saveGeneration
@@ -763,7 +793,7 @@ final class TodoStore: ObservableObject {
     }
 
     private func scheduleSave(delayNanoseconds: UInt64 = 150_000_000) {
-        guard !isLoading, !isReadOnly else { return }
+        guard persistsToDisk, !isLoading, !isReadOnly else { return }
         hasUnsavedChanges = true
         saveGeneration &+= 1
         let generation = saveGeneration
@@ -790,7 +820,7 @@ final class TodoStore: ObservableObject {
         }
     }
 
-    private func currentSnapshot() -> TodoSnapshot {
+    func currentSnapshot() -> TodoSnapshot {
         TodoSnapshot(items: items, projects: projects, tags: tags, settings: settings, schedules: schedules)
     }
 

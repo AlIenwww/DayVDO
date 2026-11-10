@@ -5,6 +5,7 @@ struct CalendarWeekView: View {
     @EnvironmentObject private var store: TodoStore
     @EnvironmentObject private var selection: CalendarTodoSelection
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.practiceDay) private var practiceDay
     let calendar: Calendar
     let visibility: TodoFilterContext
     @Binding var selectedDate: Date
@@ -19,7 +20,8 @@ struct CalendarWeekView: View {
     var editTodo: (TodoItem) -> Void
     var showMore: (LocalDay) -> Void
 
-    @AppStorage("calendarWeekTodoFraction") private var todoFraction = CalendarWeekSplitPolicy.defaultFraction
+    @AppStorage("calendarWeekTodoFraction") private var savedTodoFraction = CalendarWeekSplitPolicy.defaultFraction
+    @State private var practiceTodoFraction = CalendarWeekSplitPolicy.defaultFraction
     @State private var firstVisibleDay: LocalDay?
     @State private var scrollingDay: LocalDay?
     @State private var todoPosition = CalendarWeekTodoPosition()
@@ -47,15 +49,19 @@ struct CalendarWeekView: View {
 
     var body: some View {
         let firstDay = firstVisibleDay ?? week
+        let todoFraction = practiceDay == nil ? $savedTodoFraction : $practiceTodoFraction
         CalendarWeekDateViewport(week: week, firstDay: firstDay, leadingInset: 54,
             navigationID: navigationID,
             navigationDay: navigationDate.map { LocalDay($0, timeZone: calendar.timeZone) },
+            animatesScroll: store.settings.animates(.calendarScroll),
             contentVersion: CalendarWeekContentVersion(
                 revision: store.timelineContentRevision, visibility: visibility, selectedDay: LocalDay(selectedDate),
-                hourHeight: position.hourHeight, todoFraction: todoFraction,
+                hourHeight: position.hourHeight, todoFraction: todoFraction.wrappedValue,
                 snapshot: windowCache.snapshot?.key, minimumContentHeight: todoContentHeight,
-                locale: L10n.locale.identifier, isDark: colorScheme == .dark),
-            axis: AnyView(CalendarWeekSplitView(fraction: $todoFraction, showsDividerControl: false) {
+                locale: L10n.locale.identifier, isDark: colorScheme == .dark,
+                themeColor: store.settings.themeColor,
+                disabledAnimations: store.settings.disabledAnimations),
+            axis: AnyView(CalendarWeekSplitView(fraction: todoFraction, showsDividerControl: false) {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: 64)
                     Text(L10n.string("待办事项")).font(.caption2).foregroundStyle(.secondary).padding(.top, 6)
@@ -76,14 +82,14 @@ struct CalendarWeekView: View {
                     windowCache: windowCache, presentationCache: presentationCache,
                     createTodo: createTodo, changeTodo: changeTodo, editTodo: editTodo, showMore: showMore,
                     week: pageWeek,
-                    todoFraction: $todoFraction, todoPosition: todoPosition,
+                    todoFraction: todoFraction, todoPosition: todoPosition,
                     minimumTodoContentHeight: todoContentHeight)
                     .environmentObject(dateInteraction)
                     .environmentObject(store).environmentObject(selection)
             }
             .id(CalendarViewportIdentity(firstWeekday: calendar.firstWeekday,
                                          timeZoneIdentifier: calendar.timeZone.identifier))
-        .overlay { CalendarWeekDivider(fraction: $todoFraction) }
+        .overlay { CalendarWeekDivider(fraction: todoFraction) }
         .task(id: snapshotKey) {
             var nearby = snapshotKey
             nearby.firstDay = cacheWeek.adding(days: -7)
@@ -112,6 +118,8 @@ private struct CalendarWeekContentVersion: Hashable {
     var minimumContentHeight: CGFloat
     var locale: String
     var isDark: Bool
+    var themeColor: TagColor?
+    var disabledAnimations: Set<AppAnimationEffect>
 }
 
 private struct CalendarWeekPage: View {

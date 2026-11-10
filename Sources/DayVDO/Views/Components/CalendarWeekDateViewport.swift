@@ -17,6 +17,7 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
     var leadingInset: CGFloat = 0
     var navigationID: UUID?
     var navigationDay: LocalDay?
+    var animatesScroll = true
     /// Omit scroll positions; bindings and observed models update hosted pages.
     var contentVersion: AnyHashable?
     var axis: AnyView = AnyView(EmptyView())
@@ -87,6 +88,7 @@ struct CalendarWeekDateViewport<Content: View>: NSViewRepresentable {
             self.parent = parent; self.environment = environment
             guard let view else { return }
             view.leadingInset = parent.leadingInset
+            view.scroll.animatesScroll = parent.animatesScroll
             if contentChanged {
                 view.axis.rootView = AnyView(parent.axis.environment(\.self, environment))
             }
@@ -291,6 +293,7 @@ final class CalendarWeekHorizontalScrollView: NSScrollView {
     private(set) var motion = Motion.idle
     var columnWidth: CGFloat = 1
     var leadingInset: CGFloat = 0
+    var animatesScroll = true
     var scrolled: (() -> Void)?
     var settled: (() -> Void)?
     private var monitor: Any?
@@ -427,7 +430,7 @@ final class CalendarWeekHorizontalScrollView: NSScrollView {
             guard let self else { return }
             self.motion = .settled; self.settled?()
         }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if !animatesScroll || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             update(CGPoint(x: x, y: 0)); complete()
         } else {
             animator.start(from: contentView.bounds.origin, to: CGPoint(x: x, y: 0),
@@ -451,7 +454,7 @@ final class CalendarWeekHorizontalScrollView: NSScrollView {
             self.reflectScrolledClipView(self.contentView)
             update()
         }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if !animatesScroll || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             apply(target)
         } else {
             animator.start(from: contentView.bounds.origin, to: target,

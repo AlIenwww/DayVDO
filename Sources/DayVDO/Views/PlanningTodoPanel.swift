@@ -180,6 +180,7 @@ enum PlanningTodoPanelPolicy {
 
 struct PlanningTodoPanel: View {
     @EnvironmentObject private var store: TodoStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let day: LocalDay
     let today: LocalDay
     var edit: (TodoItem) -> Void
@@ -222,7 +223,7 @@ struct PlanningTodoPanel: View {
                             }
                         } header: {
                             Button {
-                                withAnimation(.snappy(duration: 0.18)) {
+                                withAnimation(store.settings.animation(.snappy(duration: 0.18), for: .planningSections, reduceMotion: reduceMotion)) {
                                     if expandedSections.contains(section.kind) {
                                         expandedSections.remove(section.kind)
                                     } else {
@@ -268,7 +269,7 @@ struct PlanningTodoPanel: View {
                             .padding(.vertical, 32)
                     }
                 }
-                .animation(.snappy(duration: 0.28), value: sections)
+                .animation(store.settings.animation(.snappy(duration: 0.28), for: .planningSections, reduceMotion: reduceMotion), value: sections)
                 .id(day)
             }
             .scrollBounceBehavior(.always, axes: .vertical)

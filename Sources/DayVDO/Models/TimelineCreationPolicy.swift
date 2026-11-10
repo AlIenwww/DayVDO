@@ -13,9 +13,11 @@ enum TimelineCreationPolicy {
         snapped(minute, boundaries: boundaries, pointsPerMinute: pointsPerMinute, within: 0...1440)
     }
 
-    static func defaultRange(anchoredAt start: Int) -> Range<Int> {
-        if start > 1435 { return (start - 30)..<start }
-        return start..<min(1440, start + 30)
+    static func defaultRange(anchoredAt start: Int, duration: Int = 30) -> Range<Int> {
+        let duration = min(1440, max(1, duration))
+        let start = min(1440, max(0, start))
+        if start > 1435 { return max(0, start - duration)..<start }
+        return start..<min(1440, start + duration)
     }
 
     /// The fixed anchor can be off-grid; the moving edge follows the absolute

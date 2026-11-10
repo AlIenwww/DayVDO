@@ -35,6 +35,7 @@ private struct ScheduleStatusFrames: PreferenceKey {
 }
 
 struct DayTimelineView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var store: TodoStore
     let day: LocalDay
     @Binding var hourHeight: CGFloat
@@ -241,7 +242,20 @@ struct DayTimelineView: View {
                         && location.y >= 0 && location.y <= viewportHeight
                 }) { location, count in
                     guard let hit = scheduleHit(at: location, placements: placements, width: timelineWidth) else {
-                        if count == 1 { selectedID = nil }
+                        if count == 1 {
+                            if selectedID != nil { selectedID = nil }
+                            else if location.x >= gutter, presentation == nil, creationDraft.wrappedValue == nil, store.canModify {
+                                let minute = Double((location.y + scrollOffset - 12) / pixelsPerMinute)
+                                let start = TimelineCreationPolicy.startMinute(at: minute,
+                                    boundaries: creationBoundaries, pointsPerMinute: Double(pixelsPerMinute))
+                                let range = TimelineCreationPolicy.defaultRange(anchoredAt: start,
+                                    duration: store.settings.defaultScheduleMinutes)
+                                creationAnchor = location
+                                create(range.lowerBound, range.count,
+                                       DayPlanningPolicy.horizontalPosition(x: Double(location.x), minX: Double(gutter),
+                                                                            width: Double(timelineWidth - gutter - 8)))
+                            }
+                        }
                         return
                     }
                     guard statusFrames[hit.id]?.contains(hit.point) != true else { return }
@@ -475,8 +489,8 @@ struct DayTimelineView: View {
     }
 
     private var externalDuration: Int {
-        guard let id = externalTodoID, let todo = store.items.first(where: { $0.id == id }) else { return 30 }
-        return DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: store.scheduledMinutes(for: id))
+        guard let id = externalTodoID, let todo = store.items.first(where: { $0.id == id }) else { return store.settings.defaultScheduleMinutes }
+        return DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: store.scheduledMinutes(for: id), fallback: store.settings.defaultScheduleMinutes)
     }
 
     private func grid(width: CGFloat) -> some View {
@@ -632,7 +646,8 @@ struct DayTimelineView: View {
 
     private func advanceZoom() {
         guard let target = zoomTarget, let anchor = magnificationAnchor else { return }
-        let next = TimelineZoomPolicy.nextFrame(current: hourHeight, target: target)
+        let next = !reduceMotion && store.settings.animates(.timelineZoom)
+            ? TimelineZoomPolicy.nextFrame(current: hourHeight, target: target) : target
         applyZoom(to: next, keeping: anchor)
         if next == target, magnificationBase == nil {
             zoomTarget = nil
@@ -788,7 +803,7 @@ struct DayTimelineView: View {
                 previewUpdates.cancel()
                 updatePreview()
                 let movement = value.translation.height + scrollOffset - interaction.originOffset
-                let range = abs(movement) < 4 ? TimelineCreationPolicy.defaultRange(anchoredAt: start) : createRange
+                let range = abs(movement) < 4 ? TimelineCreationPolicy.defaultRange(anchoredAt: start, duration: store.settings.defaultScheduleMinutes) : createRange
                 guard let range else { return }
                 let horizontal = horizontalPosition
                 let anchor = value.location
@@ -889,8 +904,11 @@ struct DayTimelineView: View {
             if preview != next { preview = next }
         } else if let start = interaction.creationStart, let origin = interaction.creationOrigin {
             let minute = Double((pointerY + scrollOffset - 12) / pixelsPerMinute)
-            createRange = TimelineCreationPolicy.range(from: origin, anchoredAt: start, to: minute,
-                boundaries: creationBoundaries, pointsPerMinute: Double(pixelsPerMinute))
+            let movement = pointerY - interaction.originY + scrollOffset - interaction.originOffset
+            createRange = abs(movement) < 4
+                ? TimelineCreationPolicy.defaultRange(anchoredAt: start, duration: store.settings.defaultScheduleMinutes)
+                : TimelineCreationPolicy.range(from: origin, anchoredAt: start, to: minute,
+                    boundaries: creationBoundaries, pointsPerMinute: Double(pixelsPerMinute))
         }
     }
 

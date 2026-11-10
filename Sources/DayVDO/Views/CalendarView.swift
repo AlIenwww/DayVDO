@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct CalendarView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var nativeHeaderHeight: CGFloat = 0
     @EnvironmentObject private var store: TodoStore
     @Binding var editingItem: TodoItem?
@@ -10,7 +11,7 @@ struct CalendarView: View {
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var selectedDate: Date
     @Binding var currentMonth: Date
-    @AppStorage("calendarDisplayMode") private var displayMode = CalendarDisplayMode.month.rawValue
+    @AppStorage("calendarDisplayMode") private var storedDisplayMode = CalendarDisplayMode.month.rawValue
     @StateObject private var selection = CalendarTodoSelection()
     @State private var dateChange: TodoStore.DateChangeConfirmation?
     let weekPosition: CalendarWeekViewportPosition
@@ -23,6 +24,9 @@ struct CalendarView: View {
     let weekCache: CalendarWindowCache
     let weekPresentationCache: CalendarWeekPresentationCache
     let timelineSession: CalendarTimelineSession
+    var practiceDisplayMode: Binding<String>? = nil
+
+    private var displayMode: String { (practiceDisplayMode ?? $storedDisplayMode).wrappedValue }
 
     private var calendar: Calendar {
         AppCalendar.make(
@@ -153,28 +157,29 @@ struct CalendarView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                CalendarDisplayModePicker(selection: $displayMode)
+                CalendarDisplayModePicker(selection: practiceDisplayMode ?? $storedDisplayMode)
             }
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 TodoFilterButton(filter: $filter)
-            }
-            ToolbarItem(placement: .primaryAction) {
                 Button { createTodo(LocalDay(selectedDate), LocalDay(selectedDate)) } label: {
                     Label(L10n.string("新建待办…"), systemImage: "plus")
                 }
-                .help(L10n.string("新建待办 (⌘N)"))
+                .help(L10n.string("新建待办") + " (" + store.settings.shortcut(for: .newTodo).display + ")")
+            }
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.fixed, placement: .primaryAction)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     let willPresentInspector = !isInspectorPresented
-                    withAnimation(.snappy(duration: 0.28)) {
+                    withAnimation(inspectorAnimation) {
                         isInspectorPresented = willPresentInspector
                         if willPresentInspector {
                             columnVisibility = .detailOnly
                         }
                     }
                 } label: {
-                    Image(systemName: "list.bullet.rectangle.portrait")
+                    Image(systemName: "sidebar.right")
                 }
                 .help(L10n.string(isInspectorPresented ? "隐藏日期详情" : "显示日期详情"))
                 .accessibilityLabel(L10n.string(isInspectorPresented ? "隐藏日期详情" : "显示日期详情"))
@@ -184,10 +189,14 @@ struct CalendarView: View {
         .navigationTitle(L10n.string("日历"))
         .onChange(of: columnVisibility) { _, newVisibility in
             guard newVisibility != .detailOnly, isInspectorPresented else { return }
-            withAnimation(.snappy(duration: 0.28)) {
+            withAnimation(inspectorAnimation) {
                 isInspectorPresented = false
             }
         }
+    }
+
+    private var inspectorAnimation: Animation? {
+        store.settings.animation(.snappy(duration: 0.28), for: .calendarInspector, reduceMotion: reduceMotion)
     }
 
     private var calendarToolbar: some View {
@@ -246,7 +255,7 @@ struct CalendarView: View {
     }
 
     private var calendarNavigationControls: some View {
-        HStack(spacing: 8) {
+        ControlGroup {
             Button(L10n.string("今天")) {
                 let today = Date.now
                 selectedDate = today
@@ -267,6 +276,7 @@ struct CalendarView: View {
             }
             .help(L10n.string(displayMode == CalendarDisplayMode.week.rawValue ? "下一周" : "下个月"))
         }
+        .controlGroupStyle(.navigation)
     }
 
     private var weekdayHeader: some View {
@@ -309,11 +319,7 @@ struct CalendarView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    editingItem = TodoItem(
-                        title: "",
-                        dueDate: selectedDate,
-                        priority: store.settings.defaultPriority
-                    )
+                    editingItem = store.newItem(dueDate: selectedDate)
                 } label: {
                     Label(L10n.string("添加"), systemImage: "plus")
                 }
@@ -360,8 +366,7 @@ struct CalendarView: View {
     }
 
     private func createTodo(_ start: LocalDay, _ end: LocalDay) {
-        let draft = TodoItem(title: "", startDate: start.date(), dueDate: end.date(),
-                             priority: store.settings.defaultPriority)
+        let draft = store.newItem(startDate: start.date(), dueDate: end.date())
         selection.draft = draft
         editingItem = draft
     }
@@ -421,6 +426,7 @@ private struct CalendarNavigationRequest {
 }
 
 private struct CalendarTimeline: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let weekCount = 30
     private static let visibleWeekCount = 6
     static let minimumViewportHeight = CGFloat(visibleWeekCount) * CalendarDateWeekRow.dateHeaderHeight
@@ -849,6 +855,7 @@ private struct CalendarTimeline: View {
         let currentWeek = week(at: currentIndex)
         let distance = abs(targetIndex - currentIndex)
         let maximumTopRow = Self.virtualWeekRange.upperBound - Self.visibleWeekCount + 1
+        let animate = !reduceMotion && store.settings.animates(.calendarScroll)
 
         if (Self.virtualWeekRange.lowerBound...maximumTopRow).contains(targetIndex), distance <= 10 {
             let navigationRange = CalendarScrollPolicy.cacheWindowCovering(
@@ -865,7 +872,7 @@ private struct CalendarTimeline: View {
             }
             Task { @MainActor in
                 await Task.yield()
-                withAnimation(.easeOut(duration: 0.32)) {
+                withAnimation(animate ? .easeOut(duration: 0.32) : nil) {
                     scroll(to: targetIndex)
                 }
             }
@@ -886,10 +893,11 @@ private struct CalendarTimeline: View {
             scroll(to: 0)
             scrollState.latestWeekOffset = 0
             scrollState.lastMovementDirection = nil
-            navigationOffset = direction * 18
-            navigationOpacity = 0
+            navigationOffset = animate ? direction * 18 : 0
+            navigationOpacity = animate ? 0 : 1
         }
 
+        guard animate else { return }
         Task { @MainActor in
             await Task.yield()
             withAnimation(.easeOut(duration: 0.2)) {

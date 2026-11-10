@@ -4,6 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CalendarWeekTimeline: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var store: TodoStore
     let week: LocalDay
     let visibility: TodoFilterContext
@@ -133,6 +134,26 @@ struct CalendarWeekTimeline: View {
                     if drag != nil { clearDrag() }
                 }))
             .background(CalendarWeekDragAnchor(view: dragAnchor))
+            .background(ScheduleClickMonitor(acceptsClick: { point in
+                isActive && column(at: point) != nil
+            }) { location, count in
+                guard count == 1, draft == nil, presentation == nil, !suppressed,
+                      store.canModify, let column = column(at: location) else { return }
+                let day = week.adding(days: column)
+                let minute = Double((location.y + offset - 12) / ppm)
+                guard !(timelinePresentation.placementsByDay[day] ?? []).contains(where: {
+                    $0.interval.contains(Int(minute))
+                }) else { return }
+                if selectedID != nil { selectedID = nil; return }
+                let start = TimelineCreationPolicy.startMinute(at: minute,
+                    boundaries: creationBoundaries(on: day), pointsPerMinute: Double(ppm))
+                let range = TimelineCreationPolicy.defaultRange(anchoredAt: start,
+                    duration: store.settings.defaultScheduleMinutes)
+                creationAnchor = location
+                draft = DaySchedule(startDay: day, startMinute: range.lowerBound,
+                    durationMinutes: range.count, content: .independent(title: "", notes: ""),
+                    horizontalPosition: horizontalPosition(at: location, column: column))
+            })
             .background(TimelineControlScrollMonitor { delta, precise in
                 beginZoom()
                 zoomTarget = TimelineZoomPolicy.clampedHourHeight((zoomTarget ?? hourHeight) + delta * (precise ? 0.8 : 8))
@@ -146,7 +167,8 @@ struct CalendarWeekTimeline: View {
             .task(id: zoomTarget != nil) {
                 guard zoomTarget != nil else { return }
                 while !Task.isCancelled, let target = zoomTarget, let anchor = zoomAnchor {
-                    hourHeight = TimelineZoomPolicy.nextFrame(current: hourHeight, target: target)
+                    hourHeight = !reduceMotion && store.settings.animates(.timelineZoom)
+                        ? TimelineZoomPolicy.nextFrame(current: hourHeight, target: target) : target
                     position.scrollTo(y: TimelineZoomPolicy.scrollOffset(keeping: anchor, hourHeight: hourHeight, viewportHeight: size.height))
                     if hourHeight == target && !magnifying { zoomTarget = nil; zoomAnchor = nil }
                     try? await Task.sleep(for: .milliseconds(16))
@@ -404,7 +426,11 @@ struct CalendarWeekTimeline: View {
                 }
                 else if let drag, drag.original == nil {
                     updateCreation(drag, at: value.location)
-                    guard let creation else { return }
+                    guard var creation else { return }
+                    if abs(value.translation.height + offset - drag.originOffset) < 4 {
+                        creation.range = TimelineCreationPolicy.defaultRange(anchoredAt: drag.creationStart,
+                            duration: store.settings.defaultScheduleMinutes)
+                    }
                     let anchor = value.location
                     let schedule = DaySchedule(startDay: creation.day, startMinute: creation.range.lowerBound,
                         durationMinutes: creation.range.count, content: .independent(title: "", notes: ""),
@@ -449,9 +475,12 @@ struct CalendarWeekTimeline: View {
     private func updateCreation(_ drag: Interaction, at location: CGPoint) {
         let day = week.adding(days: drag.column)
         let minute = Double((location.y + offset - 12) / ppm)
-        creation = Creation(day: day, range: TimelineCreationPolicy.range(
-            from: drag.creationOrigin, anchoredAt: drag.creationStart, to: minute,
-            boundaries: creationBoundaries(on: day), pointsPerMinute: Double(ppm)),
+        let movement = location.y - drag.originY + offset - drag.originOffset
+        let range = abs(movement) < 4
+            ? TimelineCreationPolicy.defaultRange(anchoredAt: drag.creationStart, duration: store.settings.defaultScheduleMinutes)
+            : TimelineCreationPolicy.range(from: drag.creationOrigin, anchoredAt: drag.creationStart, to: minute,
+                boundaries: creationBoundaries(on: day), pointsPerMinute: Double(ppm))
+        creation = Creation(day: day, range: range,
             horizontalPosition: horizontalPosition(at: location, column: drag.column))
     }
 
@@ -493,7 +522,7 @@ struct CalendarWeekTimeline: View {
                     guard let id, let todo = store.item(withID: id) else { return }
                     let scheduled = store.scheduledMinutes(for: id)
                     let schedule = DaySchedule(startDay: day, startMinute: minute,
-                        durationMinutes: DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled),
+                        durationMinutes: DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled, fallback: store.settings.defaultScheduleMinutes),
                         content: .todo(id), horizontalPosition: horizontal, horizontalPositionUpdatedAt: .now)
                     if let estimated = todo.estimatedMinutes, scheduled >= estimated { pendingSchedule = schedule }
                     else { store.upsertSchedule(schedule) }
@@ -510,7 +539,7 @@ struct CalendarWeekTimeline: View {
         guard let location = externalLocation, let targetColumn = column(at: location) else { creation = nil; return }
         let todo = externalTodoID.flatMap { store.item(withID: $0) }
         let duration = DayPlanningPolicy.defaultDuration(estimated: todo?.estimatedMinutes,
-            scheduled: externalTodoID.map { store.scheduledMinutes(for: $0) } ?? 0)
+            scheduled: externalTodoID.map { store.scheduledMinutes(for: $0) } ?? 0, fallback: store.settings.defaultScheduleMinutes)
         let minute = dropMinute(at: location)
         creation = Creation(day: week.adding(days: targetColumn), range: minute..<(minute + duration),
             horizontalPosition: horizontalPosition(at: location, column: targetColumn))

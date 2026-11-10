@@ -19,6 +19,7 @@ enum TopLevelTodoRowMetrics {
 
 struct TodoRow: View {
     @EnvironmentObject private var store: TodoStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isConfirmingDeletion = false
     let item: TodoItem
     var showsDate = true
@@ -39,7 +40,7 @@ struct TodoRow: View {
             }
 
             Button {
-                withAnimation(.snappy(duration: 0.18)) {
+                withAnimation(store.settings.animation(.snappy(duration: 0.18), for: .completion, reduceMotion: reduceMotion)) {
                     _ = store.toggle(item)
                 }
             } label: {

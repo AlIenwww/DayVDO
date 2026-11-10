@@ -8,6 +8,17 @@ import XCTest
 final class TimelineInteractionWindowTests: XCTestCase {
     private let day = LocalDay(year: 2026, month: 10, day: 5)
 
+    func testBlankTimelineClickUsesConfiguredDefaultDuration() throws {
+        let fixture = makeWindow()
+        defer { close(fixture) }
+        fixture.store.settings.defaultScheduleMinutes = 37
+        settle()
+        click(screenPoint(x: 300, yFromTop: 260, in: fixture.window), in: fixture.window)
+        settle()
+        XCTAssertEqual(fixture.probe.draft?.durationMinutes, 37)
+        XCTAssertEqual(fixture.store.schedules, [fixture.schedule], "Creating a draft must not save an unnamed arrangement")
+    }
+
     func testBlankTimelineClickClearsSelectionBeforeDelete() throws {
         let fixture = makeWindow()
         defer { close(fixture) }
@@ -190,8 +201,8 @@ final class TimelineInteractionWindowTests: XCTestCase {
         fixture.probe.editingItem = fixture.item
         settle()
         let sheet = try XCTUnwrap(fixture.window.attachedSheet)
-        // The date section now precedes the estimate row in this fixed-size editor.
-        click(screenPoint(x: 440, yFromTop: 398, in: sheet), in: sheet)
+        // The compact title-only header is 31 points shorter than the former title/subtitle header.
+        click(screenPoint(x: 440, yFromTop: 367, in: sheet), in: sheet)
         settle()
         let picker = try XCTUnwrap(NSApp.windows.first { $0.isVisible && $0 !== fixture.window && $0 !== sheet })
         escape(in: picker)

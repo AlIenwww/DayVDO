@@ -8,6 +8,7 @@ struct TodayView: View {
     @Binding var selectedDay: LocalDay
     @Binding var hourHeight: CGFloat
     @Binding var timelineScrollMinute: CGFloat?
+    var isPractice = false
     @State private var now = Date.now
     @State private var previousToday = LocalDay(.now)
     @State private var isPickingDate = false
@@ -55,7 +56,7 @@ struct TodayView: View {
             .pageTopBar {
                 dateHeader(narrow: narrow)
             }
-            .onChange(of: narrow) { _, value in if !value { showsTodoPanel = false } }
+            .onChange(of: narrow, initial: true) { _, value in showsTodoPanel = value && isPractice }
         }
         .navigationTitle(L10n.string("今日待办"))
         .onChange(of: scheduleDraft) { old, new in
@@ -87,38 +88,39 @@ struct TodayView: View {
     private var todoPanel: PlanningTodoPanel {
         PlanningTodoPanel(
             day: selectedDay,
-            today: LocalDay(now),
+            today: isPractice ? selectedDay : LocalDay(now),
             edit: { editingItem = $0 }
         )
     }
 
     private func dateHeader(narrow: Bool) -> some View {
         HStack(spacing: 10) {
-            Button { isPickingDate.toggle() } label: {
-                HStack(spacing: 8) {
-                    Text(selectedDay.date().formatted(.dateTime.year().month(.abbreviated).day().locale(L10n.locale)))
-                        .font(.title3.bold())
-                    Text(selectedDay.date().formatted(.dateTime.weekday(.wide).locale(L10n.locale)))
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            .help(L10n.string("选择日期"))
-            .popover(isPresented: $isPickingDate) {
-                BorderlessCalendarPicker(selection: Binding(
-                    get: { selectedDay.date() },
-                    set: { selectedDay = LocalDay($0); isPickingDate = false }
-                ), startsOnMonday: store.settings.startWeekOnMonday)
-                .fixedSize().padding(10)
+            if isPractice {
+                dateLabel
+            } else {
+                Button { isPickingDate.toggle() } label: { dateLabel }
+                    .buttonStyle(.plain)
+                    .help(L10n.string("选择日期"))
+                    .popover(isPresented: $isPickingDate) {
+                        BorderlessCalendarPicker(selection: Binding(
+                            get: { selectedDay.date() },
+                            set: { selectedDay = LocalDay($0); isPickingDate = false }
+                        ), startsOnMonday: store.settings.startWeekOnMonday)
+                        .fixedSize().padding(10)
+                    }
             }
             Spacer(minLength: 0)
-            Button(L10n.string("今天")) { selectedDay = LocalDay(.now) }
-            Button { selectedDay = selectedDay.adding(days: -1) } label: { Image(systemName: "chevron.left") }
-                .help(L10n.string("前一天"))
-            Button { selectedDay = selectedDay.adding(days: 1) } label: { Image(systemName: "chevron.right") }
-                .help(L10n.string("后一天"))
+            ControlGroup {
+                Button(L10n.string("今天")) { selectedDay = LocalDay(.now) }
+                Button { selectedDay = selectedDay.adding(days: -1) } label: { Image(systemName: "chevron.left") }
+                    .help(L10n.string("前一天"))
+                Button { selectedDay = selectedDay.adding(days: 1) } label: { Image(systemName: "chevron.right") }
+                    .help(L10n.string("后一天"))
+            }
+            .controlGroupStyle(.navigation)
+            .disabled(isPractice)
             if narrow {
-                Button { showsTodoPanel.toggle() } label: { Image(systemName: "list.bullet.rectangle.portrait") }
+                Button { showsTodoPanel.toggle() } label: { Image(systemName: "sidebar.right") }
                     .help(L10n.string("待办事项"))
             }
         }
@@ -126,10 +128,19 @@ struct TodayView: View {
         .padding(.horizontal, 18).padding(.vertical, 10)
     }
 
+    private var dateLabel: some View {
+        HStack(spacing: 8) {
+            Text(selectedDay.date().formatted(.dateTime.year().month(.abbreviated).day().locale(L10n.locale)))
+                .font(.title3.bold())
+            Text(selectedDay.date().formatted(.dateTime.weekday(.wide).locale(L10n.locale)))
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
     private func requestSchedule(_ id: UUID, at minute: Int, horizontalPosition: Double) {
         guard let todo = store.items.first(where: { $0.id == id }) else { return }
         let scheduled = store.scheduledMinutes(for: id)
-        let duration = DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled)
+        let duration = DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled, fallback: store.settings.defaultScheduleMinutes)
         let schedule = DaySchedule(startDay: selectedDay, startMinute: minute,
                                    durationMinutes: duration, content: .todo(id),
                                    horizontalPosition: horizontalPosition, horizontalPositionUpdatedAt: .now)
@@ -154,7 +165,7 @@ struct TodayView: View {
 
     private func refreshClock() {
         now = .now
-        guard !isBusy else { return }
+        guard !isBusy, !isPractice else { return }
         let today = LocalDay(now)
         selectedDay = DayPlanningPolicy.followedDay(selected: selectedDay, previousToday: previousToday, today: today)
         previousToday = today

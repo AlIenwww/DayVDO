@@ -251,7 +251,8 @@ struct CalendarNativeMonthView: NSViewRepresentable {
             let items = snapshot?.items(inWeek: day) ?? []
             let state = CalendarNativeWeekState(week: day,
                 selected: LocalDay(parent.selectedDate, timeZone: parent.calendar.timeZone),
-                month: month, items: items, visibility: parent.visibility)
+                month: month, items: items, visibility: parent.visibility,
+                themeColor: parent.store.settings.themeColor)
             cell.configure(state: state, interaction: interaction, store: parent.store,
                 selection: parent.selection, layout: snapshot?.dateLayoutsByWeek[day],
                 select: parent.select, showMore: parent.showMore, edit: parent.edit)
@@ -313,7 +314,8 @@ struct CalendarNativeMonthView: NSViewRepresentable {
                 view.scroll.reflectScrolledClipView(view.scroll.contentView)
                 self.scrolled()
             }
-            if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if animated, parent.store.settings.animates(.calendarScroll),
+               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 snapAnimator.start(from: view.scroll.contentView.bounds.origin, to: destination,
                     framesPerSecond: view.window?.screen?.maximumFramesPerSecond ?? 60,
                     update: update, completion: completion)
@@ -532,6 +534,7 @@ private struct CalendarNativeWeekState: Equatable {
     let month: Int
     let items: [CalendarWindowSnapshot.Item]
     let visibility: TodoFilterContext
+    let themeColor: TagColor?
 }
 
 private final class CalendarNativeWeekCell: NSCollectionViewItem {
@@ -557,6 +560,8 @@ private final class CalendarNativeWeekCell: NSCollectionViewItem {
             visibility: state.visibility, preparedLayout: layout,
             select: select, showMore: showMore, edit: edit)
             .environmentObject(store).environmentObject(selection)
+            .accentColor(state.themeColor?.color)
+            .tint(state.themeColor?.color)
             .coordinateSpace(name: "calendarDateViewport")
             .onPreferenceChange(CalendarDateHitRegions.self) { [weak self] values in
                 guard let self, self.state?.week == week else { return }

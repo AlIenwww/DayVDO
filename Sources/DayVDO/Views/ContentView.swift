@@ -31,9 +31,26 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject private var store: TodoStore
-    @Environment(\.undoManager) private var undoManager
+    @EnvironmentObject private var navigation: AppNavigation
+    private let commandsEnabled: Bool
+    private let practiceGuide: OnboardingSession?
+
+    init(initialDestination: SidebarDestination = .today, commandsEnabled: Bool = true,
+         practiceGuide: OnboardingSession? = nil) {
+        self.commandsEnabled = commandsEnabled
+        self.practiceGuide = practiceGuide
+        _pagePresentation = State(initialValue: SidebarPagePresentation(initialDestination: initialDestination))
+        if let day = practiceGuide?.progress.day {
+            _planningDay = State(initialValue: day)
+            _calendarToday = State(initialValue: day)
+            _calendarSelectedDate = State(initialValue: day.date())
+            _calendarCurrentMonth = State(initialValue: day.date())
+            _todayScrollMinute = State(initialValue: 540)
+        }
+    }
     @State private var pagePresentation = SidebarPagePresentation()
-    @AppStorage("calendarDisplayMode") private var calendarDisplayMode = CalendarDisplayMode.month.rawValue
+    @AppStorage("calendarDisplayMode") private var storedCalendarMode = CalendarDisplayMode.month.rawValue
+    @State private var practiceCalendarMode = CalendarDisplayMode.month.rawValue
     @State private var planningDay = LocalDay(.now)
     @State private var editingItem: TodoItem?
     @State private var editingProject: TodoProject?
@@ -59,10 +76,11 @@ struct ContentView: View {
     @State private var isRecoveryPromptPresented = false
     @State private var isConfirmingEmptyRecovery = false
     @State private var showsLoadingIndicator = false
+    @State private var practiceScheduleEditor: DaySchedule?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarDestinationList(presentation: pagePresentation) {
+            SidebarDestinationList(selection: Binding(get: { selection }, set: selectDestination)) {
                 pagePresentation.presentSelection(prepareCalendar: prepareCalendarForEntry)
             }
             // Native List can retain row labels when only the locale changes.
@@ -82,7 +100,8 @@ struct ContentView: View {
                         editingItem: $editingItem,
                         selectedDay: $planningDay,
                         hourHeight: $todayHourHeight,
-                        timelineScrollMinute: $todayScrollMinute
+                        timelineScrollMinute: $todayScrollMinute,
+                        isPractice: practiceGuide != nil
                     )
                 case .all:
                     AllTodosView(
@@ -108,7 +127,8 @@ struct ContentView: View {
                         windowCache: calendarWindowCache,
                         weekCache: calendarWeekCache,
                         weekPresentationCache: calendarWeekPresentationCache,
-                        timelineSession: calendarTimelineSession
+                        timelineSession: calendarTimelineSession,
+                        practiceDisplayMode: practiceGuide == nil ? nil : $practiceCalendarMode
                     )
                 case .settings:
                     SettingsView()
@@ -117,7 +137,12 @@ struct ContentView: View {
             .transition(.identity)
             .animation(nil, value: displayedDestination)
             .toolbarBackground(.automatic, for: .windowToolbar)
-            .disabled(!store.canModify)
+            .disabled(!store.canModify && displayedDestination != .settings)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let practiceGuide {
+                    GuidePracticeBar(guide: practiceGuide) { practiceScheduleEditor = $0 }
+                }
+            }
             .overlay {
                 if showsLoadingIndicator && store.isInitialLoading {
                     ProgressView(L10n.string("正在载入待办…"))
@@ -127,28 +152,24 @@ struct ContentView: View {
                 }
             }
             .toolbar {
+                if let practiceGuide {
+                    ToolbarItem {
+                        GuidePracticeMenu(guide: practiceGuide)
+                    }
+                }
                 if displayedDestination == .today {
                     ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            editingItem = TodoItem(
-                                title: "",
-                                dueDate: selection == .today ? planningDay.date() : (selection == .calendar ? calendarSelectedDate : nil),
-                                priority: store.settings.defaultPriority
-                            )
-                        } label: {
+                        Button(action: newTodo) {
                             Label(L10n.string("新建待办…"), systemImage: "plus")
                         }
                         .disabled(!store.canModify)
-                        .help(L10n.string("新建待办 (⌘N)"))
+                        .help(L10n.string("新建待办") + " (" + store.settings.shortcut(for: .newTodo).display + ")")
                     }
                 } else if displayedDestination == .all {
                     ToolbarItem(placement: .primaryAction) {
                         Menu {
                             Button(L10n.string("新建待办…"), systemImage: "checkmark.circle") {
-                                editingItem = TodoItem(
-                                    title: "",
-                                    priority: store.settings.defaultPriority
-                                )
+                                newTodo()
                             }
                             Button(L10n.string("新建大项目…"), systemImage: "folder.badge.plus") {
                                 editingProject = TodoProject(title: "")
@@ -168,15 +189,8 @@ struct ContentView: View {
         .onDisappear { pagePresentation.cancelPendingPresentation() }
         .focusedSceneValue(
             \.dayVDOCommandActions,
-            DayVDOCommandActions(
-                newTodo: {
-                    guard store.canModify else { return }
-                    editingItem = TodoItem(
-                        title: "",
-                        dueDate: selection == .today ? planningDay.date() : (selection == .calendar ? calendarSelectedDate : nil),
-                        priority: store.settings.defaultPriority
-                    )
-                },
+            commandsEnabled ? DayVDOCommandActions(
+                newTodo: newTodo,
                 newProject: {
                     guard store.canModify else { return }
                     selection = .all
@@ -186,8 +200,8 @@ struct ContentView: View {
                     selection = .all
                     searchFocusRequest += 1
                 },
-                navigate: { destination in selection = destination }
-            )
+                navigate: { destination in selectDestination(destination) }
+            ) : nil
         )
         .safeAreaInset(edge: .bottom, spacing: 0) {
             persistenceBanner
@@ -204,8 +218,22 @@ struct ContentView: View {
                 isEditing: store.projects.contains { $0.id == project.id }
             ) { store.upsertProject($0) }
         }
+        .sheet(item: $practiceScheduleEditor) { schedule in
+            ScheduleEditorView(schedule: schedule, isCreating: store.schedule(withID: schedule.id) == nil,
+                close: { practiceScheduleEditor = nil },
+                editTodo: { practiceScheduleEditor = nil; editingItem = $0 })
+        }
+        .onChange(of: pagePresentation.selection) { _, destination in
+            if practiceGuide == nil { navigation.currentDestination = destination ?? .today }
+        }
+        .onChange(of: navigation.requestID) { _, _ in
+            if practiceGuide == nil, let destination = navigation.requestedDestination { selection = destination }
+        }
+        .onChange(of: practiceGuide?.progress.step) { _, step in
+            if let step, step != .discover { selection = .today }
+        }
         .onAppear {
-            store.undoManager = undoManager
+            store.undoManager = practiceGuide?.undoManager ?? navigation.undoManager
             if case .recoveryRequired = store.persistenceIssue {
                 isRecoveryPromptPresented = true
             }
@@ -261,13 +289,41 @@ struct ContentView: View {
 
     private var displayedDestination: SidebarDestination { pagePresentation.displayedDestination }
 
+    private var calendarDisplayMode: String {
+        practiceGuide == nil ? storedCalendarMode : practiceCalendarMode
+    }
+
+    private func selectDestination(_ destination: SidebarDestination?) {
+        if practiceGuide != nil, destination == .settings {
+            navigation.navigate(to: .settings)
+        } else {
+            selection = destination
+        }
+    }
+
+    private func newTodo() {
+        guard store.canModify else { return }
+        let dueDate: Date? = switch selection {
+        case .today: planningDay.date()
+        case .calendar: calendarSelectedDate
+        default: nil
+        }
+        var item = store.newItem(dueDate: dueDate)
+        if let practiceGuide, practiceGuide.progress.step == .create, practiceGuide.targetTodo == nil {
+            item.dueDate = practiceGuide.progress.day.date()
+            item.title = L10n.string("阅读 20 分钟")
+            item.estimatedMinutes = 20
+        }
+        editingItem = item
+    }
+
     private var calendarFilterContext: TodoFilterContext {
         .init(filter: calendarFilter, showCompleted: store.settings.showCompleted,
               today: calendarToday, startsOnMonday: store.settings.startWeekOnMonday)
     }
 
     private func refreshCalendarFilterDay() {
-        let today = LocalDay(.now)
+        let today = practiceGuide?.progress.day ?? LocalDay(.now)
         if calendarToday != today { calendarToday = today }
     }
 
@@ -414,11 +470,11 @@ struct ContentView: View {
 }
 
 private struct SidebarDestinationList: View {
-    @Bindable var presentation: SidebarPagePresentation
+    @Binding var selection: SidebarDestination?
     let selectionChanged: () -> Void
 
     var body: some View {
-        List(SidebarDestination.allCases, selection: $presentation.selection) { destination in
+        List(SidebarDestination.allCases, selection: $selection) { destination in
             NavigationLink(value: destination) {
                 Label(L10n.string(destination.title), systemImage: destination.symbol)
             }
@@ -427,7 +483,7 @@ private struct SidebarDestinationList: View {
         // Keep the first row below the toolbar's fade without overriding
         // the native selection colors or keyboard-focus behavior.
         .padding(.top, 12)
-        .onChange(of: presentation.selection) { _, _ in selectionChanged() }
+        .onChange(of: selection) { _, _ in selectionChanged() }
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct TodoEditorView: View {
+    @Environment(\.practiceDay) private var practiceDay
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: TodoStore
     @State private var draft: TodoItem
@@ -26,17 +27,12 @@ struct TodoEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(editorTitle)
-                        .font(.title2.weight(.semibold))
-                    Text(L10n.string("记录任务，并按需要设置日期。"))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+                Text(editorTitle)
+                    .font(.title2.weight(.semibold))
                 Spacer(minLength: 24)
             }
             .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+            .padding(.vertical, 14)
 
             Divider()
 
@@ -183,6 +179,7 @@ struct TodoEditorView: View {
                             }
                         }
                     }
+                    .disabled(practiceDay != nil)
 
                     Divider().padding(.leading, 50)
 
