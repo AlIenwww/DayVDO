@@ -23,6 +23,7 @@ struct CalendarWeekTimeline: View {
     @State private var dragAnchor = CalendarWeekDragAnchor.AnchorView()
     @State private var preview: DaySchedule?
     @StateObject private var previewUpdates = FrameUpdateScheduler()
+    @Namespace private var dragPositions
     @State private var creation: Creation?
     @State private var draftID = UUID()
     @State private var positionUpdatedAt = Date.now
@@ -132,7 +133,7 @@ struct CalendarWeekTimeline: View {
                 cancel: cancel, release: {
                     suppressed = false
                     if drag != nil { clearDrag() }
-                }))
+                }, trackDrag: trackDrag, finishDrag: finishDrag))
             .background(CalendarWeekDragAnchor(view: dragAnchor))
             .background(ScheduleClickMonitor(acceptsClick: { point in
                 isActive && column(at: point) != nil
@@ -179,6 +180,7 @@ struct CalendarWeekTimeline: View {
         .popover(item: $presentation) { request in
             if let schedule = store.schedule(withID: request.scheduleID) {
                 SchedulePopoverView(schedule: schedule, startsEditing: request.mode == .editor,
+                    showsCalendarStatus: true,
                     editTodo: { item in presentation = nil; DispatchQueue.main.async { editTodo(item) } },
                     close: { presentation = nil })
             }
@@ -240,6 +242,8 @@ struct CalendarWeekTimeline: View {
             visibility: visibility, width: width, hourHeight: hourHeight,
             selectedID: selectedID, preview: activePreview,
             prioritizing: drag?.original != nil && drag?.mode != .move ? nil : activePreview?.id,
+            dragAnimation: store.settings.calendarDragAnimation(reduceMotion: reduceMotion),
+            statusAnimation: store.settings.calendarTaskStatusAnimation(reduceMotion: reduceMotion),
             today: LocalDay(now), minute: (time.hour ?? 0) * 60 + (time.minute ?? 0),
             locale: L10n.locale.identifier)
     }
@@ -261,43 +265,45 @@ struct CalendarWeekTimeline: View {
     private func timeline(width: CGFloat) -> some View {
         let columnWidth = max(1, (width - gutter) / 7)
         let presentation = timelinePresentation
+        let preview = activePreview
+        let dragAnimation = store.settings.calendarDragAnimation(reduceMotion: reduceMotion)
+        let statusAnimation = store.settings.calendarTaskStatusAnimation(reduceMotion: reduceMotion)
         return ZStack(alignment: .topLeading) {
             grid(width: width)
             Color.clear.contentShape(Rectangle())
                 .frame(width: max(1, width - gutter), height: hourHeight * 24 + 24)
                 .offset(x: gutter)
-                .gesture(gesture(nil, mode: .move))
-            ForEach(0..<7, id: \.self) { column in
-                let day = week.adding(days: column)
-                let placements = presentation.placementsByDay[day] ?? []
-                let schedules = placements.compactMap { presentation.schedulesByID[$0.id] }
-                CalendarWeekDayContent(version: CalendarWeekDayVersion(day: day,
-                    revision: store.timelineContentRevision, schedules: schedules, placements: placements,
-                    width: columnWidth, hourHeight: hourHeight,
-                    selectedID: schedules.contains(where: { $0.id == selectedID }) ? selectedID : nil,
-                    draftID: draftID, minute: day == LocalDay(now) ? Calendar.current.component(.hour, from: now) * 60 + Calendar.current.component(.minute, from: now) : nil,
-                    locale: L10n.locale.identifier)) {
-                ForEach(placements) { placement in
-                    if let schedule = presentation.schedulesByID[placement.id] {
-                        let arrangementWidth = max(1, columnWidth - 2) / CGFloat(placement.columnCount)
-                        Group {
-                            if schedule.id == draftID {
-                                TimelineScheduleShape.shape(placement: placement, radius: 4)
-                                    .fill(Color.accentColor.opacity(0.2))
-                                    .overlay(TimelineScheduleShape.shape(placement: placement, radius: 4).strokeBorder(Color.accentColor))
-                                    .allowsHitTesting(false)
-                            } else {
-                                block(schedule, placement: placement, day: day)
+            ZStack(alignment: .topLeading) {
+                ForEach(0..<7, id: \.self) { column in
+                    let day = week.adding(days: column)
+                    let placements = presentation.placementsByDay[day] ?? []
+                    let schedules = placements.compactMap { presentation.schedulesByID[$0.id] }
+                    CalendarWeekDayContent(version: CalendarWeekDayVersion(day: day,
+                        revision: store.timelineContentRevision, schedules: schedules, placements: placements,
+                        width: columnWidth, hourHeight: hourHeight,
+                        selectedID: schedules.contains(where: { $0.id == selectedID }) ? selectedID : nil,
+                        draftID: draftID, minute: day == LocalDay(now) ? Calendar.current.component(.hour, from: now) * 60 + Calendar.current.component(.minute, from: now) : nil,
+                        locale: L10n.locale.identifier, dragAnimation: dragAnimation, statusAnimation: statusAnimation,
+                        liftedID: dragAnimation == nil ? nil : preview?.id)) {
+                        ForEach(placements) { placement in
+                            if let schedule = presentation.schedulesByID[placement.id] {
+                                let arrangementWidth = max(1, columnWidth - 2) / CGFloat(placement.columnCount)
+                                positionedBlock(schedule, placement: placement, day: day,
+                                    matchesDragPosition: dragAnimation != nil, statusAnimation: statusAnimation)
+                                    .frame(width: arrangementWidth, height: CGFloat(placement.interval.count) * ppm)
+                                    .shadow(color: .black.opacity(dragAnimation != nil && schedule.id == preview?.id ? 0.18 : 0),
+                                            radius: 3, y: 1)
+                                    .offset(x: gutter + CGFloat(column) * columnWidth + CGFloat(placement.column) * arrangementWidth + 1,
+                                            y: 12 + CGFloat(placement.interval.lowerBound) * ppm)
+                                    .transition(.opacity)
                             }
                         }
-                            .frame(width: arrangementWidth,
-                                   height: CGFloat(placement.interval.count) * ppm)
-                            .offset(x: gutter + CGFloat(column) * columnWidth + CGFloat(placement.column) * arrangementWidth + 1,
-                                    y: 12 + CGFloat(placement.interval.lowerBound) * ppm)
                     }
+                    .equatable()
+                    .zIndex(preview?.interval(on: day) != nil ? 1 : 0)
                 }
-                }.equatable()
             }
+            .animation(dragAnimation, value: preview)
             Group {
                 let today = LocalDay(now)
                 if (week...week.adding(days: 6)).contains(today) {
@@ -307,6 +313,28 @@ struct CalendarWeekTimeline: View {
                         .offset(x: gutter + CGFloat(week.distance(to: today)) * columnWidth, y: 12 + CGFloat(minute) * ppm)
                 }
             }.allowsHitTesting(false)
+        }
+    }
+
+    private func positionedBlock(_ schedule: DaySchedule, placement: DayPlanningPolicy.Placement,
+                                 day: LocalDay, matchesDragPosition: Bool, statusAnimation: Animation?) -> some View {
+        let content = Group {
+            if schedule.id == draftID {
+                TimelineScheduleShape.shape(placement: placement, radius: 4)
+                    .fill(Color.accentColor.opacity(0.2))
+                    .overlay(TimelineScheduleShape.shape(placement: placement, radius: 4).strokeBorder(Color.accentColor))
+                    .allowsHitTesting(false)
+            } else {
+                block(schedule, placement: placement, day: day, statusAnimation: statusAnimation)
+            }
+        }
+        return Group {
+            if matchesDragPosition {
+                content.matchedGeometryEffect(id: CalendarWeekScheduleFragment(id: schedule.id,
+                    dayOffset: schedule.startDay.distance(to: day)), in: dragPositions, properties: .position)
+            } else {
+                content
+            }
         }
     }
 
@@ -330,7 +358,8 @@ struct CalendarWeekTimeline: View {
         }.allowsHitTesting(false)
     }
 
-    private func block(_ schedule: DaySchedule, placement: DayPlanningPolicy.Placement, day: LocalDay) -> some View {
+    private func block(_ schedule: DaySchedule, placement: DayPlanningPolicy.Placement, day: LocalDay,
+                       statusAnimation: Animation?) -> some View {
         let todo = store.item(withID: schedule.todoID)
         let color: Color = todo?.isCompleted == true ? .secondary : todo.map { store.tag(withID: $0.tagID)?.color.color ?? .accentColor } ?? .secondary
         let height = CGFloat(placement.interval.count) * ppm
@@ -348,15 +377,17 @@ struct CalendarWeekTimeline: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 3) {
                         if let todo, height >= 24 {
-                            Button { store.toggle(todo) } label: { TodoStatusIcon(status: todo.status) }
+                            Button { store.toggle(todo) } label: {
+                                CalendarTaskStatusIcon(status: todo.status, animates: statusAnimation != nil)
+                            }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(L10n.string(todo.isCompleted ? "标记为未完成" : "标记为已完成"))
                         }
                         if schedule.startDay != day || schedule.endMinute > 1440 {
                             Image(systemName: schedule.startDay != day ? "arrow.turn.down.right" : "arrow.turn.up.right")
                         }
-                        Text(SchedulePresentation.title(schedule, store: store)).font(.caption.weight(.medium))
-                            .strikethrough(todo?.isCompleted == true).lineLimit(1)
+                        CalendarTaskStatusTitle(title: SchedulePresentation.title(schedule, store: store),
+                            isCompleted: todo?.isCompleted == true).font(.caption.weight(.medium)).lineLimit(1)
                     }
                     if height >= 40 { Text(SchedulePresentation.time(schedule)).font(.caption2).lineLimit(1) }
                     if height >= 57 && (schedule.startDay != day || schedule.endMinute > 1440) {
@@ -365,83 +396,102 @@ struct CalendarWeekTimeline: View {
                 }.padding(.horizontal, 5).padding(.vertical, height >= 24 ? 4 : 0).foregroundStyle(color)
             }
         }
+        .animation(statusAnimation, value: todo?.status)
         .clipped().contentShape(Rectangle())
-        .gesture(gesture(schedule, mode: .move))
         .onTapGesture(count: 2) { selectedID = schedule.id; isFocused = true; presentation = .editor(schedule.id) }
         .onTapGesture {
             selectedID = schedule.id
             isFocused = true
             presentation = schedule.todoID == nil ? nil : .details(schedule.id)
         }
-        .overlay(alignment: .top) { if schedule.startDay == day { handle(schedule, mode: .start, height: height) } }
+        .overlay(alignment: .top) { if schedule.startDay == day { handle(mode: .start, height: height) } }
         .overlay(alignment: .bottom) {
-            if schedule.endMinute - schedule.startDay.distance(to: day) * 1440 <= 1440 { handle(schedule, mode: .end, height: height) }
+            if schedule.endMinute - schedule.startDay.distance(to: day) * 1440 <= 1440 { handle(mode: .end, height: height) }
         }
         .contextMenu {
             Button(L10n.string("编辑安排")) { presentation = .editor(schedule.id) }
+            if let todo { TodoStatusMenuItems(item: todo) }
             Button(L10n.string("移除安排"), role: .destructive) { store.deleteSchedule(schedule.id) }
         }
     }
 
-    private func handle(_ schedule: DaySchedule, mode: WeekSchedulePolicy.Mode, height: CGFloat) -> some View {
-        Color.clear.frame(height: min(6, height / 3)).contentShape(Rectangle())
-            .gesture(gesture(schedule, mode: mode))
+    private func handle(mode: WeekSchedulePolicy.Mode, height: CGFloat) -> some View {
+        Color.clear.frame(height: resizeHandleHeight(for: height)).contentShape(Rectangle())
             .onHover { if $0 { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() } }
             .accessibilityLabel(L10n.string(mode == .start ? "调整开始时间" : "调整结束时间"))
     }
+
+    private func resizeHandleHeight(for height: CGFloat) -> CGFloat { min(6, height / 3) }
 
     private func column(at point: CGPoint) -> Int? {
         guard point.x >= gutter, point.x < size.width, point.y >= 0, point.y < size.height else { return nil }
         return min(6, Int((point.x - gutter) / max(1, (size.width - gutter) / 7)))
     }
 
-    private func gesture(_ original: DaySchedule?, mode: WeekSchedulePolicy.Mode) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named("weekTimeViewport"))
-            .onChanged { value in
-                guard !suppressed else { return }
-                if drag == nil, let column = column(at: value.startLocation) {
-                    draftID = UUID(); positionUpdatedAt = .now
-                    presentation = nil
-                    selectedID = original?.id
-                    if original != nil { isFocused = true }
-                    let minute = Double((value.startLocation.y + offset - 12) / ppm)
-                    let start = TimelineCreationPolicy.startMinute(at: minute,
-                        boundaries: creationBoundaries(on: week.adding(days: column)), pointsPerMinute: Double(ppm))
-                    drag = Interaction(original: original, mode: mode, column: column,
-                        originY: value.startLocation.y, originOffset: offset, creationStart: start, creationOrigin: minute)
-                }
-                previewUpdates.submit { updateDrag(at: value.location) }
-                if drag?.original != nil {
-                    dragAnchor.track(at: value.location, cancel: cancel) { location in previewUpdates.submit { updateDrag(at: location) } }
-                }
+    private func trackDrag(from origin: CGPoint, to location: CGPoint) {
+        guard !suppressed, store.canModify, draft == nil else { return }
+        if drag == nil {
+            guard isActive, let column = column(at: origin), targetDay(at: origin) != nil else { return }
+            let (original, mode) = dragSource(at: origin, column: column)
+            draftID = UUID(); positionUpdatedAt = .now
+            presentation = nil
+            selectedID = original?.id
+            if original != nil { isFocused = true }
+            let minute = Double((origin.y + offset - 12) / ppm)
+            let start = TimelineCreationPolicy.startMinute(at: minute,
+                boundaries: creationBoundaries(on: week.adding(days: column)), pointsPerMinute: Double(ppm))
+            drag = Interaction(original: original, mode: mode, column: column,
+                originY: origin.y, originOffset: offset, creationStart: start, creationOrigin: minute)
+        }
+        previewUpdates.submit { updateDrag(at: location) }
+        if drag?.original != nil {
+            dragAnchor.track(at: location, cancel: cancel) { location in
+                previewUpdates.submit { updateDrag(at: location) }
             }
-            .onEnded { value in
-                defer { clearDrag() }
-                guard !suppressed, targetDay(at: value.location) != nil else { return }
-                previewUpdates.cancel()
-                updateDrag(at: value.location)
-                if let preview, let original = drag?.original, preview != original,
-                   store.schedule(withID: original.id) == original {
-                    _ = store.upsertSchedule(preview)
-                }
-                else if let drag, drag.original == nil {
-                    updateCreation(drag, at: value.location)
-                    guard var creation else { return }
-                    if abs(value.translation.height + offset - drag.originOffset) < 4 {
-                        creation.range = TimelineCreationPolicy.defaultRange(anchoredAt: drag.creationStart,
-                            duration: store.settings.defaultScheduleMinutes)
-                    }
-                    let anchor = value.location
-                    let schedule = DaySchedule(startDay: creation.day, startMinute: creation.range.lowerBound,
-                        durationMinutes: creation.range.count, content: .independent(title: "", notes: ""),
-                        horizontalPosition: creation.horizontalPosition, horizontalPositionUpdatedAt: .now)
-                    DispatchQueue.main.async {
-                        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
-                        creationAnchor = anchor
-                        draft = schedule
-                    }
-                }
+        }
+    }
+
+    private func finishDrag(at location: CGPoint) {
+        guard let drag else { return }
+        defer { clearDrag() }
+        guard !suppressed, targetDay(at: location) != nil else { return }
+        previewUpdates.cancel()
+        updateDrag(at: location)
+        if let original = drag.original {
+            if let preview, preview != original, store.schedule(withID: original.id) == original {
+                _ = store.upsertSchedule(preview)
             }
+        } else if let creation {
+            let schedule = DaySchedule(startDay: creation.day, startMinute: creation.range.lowerBound,
+                durationMinutes: creation.range.count, content: .independent(title: "", notes: ""),
+                horizontalPosition: creation.horizontalPosition, horizontalPositionUpdatedAt: .now)
+            DispatchQueue.main.async {
+                guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+                creationAnchor = location
+                draft = schedule
+            }
+        }
+    }
+
+    private func dragSource(at point: CGPoint, column: Int) -> (DaySchedule?, WeekSchedulePolicy.Mode) {
+        let day = week.adding(days: column)
+        let presentation = timelinePresentation
+        let columnWidth = max(1, (size.width - gutter) / 7)
+        let y = point.y + offset - 12
+        for placement in presentation.placementsByDay[day] ?? [] {
+            let width = max(1, columnWidth - 2) / CGFloat(placement.columnCount)
+            let x = gutter + CGFloat(column) * columnWidth + CGFloat(placement.column) * width + 1
+            let top = CGFloat(placement.interval.lowerBound) * ppm
+            let bottom = CGFloat(placement.interval.upperBound) * ppm
+            guard point.x >= x, point.x < x + width, y >= top, y < bottom,
+                  let schedule = presentation.schedulesByID[placement.id] else { continue }
+            let handle = resizeHandleHeight(for: bottom - top)
+            if schedule.startDay == day, y < top + handle { return (schedule, .start) }
+            if schedule.endMinute - schedule.startDay.distance(to: day) * 1440 <= 1440,
+               y >= bottom - handle { return (schedule, .end) }
+            return (schedule, .move)
+        }
+        return (nil, .move)
     }
 
     private func horizontalPosition(at location: CGPoint, column: Int) -> Double {
@@ -580,9 +630,16 @@ private struct CalendarWeekTimelineRenderVersion: Equatable, Sendable {
     var selectedID: UUID?
     var preview: DaySchedule?
     var prioritizing: UUID?
+    var dragAnimation: Animation?
+    var statusAnimation: Animation?
     var today: LocalDay
     var minute: Int
     var locale: String
+}
+
+private struct CalendarWeekScheduleFragment: Hashable {
+    var id: UUID
+    var dayOffset: Int
 }
 
 /// Scrolling changes the clip origin, not the grid or its arrangement cards.
@@ -608,6 +665,9 @@ private struct CalendarWeekDayVersion: Equatable, Sendable {
     var draftID: UUID
     var minute: Int?
     var locale: String
+    var dragAnimation: Animation?
+    var statusAnimation: Animation?
+    var liftedID: UUID?
 }
 
 private struct CalendarWeekDayContent<Content: View>: View, Equatable {

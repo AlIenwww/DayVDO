@@ -42,14 +42,11 @@ final class CalendarDateInteraction: ObservableObject {
 
     func update(anchor: LocalDay, target: LocalDay, item: TodoItem?, mode: CalendarDateDragMode) {
         guard !suppressed else { return }
-        if drag == nil {
-            drag = Drag(item: item, anchor: anchor, mode: mode,
-                        range: (item?.startDay ?? anchor)...(item?.dueDay ?? anchor))
-        }
-        guard var current = drag else { return }
+        var current = drag ?? Drag(item: item, anchor: anchor, mode: mode,
+            range: (item?.startDay ?? anchor)...(item?.dueDay ?? anchor))
         let range = CalendarDatePolicy.range(start: current.item?.startDay ?? current.anchor,
             end: current.item?.dueDay ?? current.anchor, anchor: current.anchor, target: target, mode: current.mode)
-        guard range != current.range else { return }
+        guard drag?.range != range else { return }
         current.range = range
         drag = current
     }
@@ -79,6 +76,7 @@ struct CalendarDateWeekRow: View {
 
     @EnvironmentObject private var selection: CalendarTodoSelection
     @EnvironmentObject private var store: TodoStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var interaction: CalendarDateInteraction
     let week: LocalDay
     let selected: LocalDay
@@ -89,6 +87,7 @@ struct CalendarDateWeekRow: View {
     var maxLanes: Int? = nil
     var preparedLayout: CalendarDateLayout? = nil
     var visibleLanes: Range<Int>? = nil
+    var dragPositions: Namespace.ID? = nil
     var select: (LocalDay) -> Void
     var showMore: (LocalDay) -> Void
     var edit: (TodoItem) -> Void
@@ -141,6 +140,8 @@ struct CalendarDateWeekRow: View {
                 $0.lane < capacity && ((visibleLanes?.contains($0.lane) ?? true)
                     || $0.id == selection.selectedID || $0.id == previewID)
             }
+            let dragAnimation = store.settings.calendarDragAnimation(reduceMotion: reduceMotion)
+            let statusAnimation = store.settings.calendarTaskStatusAnimation(reduceMotion: reduceMotion)
             ZStack(alignment: .topLeading) {
                 HStack(spacing: 0) {
                     ForEach(0..<7, id: \.self) { column in
@@ -148,15 +149,25 @@ struct CalendarDateWeekRow: View {
                             hidden: hiddenCounts[column])
                     }
                 }
-                ForEach(visible) { segment in
-                    let rect = barFrame(segment, columnWidth: columnWidth, header: header)
-                    CalendarDateTaskBar(segment: segment,
-                        selected: selection.selectedID == segment.id,
-                        isDraft: segment.id == draft?.id, edit: edit)
-                        .equatable()
-                        .frame(width: rect.width, height: CalendarTodoBar.height)
-                        .offset(x: rect.minX, y: rect.minY)
+                ZStack(alignment: .topLeading) {
+                    ForEach(visible) { segment in
+                        let rect = barFrame(segment, columnWidth: columnWidth, header: header)
+                        CalendarDateTaskBar(segment: segment,
+                            selected: selection.selectedID == segment.id,
+                            isDraft: segment.id == draft?.id,
+                            statusAnimation: statusAnimation, edit: edit)
+                            .equatable()
+                            .modifier(CalendarDateDragPosition(segment: segment, week: week,
+                                namespace: dragAnimation == nil ? nil : dragPositions))
+                            .frame(width: rect.width, height: CalendarTodoBar.height)
+                            .shadow(color: .black.opacity(dragAnimation != nil && segment.id == previewID
+                                && interaction.drag != nil ? 0.18 : 0), radius: 2, y: 1)
+                            .offset(x: rect.minX, y: rect.minY)
+                            .zIndex(segment.id == previewID ? 1 : 0)
+                            .transition(.opacity)
+                    }
                 }
+                .animation(dragAnimation, value: interaction.drag?.range)
             }
             .preference(key: CalendarWeekFrames.self, value: [week: frame])
             .preference(key: CalendarDateHitRegions.self, value: [week:
@@ -224,6 +235,28 @@ struct CalendarDateWeekRow: View {
 
 }
 
+private struct CalendarDateDragPosition: ViewModifier {
+    let segment: CalendarDatePolicy.Segment
+    let week: LocalDay
+    let namespace: Namespace.ID?
+
+    func body(content: Content) -> some View {
+        // A task occupying several week rows has a distinct segment in each row.
+        if let namespace {
+            let fragment = max(0, segment.item.startDay.distance(to: week) + 6) / 7
+            content.matchedGeometryEffect(id: Fragment(item: segment.id, weekOffset: fragment),
+                                          in: namespace, properties: .position)
+        } else {
+            content
+        }
+    }
+
+    private struct Fragment: Hashable {
+        var item: UUID
+        var weekOffset: Int
+    }
+}
+
 /// Pointer regions follow the scroll origin, while each card only changes with
 /// its content, selection or draft state. Keep its keyboard and accessibility
 /// tree intact while the surrounding geometry moves.
@@ -232,14 +265,17 @@ private struct CalendarDateTaskBar: View, Equatable {
     let segment: CalendarDatePolicy.Segment
     let selected: Bool
     let isDraft: Bool
+    let statusAnimation: Animation?
     var edit: (TodoItem) -> Void
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.segment == rhs.segment && lhs.selected == rhs.selected && lhs.isDraft == rhs.isDraft
+            && lhs.statusAnimation == rhs.statusAnimation
     }
 
     var body: some View {
-        CalendarTodoBar(item: segment.item, startsHere: segment.startsHere, endsHere: segment.endsHere)
+        CalendarTodoBar(item: segment.item, startsHere: segment.startsHere, endsHere: segment.endsHere,
+                        statusAnimation: statusAnimation)
             .overlay {
                 if selected {
                     RoundedRectangle(cornerRadius: 3).stroke(Color.accentColor, lineWidth: 1.5)
@@ -252,6 +288,7 @@ private struct CalendarDateTaskBar: View, Equatable {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(segment.item.title)
+            .accessibilityValue(L10n.string(segment.item.status.title))
             .accessibilityHidden(isDraft)
             .accessibilityAction { if let latest = store.item(withID: segment.id) { edit(latest) } }
     }

@@ -12,13 +12,15 @@ struct ProjectTaskList: View {
     let children: [TodoItem]
     @Binding var editingItem: TodoItem?
     let today: LocalDay
+    var emptyMessage = L10n.string("还没有子任务")
     @StateObject var drag = ProjectTaskDragSession()
 
     var body: some View {
         let items = drag.orderedChildren(children)
         let offsets = drag.offsets(for: children, ordered: items)
+        let childIDs = children.map(\.id)
         ProjectTaskStackLayout(context: .init(
-            revision: store.contentRevision, ids: children.map(\.id), today: today,
+            revision: store.contentRevision, ids: childIDs, today: today,
             locale: L10n.locale.identifier, dynamicTypeSize: dynamicTypeSize
         )) {
             // Keep structural order fixed during hover. Reordering ForEach
@@ -33,21 +35,47 @@ struct ProjectTaskList: View {
                 )
                 .equatable()
                 .offset(y: offsets[item.id, default: 0])
+                .transition(.opacity)
             }
-            Color.clear
-                .frame(height: 20)
-                .contentShape(Rectangle())
-                .padding(.leading, 28)
-                .onDrop(of: [.text], delegate: drag.delegate(
-                    projectID: project.id, targetID: nil, store: store, animation: animation
-                ))
+            if children.isEmpty {
+                emptyState.transition(.offset(y: 12).combined(with: .opacity))
+            } else {
+                Color.clear
+                    .frame(height: 20)
+                    .contentShape(Rectangle())
+                    .padding(.leading, 28)
+                    .onDrop(of: [.text], delegate: drag.delegate(
+                        projectID: project.id, targetID: nil, store: store, animation: animation
+                    ))
+            }
         }
+        // A committed reorder owns its animation. Only membership changes use the list transition.
+        .animation(store.settings.allTodosListAnimation(reduceMotion: reduceMotion), value: Set(childIDs))
         .padding(.top, 5)
         .background { FrameUpdateAnchor(scheduler: drag.scheduler) }
         .onDisappear { drag.cancel(animation: nil) }
         // Filtering or model changes invalidate the captured ordering. Hover
         // itself never changes the store, so this does not interrupt reordering.
         .onChange(of: children) { _, _ in drag.cancel(animation: nil) }
+    }
+
+    private var emptyState: some View {
+        Text(emptyMessage)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .background(
+                Color.secondary.opacity(0.055),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.12), lineWidth: 0.5)
+            }
+            .padding(.leading, 28)
+            .padding(.bottom, 12)
     }
 
     private var animation: Animation? {

@@ -25,6 +25,23 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.appearance, .dark)
     }
 
+    func testCalendarAnimationSettingsAreIndependentAndRespectReduceMotion() throws {
+        var settings = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertNotNil(settings.calendarDragAnimation(reduceMotion: false))
+        XCTAssertNotNil(settings.calendarTaskStatusAnimation(reduceMotion: false))
+        XCTAssertNil(settings.calendarDragAnimation(reduceMotion: true))
+        XCTAssertNil(settings.calendarTaskStatusAnimation(reduceMotion: true))
+
+        settings.disabledAnimations.insert(.calendarDrag)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertNil(decoded.calendarDragAnimation(reduceMotion: false))
+        XCTAssertNotNil(decoded.calendarTaskStatusAnimation(reduceMotion: false))
+
+        settings.disabledAnimations = [.calendarTaskStatus]
+        XCTAssertNotNil(settings.calendarDragAnimation(reduceMotion: false))
+        XCTAssertNil(settings.calendarTaskStatusAnimation(reduceMotion: false))
+    }
+
     @MainActor
     func testEnglishLanguageOverrideUsesEnglishResources() {
         L10n.configure(language: .english)

@@ -1,33 +1,37 @@
 import SwiftUI
 
-/// Empty fields mean no estimate. Values are committed as one edit, not per keystroke.
+/// Empty fields clear the estimate. The editor also keeps its unsaved draft in sync while typing.
 struct DurationInput: View {
     var minutes: Int?
+    var unit: EstimatedDurationUnit
     var updatesDraft = false
     var onValidityChange: (Bool) -> Void = { _ in }
-    var onEditingChanged: (Bool) -> Void = { _ in }
     var onCommit: (Int?) -> Void
-    @State private var hours = ""
-    @State private var remainder = ""
+    @State private var input = EstimatedDurationUnit.Input()
     @State private var invalid = false
+    @State private var hasUncommittedInput = false
     private enum Field: Hashable { case hours, minutes }
     @FocusState private var focused: Field?
 
     var body: some View {
         HStack(spacing: 4) {
-            TextField("0", text: $hours)
-                .frame(width: 42)
-                .accessibilityLabel(L10n.string("小时"))
-                .focused($focused, equals: .hours)
-            Text(L10n.string("小时"))
-            TextField("0", text: $remainder)
-                .frame(width: 36)
-                .accessibilityLabel(L10n.string("分钟"))
-                .focused($focused, equals: .minutes)
-            Text(L10n.string("分钟"))
-            if minutes != nil || !hours.isEmpty || !remainder.isEmpty {
+            if unit != .minutes {
+                TextField("0", text: field(\.hours))
+                    .frame(width: unit == .mixed ? 60 : 90)
+                    .accessibilityLabel(L10n.string("小时"))
+                    .focused($focused, equals: .hours)
+                Text(L10n.string("小时"))
+            }
+            if unit != .hours {
+                TextField("0", text: field(\.minutes))
+                    .frame(width: unit == .mixed ? 60 : 90)
+                    .accessibilityLabel(L10n.string("分钟"))
+                    .focused($focused, equals: .minutes)
+                Text(L10n.string("分钟"))
+            }
+            if minutes != nil || !input.hours.isEmpty || !input.minutes.isEmpty {
                 Button {
-                    hours = ""; remainder = ""; invalid = false; onValidityChange(true)
+                    reload(nil)
                     onCommit(nil)
                 } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.borderless)
@@ -36,16 +40,13 @@ struct DurationInput: View {
         }
         .textFieldStyle(.roundedBorder)
         .controlSize(.small)
-        .onChange(of: hours) { _, _ in if updatesDraft { commit() } }
-        .onChange(of: remainder) { _, _ in if updatesDraft { commit() } }
-        .onSubmit(commit)
+        .onSubmit { commit() }
         .onChange(of: focused) { _, value in
-            onEditingChanged(value != nil)
             if value == nil { commit() }
         }
-        .onDisappear { if focused != nil { onEditingChanged(false) } }
-        .onAppear(perform: reload)
-        .onChange(of: minutes) { _, _ in if focused == nil { reload() } }
+        .onAppear { reload(minutes) }
+        .onChange(of: unit) { _, _ in reload(minutes) }
+        .onChange(of: minutes) { _, value in if focused == nil { reload(value) } }
         .overlay(alignment: .bottom) {
             if invalid {
                 Text(L10n.string("请输入有效时长"))
@@ -54,20 +55,37 @@ struct DurationInput: View {
         }
     }
 
-    private func reload() {
-        hours = minutes.map { String($0 / 60) } ?? ""
-        remainder = minutes.map { String($0 % 60) } ?? ""
+    private func field(_ keyPath: WritableKeyPath<EstimatedDurationUnit.Input, String>) -> Binding<String> {
+        Binding(get: { input[keyPath: keyPath] }, set: { value in
+            guard input[keyPath: keyPath] != value else { return }
+            input[keyPath: keyPath] = value
+            hasUncommittedInput = true
+            if updatesDraft { commit(normalize: false) }
+        })
     }
-    private func commit() {
-        if hours.isEmpty && remainder.isEmpty { invalid = false; onValidityChange(true); onCommit(nil); return }
-        guard let h = Int(hours.isEmpty ? "0" : hours),
-              let m = Int(remainder.isEmpty ? "0" : remainder),
-              (0...100_000).contains(h), (0...59).contains(m), h * 60 + m > 0 else {
-            invalid = true; onValidityChange(false); return
+
+    private func reload(_ minutes: Int?) {
+        input = .init(minutes: minutes, unit: unit, locale: L10n.locale)
+        hasUncommittedInput = false
+        invalid = false
+        onValidityChange(true)
+    }
+
+    private func commit(normalize: Bool = true) {
+        guard hasUncommittedInput else { return }
+        let value: Int?
+        switch input.value(in: unit, locale: L10n.locale) {
+        case .empty: value = nil
+        case let .minutes(total): value = total
+        case .invalid:
+            invalid = true
+            onValidityChange(false)
+            return
         }
         invalid = false
         onValidityChange(true)
-        onCommit(h * 60 + m)
+        if value != minutes { onCommit(value) }
+        if normalize { reload(value) }
     }
 }
 

@@ -242,20 +242,7 @@ struct DayTimelineView: View {
                         && location.y >= 0 && location.y <= viewportHeight
                 }) { location, count in
                     guard let hit = scheduleHit(at: location, placements: placements, width: timelineWidth) else {
-                        if count == 1 {
-                            if selectedID != nil { selectedID = nil }
-                            else if location.x >= gutter, presentation == nil, creationDraft.wrappedValue == nil, store.canModify {
-                                let minute = Double((location.y + scrollOffset - 12) / pixelsPerMinute)
-                                let start = TimelineCreationPolicy.startMinute(at: minute,
-                                    boundaries: creationBoundaries, pointsPerMinute: Double(pixelsPerMinute))
-                                let range = TimelineCreationPolicy.defaultRange(anchoredAt: start,
-                                    duration: store.settings.defaultScheduleMinutes)
-                                creationAnchor = location
-                                create(range.lowerBound, range.count,
-                                       DayPlanningPolicy.horizontalPosition(x: Double(location.x), minX: Double(gutter),
-                                                                            width: Double(timelineWidth - gutter - 8)))
-                            }
-                        }
+                        if count == 1 { selectedID = nil }
                         return
                     }
                     guard statusFrames[hit.id]?.contains(hit.point) != true else { return }

@@ -1,12 +1,12 @@
 import SwiftUI
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, appearance, planning, calendar, shortcuts, help, about
+    case general, animation, planning, calendar, shortcuts, help, about
     var id: String { rawValue }
     var title: String {
         switch self {
         case .general: "通用"
-        case .appearance: "外观"
+        case .animation: "动画"
         case .planning: "待办与安排"
         case .calendar: "日历"
         case .shortcuts: "快捷键"
@@ -18,7 +18,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
-        case .appearance: "paintpalette"
+        case .animation: "play.rectangle"
         case .planning: "checklist"
         case .calendar: "calendar"
         case .shortcuts: "keyboard"

@@ -92,6 +92,43 @@ final class AppAppearanceWindowTests: XCTestCase {
         XCTAssertTrue(saved)
     }
 
+    func testSidebarRestoresNativeHighlightAfterThemeReset() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DayVDO-Sidebar-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TodoStore(fileURL: directory.appendingPathComponent("todos.json"))
+        let navigation = AppNavigation(store: store)
+        let window = makeWindow(ContentView().environmentObject(store).environmentObject(navigation),
+                                probe: AppearanceProbe())
+        defer { window.contentView = nil; window.close() }
+        try await settle([window])
+
+        let table = try XCTUnwrap(sidebarTable(in: try XCTUnwrap(window.contentView)))
+        let systemHighlight = table.selectionHighlightStyle
+        XCTAssertNotEqual(systemHighlight, .none)
+
+        store.settings.themeColor = TagColor(red: 0.45, green: 0.78, blue: 0.15)
+        try await settle([window])
+        XCTAssertEqual(table.selectionHighlightStyle, .none)
+        XCTAssertEqual(table.selectedRow, 0)
+
+        navigation.navigate(to: .settings)
+        try await settle([window])
+        XCTAssertEqual(table.selectedRow, 3)
+
+        store.settings.themeColor = nil
+        try await settle([window])
+        XCTAssertEqual(table.selectionHighlightStyle, systemHighlight)
+        XCTAssertEqual(table.selectedRow, 3)
+        let saved = await store.flushPersistence()
+        XCTAssertTrue(saved)
+    }
+
+    private func sidebarTable(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView, table.effectiveStyle == .sourceList { return table }
+        return view.subviews.lazy.compactMap { self.sidebarTable(in: $0) }.first
+    }
+
     private func makeWindow<Content: View>(_ content: Content, probe: AppearanceProbe) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)

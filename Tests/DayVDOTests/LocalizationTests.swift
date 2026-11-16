@@ -24,6 +24,21 @@ final class LocalizationTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testSystemLanguageOptionKeepsItsTitleWhenAppLanguageChanges() {
+        L10n.configure(language: .system)
+        let systemTitle = L10n.string("系统默认")
+        let systemSettingsTitle = L10n.string("设置")
+        defer { L10n.configure(language: .system) }
+
+        for language in AppLanguage.allCases where language != .system {
+            L10n.configure(language: language)
+            XCTAssertEqual(AppLanguage.system.title, systemTitle)
+            L10n.configure(language: .system)
+            XCTAssertEqual(L10n.string("设置"), systemSettingsTitle)
+        }
+    }
+
     func testEveryLocalizationContainsEveryStaticallyUsedKey() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -51,6 +66,8 @@ final class LocalizationTests: XCTestCase {
         required.formUnion(StartupPage.allCases.map(\.title))
         required.formUnion(AppCommand.allCases.map(\.title))
         required.formUnion(AppAnimationEffect.allCases.map(\.title))
+        required.formUnion(GlossaryTerm.allCases.map(\.title))
+        required.formUnion(GlossaryTerm.allCases.map(\.definition))
         required.formUnion(TodoDateFilter.presets.map(\.title))
         required.formUnion(["自定义范围", "开始日期", "结束日期"])
 

@@ -184,7 +184,8 @@ struct CalendarDateInput: NSViewRepresentable {
             if let item = store.item(withID: selection?.selectedID) {
                 add("编辑", tag: 0)
                 add(item.isCompleted ? "标记为未完成" : "标记为已完成", tag: 1, enabled: store.canModify)
-                add("标记为进行中", tag: 2, enabled: store.canModify)
+                if item.status != .notStarted { add("标记为未开始", tag: 7, enabled: store.canModify) }
+                add("标记为进行中", tag: 2, enabled: item.status != .inProgress && store.canModify)
                 menu.addItem(.separator())
                 add("拷贝", tag: 3)
                 add("粘贴", tag: 4, enabled: store.canModify && NSPasteboard.general.data(forType: CalendarTodoSelection.pasteboardType) != nil)
@@ -207,6 +208,7 @@ struct CalendarDateInput: NSViewRepresentable {
             case 4: paste(nil)
             case 5: deleteBackward(nil)
             case 6: create(selection.day, selection.day)
+            case 7: if let item { _ = store.setStatus(.notStarted, for: item) }
             default: break
             }
         }

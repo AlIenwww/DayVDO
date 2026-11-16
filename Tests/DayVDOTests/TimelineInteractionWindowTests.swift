@@ -8,15 +8,16 @@ import XCTest
 final class TimelineInteractionWindowTests: XCTestCase {
     private let day = LocalDay(year: 2026, month: 10, day: 5)
 
-    func testBlankTimelineClickUsesConfiguredDefaultDuration() throws {
+    func testBlankTimelineClickDoesNotOpenCreationDraft() throws {
         let fixture = makeWindow()
         defer { close(fixture) }
         fixture.store.settings.defaultScheduleMinutes = 37
         settle()
         click(screenPoint(x: 300, yFromTop: 260, in: fixture.window), in: fixture.window)
         settle()
-        XCTAssertEqual(fixture.probe.draft?.durationMinutes, 37)
-        XCTAssertEqual(fixture.store.schedules, [fixture.schedule], "Creating a draft must not save an unnamed arrangement")
+        XCTAssertNil(fixture.probe.draft)
+        XCTAssertNil(fixture.probe.presentation)
+        XCTAssertEqual(fixture.store.schedules, [fixture.schedule])
     }
 
     func testBlankTimelineClickClearsSelectionBeforeDelete() throws {
@@ -97,6 +98,62 @@ final class TimelineInteractionWindowTests: XCTestCase {
             let color = try XCTUnwrap(bitmap.colorAt(x: Int(130 * scaleX), y: Int(middle * scaleY)))
             assertCardPaint(color, schedule: schedule)
         }
+    }
+
+    func testWeekArrangementCanMoveAcrossDaysAndCancelAnotherMove() throws {
+        let fixture = makeWindow()
+        defer { close(fixture) }
+        let cache = CalendarWeekPresentationCache()
+        fixture.window.contentView = NSHostingView(rootView: CalendarWeekTimeline(week: day,
+            visibility: .init(showCompleted: true), hourHeight: .constant(90),
+            scrollMinute: .constant(480), presentationCache: cache,
+            editTodo: { _ in }).environmentObject(fixture.store))
+        settle()
+
+        let source = screenPoint(x: 130, yFromTop: 145, in: fixture.window)
+        let target = screenPoint(x: 220, yFromTop: 175, in: fixture.window)
+        mouse(.leftMouseDown, at: source, in: fixture.window)
+        mouse(.leftMouseDragged, at: screenPoint(x: 137, yFromTop: 151, in: fixture.window),
+              in: fixture.window)
+        mouse(.leftMouseDragged, at: target, in: fixture.window)
+        settle()
+        XCTAssertEqual(cache.dragPreview?.startDay, day.adding(days: 1))
+        XCTAssertEqual(fixture.store.schedule(withID: fixture.schedule.id), fixture.schedule)
+        mouse(.leftMouseUp, at: target, in: fixture.window)
+        settle()
+        let moved = try XCTUnwrap(fixture.store.schedule(withID: fixture.schedule.id))
+        XCTAssertEqual(moved.startDay, day.adding(days: 1))
+        XCTAssertEqual(moved.startMinute, 560)
+        XCTAssertNil(cache.dragPreview)
+
+        mouse(.leftMouseDown, at: target, in: fixture.window)
+        mouse(.leftMouseDragged, at: source, in: fixture.window)
+        settle()
+        XCTAssertNotNil(cache.dragPreview)
+        escape(in: fixture.window)
+        mouse(.leftMouseUp, at: source, in: fixture.window)
+        settle()
+        XCTAssertNil(cache.dragPreview)
+        XCTAssertEqual(fixture.store.schedule(withID: moved.id), moved)
+
+        let bottomHandle = screenPoint(x: 220, yFromTop: 218, in: fixture.window)
+        let extended = screenPoint(x: 220, yFromTop: 248, in: fixture.window)
+        mouse(.leftMouseDown, at: bottomHandle, in: fixture.window)
+        mouse(.leftMouseDragged, at: extended, in: fixture.window)
+        settle()
+        XCTAssertEqual(cache.dragPreview?.durationMinutes, 80)
+        mouse(.leftMouseUp, at: extended, in: fixture.window)
+        settle()
+        XCTAssertEqual(fixture.store.schedule(withID: moved.id)?.durationMinutes, 80)
+
+        let blank = screenPoint(x: 310, yFromTop: 270, in: fixture.window)
+        let blankEnd = screenPoint(x: 310, yFromTop: 315, in: fixture.window)
+        mouse(.leftMouseDown, at: blank, in: fixture.window)
+        mouse(.leftMouseDragged, at: blankEnd, in: fixture.window)
+        mouse(.leftMouseUp, at: blankEnd, in: fixture.window)
+        settle()
+        XCTAssertNotNil(editorWindow(fixture))
+        XCTAssertEqual(fixture.store.schedules.count, 1, "Creating a draft must wait for confirmation")
     }
 
     private func assertCardPaint(_ color: NSColor, schedule: DaySchedule,
@@ -346,13 +403,16 @@ final class TimelineInteractionWindowTests: XCTestCase {
     }
 
     private func click(_ screenPoint: CGPoint, in window: NSWindow, count: Int = 1) {
-        let point = window.convertPoint(fromScreen: screenPoint)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 0, clickCount: count, pressure: type == .leftMouseDown ? 1 : 0)!
-            dispatch(event)
+            mouse(type, at: screenPoint, in: window, count: count)
         }
+    }
+
+    private func mouse(_ type: NSEvent.EventType, at screenPoint: CGPoint, in window: NSWindow, count: Int = 1) {
+        let event = NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: screenPoint), modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: count, pressure: type == .leftMouseUp ? 0 : 1)!
+        dispatch(event)
     }
 
     private func doubleClick(_ point: CGPoint, in window: NSWindow) {

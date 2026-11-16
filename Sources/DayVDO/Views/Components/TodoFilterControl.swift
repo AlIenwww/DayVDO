@@ -1,10 +1,12 @@
 import SwiftUI
 
 struct TodoFilterButton: View {
+    @EnvironmentObject private var store: TodoStore
     @Binding var filter: TodoFilterState
     @State private var isPresented = false
 
     var body: some View {
+        let accent = store.settings.themeColor?.color ?? .accentColor
         Button {
             isPresented.toggle()
         } label: {
@@ -15,10 +17,10 @@ struct TodoFilterButton: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(minWidth: 17, minHeight: 17)
-                        .background(Color.accentColor, in: Circle())
+                        .background(accent, in: Circle())
                 }
             }
-            .foregroundStyle(filter.isActive ? Color.accentColor : Color.primary)
+            .foregroundStyle(filter.isActive ? accent : Color.primary)
             .fixedSize(horizontal: true, vertical: false)
         }
         .help(L10n.string("筛选待办"))
@@ -45,6 +47,9 @@ struct TodoFilterPopover: View {
     private let gridColumns = [
         GridItem(.adaptive(minimum: 136), spacing: 8)
     ]
+    private let scrollEdgeFadeHeight: CGFloat = 12
+
+    private var selectionColor: Color { store.settings.themeColor?.color ?? .accentColor }
 
     private var sortedProjects: [TodoProject] {
         store.projects.sorted {
@@ -55,7 +60,7 @@ struct TodoFilterPopover: View {
     var body: some View {
         let projectOptions = sortedProjects.map { TodoFilterSelectionOption(id: $0.id, title: $0.title) }
         let tagOptions = store.sortedTags.map { TodoFilterSelectionOption(id: $0.id, title: $0.name, tag: $0) }
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(L10n.string("筛选"))
                     .font(.headline)
@@ -65,6 +70,7 @@ struct TodoFilterPopover: View {
                     .disabled(!filter.isActive)
                     .accessibilityHint(L10n.string("移除所有筛选条件"))
             }
+            .padding(.bottom, 12)
 
             Divider()
 
@@ -76,7 +82,7 @@ struct TodoFilterPopover: View {
                                 filterChoice(
                                     title: L10n.string(status.title),
                                     symbol: status.symbolName,
-                                    color: status.color,
+                                    color: status == .completed ? selectionColor : status.color,
                                     isSelected: filter.statuses.contains(status)
                                 ) {
                                     toggle(status, at: \.statuses)
@@ -187,8 +193,19 @@ struct TodoFilterPopover: View {
                     }
                 }
                 .padding(1)
+                .padding(.vertical, scrollEdgeFadeHeight)
             }
+            .scrollIndicators(.hidden)
             .frame(maxHeight: 520)
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: scrollEdgeFadeHeight)
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: scrollEdgeFadeHeight)
+                }
+            }
         }
         .padding(16)
         .frame(width: 340)
@@ -270,7 +287,7 @@ struct TodoFilterPopover: View {
             if isSelected {
                 Image(systemName: "checkmark")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(selectionColor)
                     .accessibilityHidden(true)
             }
         }
@@ -278,13 +295,13 @@ struct TodoFilterPopover: View {
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
         .background(
-            isSelected ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.07),
+            isSelected ? selectionColor.opacity(0.12) : Color.secondary.opacity(0.07),
             in: RoundedRectangle(cornerRadius: 7, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(
-                    isSelected ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.14),
+                    isSelected ? selectionColor.opacity(0.65) : Color.secondary.opacity(0.14),
                     lineWidth: 1
                 )
         }
@@ -325,7 +342,7 @@ struct TodoFilterPopover: View {
             .padding(.horizontal, 9)
             .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
             .background(
-                names.isEmpty ? Color.secondary.opacity(0.07) : Color.accentColor.opacity(0.1),
+                names.isEmpty ? Color.secondary.opacity(0.07) : selectionColor.opacity(0.1),
                 in: RoundedRectangle(cornerRadius: 7, style: .continuous)
             )
             .contentShape(Rectangle())
@@ -336,7 +353,7 @@ struct TodoFilterPopover: View {
         .accessibilityValue(names.isEmpty ? summary : names.joined(separator: ", "))
         .help(names.isEmpty ? summary : names.joined(separator: "\n"))
         .popover(isPresented: presentation, arrowEdge: .trailing) {
-            TodoFilterSelectionPopover(category: category, options: options,
+            TodoFilterSelectionPopover(category: category, options: options, selectionColor: selectionColor,
                                        selectedIDs: selectedIDs, includesNone: includesNone)
         }
     }
@@ -394,6 +411,7 @@ private struct TodoFilterSelectionPopover: View {
     @Environment(\.dismiss) private var dismiss
     let category: TodoFilterSelectionCategory
     let options: [TodoFilterSelectionOption]
+    let selectionColor: Color
     @Binding var selectedIDs: Set<UUID>
     @Binding var includesNone: Bool
     @State private var search = ""
@@ -484,14 +502,14 @@ private struct TodoFilterSelectionPopover: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(selectionColor)
                         .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
             .background(
-                isSelected ? Color.accentColor.opacity(0.1) : Color.clear,
+                isSelected ? selectionColor.opacity(0.1) : Color.clear,
                 in: RoundedRectangle(cornerRadius: 6, style: .continuous)
             )
             .contentShape(Rectangle())

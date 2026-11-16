@@ -3,13 +3,16 @@ import SwiftUI
 struct SchedulePopoverView: View {
     @EnvironmentObject private var store: TodoStore
     let schedule: DaySchedule
+    private let showsCalendarStatus: Bool
     var editTodo: (TodoItem) -> Void
     var close: () -> Void
     @State private var isEditing: Bool
 
-    init(schedule: DaySchedule, startsEditing: Bool, editTodo: @escaping (TodoItem) -> Void,
+    init(schedule: DaySchedule, startsEditing: Bool, showsCalendarStatus: Bool = false,
+         editTodo: @escaping (TodoItem) -> Void,
          close: @escaping () -> Void) {
         self.schedule = schedule
+        self.showsCalendarStatus = showsCalendarStatus
         self.editTodo = editTodo
         self.close = close
         _isEditing = State(initialValue: startsEditing)
@@ -31,6 +34,7 @@ struct SchedulePopoverView: View {
                         .padding([.top, .trailing], 12)
                     ScheduleDetailsView(
                         schedule: schedule,
+                        showsCalendarStatus: showsCalendarStatus,
                         edit: { _ in isEditing = true },
                         editTodo: { todo in
                             close()
@@ -209,7 +213,9 @@ struct ScheduleEditorView: View {
 
 struct ScheduleDetailsView: View {
     @EnvironmentObject private var store: TodoStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let schedule: DaySchedule
+    var showsCalendarStatus = false
     var edit: (DaySchedule) -> Void
     var editTodo: (TodoItem) -> Void
     var remove: () -> Void
@@ -225,9 +231,15 @@ struct ScheduleDetailsView: View {
                     _ = store.toggle(todo)
                 } label: {
                     HStack(spacing: 6) {
-                        TodoStatusIcon(status: todo.status)
-                        Text(L10n.string(todo.status.title))
+                        if showsCalendarStatus {
+                            CalendarTaskStatusIcon(status: todo.status, animates: statusAnimation != nil)
+                            Text(L10n.string(todo.status.title)).contentTransition(.opacity)
+                        } else {
+                            TodoStatusIcon(status: todo.status)
+                            Text(L10n.string(todo.status.title))
+                        }
                     }
+                    .animation(statusAnimation, value: todo.status)
                 }
                 .contextMenu { TodoStatusMenuItems(item: todo) }
                 Button(L10n.string("编辑原待办")) { editTodo(todo) }
@@ -237,5 +249,9 @@ struct ScheduleDetailsView: View {
                 Button(L10n.string("移除安排"), role: .destructive, action: remove)
             }
         }.padding(20).frame(width: 300)
+    }
+
+    private var statusAnimation: Animation? {
+        showsCalendarStatus ? store.settings.calendarTaskStatusAnimation(reduceMotion: reduceMotion) : nil
     }
 }

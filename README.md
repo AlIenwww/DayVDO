@@ -23,6 +23,8 @@ xcrun swift run DayVDO
 
 如果 Xcode 安装在其他位置，请调整 `DEVELOPER_DIR`。也可以用 Xcode 打开仓库根目录下的 `Package.swift`。
 
+要生成带应用图标的 `.app`，运行 `python3 Scripts/build_app.py`。应用会生成在 `dist/macOS27/`，图标源文件位于 `Design/AppIcon/DayVDO.icon`。
+
 ## 测试
 
 手动运行测试：

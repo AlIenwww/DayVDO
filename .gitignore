@@ -2,7 +2,8 @@
 .build/
 DerivedData/
 dist/
-/Scripts/
+/Scripts/*
+!/Scripts/build_app.py
 .swiftpm/
 *.xcuserstate
 *.xccheckout
@@ -28,10 +29,6 @@ venv/
 /Docs/SidebarSwitchingPerformanceVerification.md
 /Docs/macOS27CompatibilityVerification.md
 /Tools/record_calendar_scroll.py
-
-# Unused icon concepts and experiments; keep the shipping icon and packaging assets
-/Design/AppIcon/DayVDO-Concept-D-Cycle.png
-/Design/AppIcon/Graphite-Rebuild/
 
 # Generated macOS applications and build diagnostics
 *.app/

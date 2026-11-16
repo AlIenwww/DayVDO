@@ -66,15 +66,21 @@ private struct GuideIntroduction: View {
                 }
             } else {
                 if guide.progress.step == .preferences {
+                    Label(L10n.string("新手教程仍在开发中"), systemImage: "hammer")
+                        .font(.callout.weight(.medium))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
                     Text(L10n.string("先选择语言和外观，之后也可以在设置中修改。"))
                         .foregroundStyle(.secondary)
                     Form { AppearancePreferencesView() }
                         .formStyle(.grouped)
+                        .pickerStyle(.menu)
                         .frame(height: 130)
                         .disabled(!store.canModify)
                 } else {
-                    GuideConceptsView()
-                    Text(L10n.string("接下来在独立练习中，记录一件事，为它安排时间，再标记完成。"))
+                    Text(L10n.string("DayVDO 帮你规划每天要做的事。点击「开始练习」，试试基本操作。"))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Divider()
                 HStack {
@@ -121,14 +127,13 @@ struct GuidePracticeMenu: View {
 }
 
 struct GuidePracticeBar: View {
-    @EnvironmentObject private var store: TodoStore
     @ObservedObject var guide: OnboardingSession
-    let editSchedule: (DaySchedule) -> Void
+    let isShowingToday: Bool
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom, spacing: 20) {
-                instructions.frame(minWidth: 300)
+            HStack(alignment: .center, spacing: 16) {
+                instructions.frame(minWidth: 250)
                 actions.fixedSize(horizontal: true, vertical: false)
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -140,27 +145,40 @@ struct GuidePracticeBar: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
+        .background {
+            Rectangle().fill(.bar)
+            Rectangle().fill(Color.accentColor.opacity(0.09))
+        }
         .overlay(alignment: .top) { Divider() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.string("新手指引"))
     }
 
     private var instructions: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label(L10n.string(guide.progress.step.title), systemImage: "book.closed")
-                    .font(.headline)
+                Label {
+                    Text(L10n.string(guide.progress.step.title))
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                } icon: {
+                    Image(systemName: "book.closed.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
+                }
                 GuideStepNumber(step: guide.progress.step)
             }
             GuideSaveMessage(guide: guide)
             if guide.progress.step == .discover {
-                Text(L10n.string("项目将相关待办归在一起，标签帮助你用颜色分类。"))
-                Text(L10n.string("日历支持周／月视图；总待办可搜索，并按项目、标签和状态筛选。"))
+                Text(L10n.string("可以点击左侧边栏的「日历」或「总待办」看看其他页面。"))
+                Text(L10n.string("点击「开始使用 DayVDO」结束练习。"))
+            } else if guide.canAdvance {
+                Label(L10n.string("已完成。点击「下一步」继续。"), systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+            } else if !isShowingToday {
+                Text(L10n.string("点击左侧边栏的「今日安排」，回到练习页面。"))
             } else {
-                Text(L10n.string(instruction))
-                if guide.canAdvance {
-                    Label(L10n.string("已完成，可以继续。"), systemImage: "checkmark.circle")
-                        .foregroundStyle(.secondary)
-                }
+                Text(instruction)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -169,7 +187,6 @@ struct GuidePracticeBar: View {
     private var actions: some View {
         HStack(spacing: 8) {
             Button(L10n.string("上一步")) { guide.back() }
-            scheduleAction
             Button(L10n.string(guide.progress.step == .discover ? "开始使用 DayVDO" : "下一步")) {
                 if guide.progress.step == .discover { _ = guide.finish() }
                 else { guide.advance() }
@@ -179,41 +196,29 @@ struct GuidePracticeBar: View {
         }
     }
 
-    @ViewBuilder
-    private var scheduleAction: some View {
-        if guide.progress.step == .schedule, guide.targetSchedule == nil, let todo = guide.targetTodo {
-            Button(L10n.string("安排时间")) {
-                let duration = DayPlanningPolicy.defaultDuration(
-                    estimated: todo.estimatedMinutes, scheduled: store.scheduledMinutes(for: todo.id),
-                    fallback: store.settings.defaultScheduleMinutes
-                )
-                editSchedule(DaySchedule(startDay: guide.progress.day, startMinute: 540,
-                    durationMinutes: duration, content: .todo(todo.id)))
-            }
-        } else if guide.progress.step == .adjust, let schedule = guide.targetSchedule {
-            Button(L10n.string("编辑安排")) { editSchedule(schedule) }
-        }
-    }
-
     private var instruction: String {
         switch guide.progress.step {
-        case .create: "点击“新建待办”，修改示例名称并保存。"
-        case .schedule: "将右侧的待办拖入时间线，或点击“安排时间”按钮。"
+        case .create: L10n.string("点击窗口右上角的「＋」，修改示例名称，再点击「保存」。")
+        case .schedule: L10n.string("将右侧的待办拖入时间线，为它安排一段时间。")
         case .adjust:
-            if !guide.progress.moved { "拖动安排到另一个时间；也可以双击安排，编辑起止时间。" }
-            else if !guide.progress.resized { "现在拖动安排的边缘调整时长，或双击后修改结束时间。" }
-            else { "安排的位置和时长都已调整。" }
-        case .complete: "点击待办或安排上的状态图标，将待办标记为已完成。"
-        default: "练习内容不会加入正式数据。"
+            if guide.targetSchedule == nil { L10n.string("将右侧的待办拖入时间线，为它安排一段时间。") }
+            else if !guide.progress.moved { L10n.string("拖动时间线上的安排块，把它移到另一个时间。") }
+            else { L10n.string("拖动安排块的上边缘或下边缘，调整时长。") }
+        case .complete: L10n.string("在右侧列表中，点击待办名称左边的圆形状态按钮，将它标记为完成。")
+        default: ""
         }
     }
 }
 
 private struct GuideStepNumber: View {
-    let step: GuideStep
+    let title: String
+
+    init(step: GuideStep) {
+        title = L10n.format("第 %lld / %lld 步", step.rawValue + 1, GuideStep.allCases.count)
+    }
 
     var body: some View {
-        Text(L10n.format("第 %lld / %lld 步", step.rawValue + 1, GuideStep.allCases.count))
+        Text(title)
             .font(.caption)
             .foregroundStyle(.secondary)
     }

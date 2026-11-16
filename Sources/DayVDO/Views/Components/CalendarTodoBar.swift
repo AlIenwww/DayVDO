@@ -5,6 +5,7 @@ struct CalendarTodoBar: View {
     let item: CalendarWindowSnapshot.Item
     var startsHere = true
     var endsHere = true
+    var statusAnimation: Animation?
 
     nonisolated static let height: CGFloat = 15
     nonisolated static let laneHeight: CGFloat = 20
@@ -12,15 +13,14 @@ struct CalendarTodoBar: View {
     var body: some View {
         let color = item.tagColor?.color ?? .accentColor
         HStack(spacing: 3) {
-            if item.status == .inProgress {
-                Image(systemName: item.status.symbolName)
-                    .font(.system(size: 8, weight: .semibold)).foregroundStyle(.orange)
-                    .accessibilityHidden(true)
-            }
+            CalendarTaskStatusIcon(status: item.status, animates: statusAnimation != nil)
+                .font(.system(size: 8, weight: .semibold))
+                .frame(width: 10)
+                .accessibilityHidden(true)
             if item.hasProject {
                 Image(systemName: "folder.fill").font(.system(size: 7)).foregroundStyle(.secondary)
             }
-            Text(item.title).strikethrough(item.isCompleted).lineLimit(1)
+            CalendarTaskStatusTitle(title: item.title, isCompleted: item.isCompleted).lineLimit(1)
         }
         .font(.caption2)
         .foregroundStyle(item.isCompleted ? .secondary : .primary)
@@ -34,5 +34,6 @@ struct CalendarTodoBar: View {
                 .fill(color.opacity(item.isCompleted ? 0.45 : 0.9))
                 .frame(width: 2).padding(.vertical, 2)
         }
+        .animation(statusAnimation, value: item.status)
     }
 }

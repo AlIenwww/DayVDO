@@ -86,13 +86,13 @@ struct SettingsView: View {
         switch navigation.settingsCategory {
         case .general:
             preferences
-        case .appearance:
-            AppearanceSettingsView()
+        case .animation:
+            AnimationSettingsPreview().disabled(!store.canModify)
         case .planning:
             planning
         case .calendar:
-            Toggle(L10n.string("每周从星期一开始"), isOn: $store.settings.startWeekOnMonday)
-                .toggleStyle(.checkbox)
+            settingsToggle("每周从星期一开始", isOn: $store.settings.startWeekOnMonday)
+                .labeledContentStyle(SettingsRowStyle())
                 .disabled(!store.canModify)
         case .shortcuts:
             ShortcutSettingsView()
@@ -104,67 +104,108 @@ struct SettingsView: View {
     }
 
     private var preferences: some View {
-        Form {
-            LanguagePicker()
-            Picker(L10n.string("启动页面"), selection: $store.settings.startupPage) {
-                ForEach(StartupPage.allCases) { page in Text(L10n.string(page.title)).tag(page) }
+        VStack(spacing: 0) {
+            LabeledContent(L10n.string("语言")) { LanguagePicker().labelsHidden() }
+            Divider()
+            LabeledContent(L10n.string("启动页面")) {
+                Picker(L10n.string("启动页面"), selection: $store.settings.startupPage) {
+                    ForEach(StartupPage.allCases) { page in Text(L10n.string(page.title)).tag(page) }
+                }
+                .labelsHidden()
+            }
+            Divider()
+            LabeledContent(L10n.string("外观")) { AppearanceModePicker().labelsHidden() }
+            Divider()
+            LabeledContent(L10n.string("主题色")) {
+                HStack(spacing: 8) {
+                    ColorPicker(L10n.string("主题色"), selection: Binding(
+                        get: { store.settings.themeColor?.color ?? Color(nsColor: .controlAccentColor) },
+                        set: { store.settings.themeColor = TagColor(color: $0) }
+                    ), supportsOpacity: false)
+                    .labelsHidden()
+                    Button(L10n.string("系统默认")) { store.settings.themeColor = nil }
+                        .disabled(store.settings.themeColor == nil)
+                }
             }
         }
-        .formStyle(.columns)
+        .labeledContentStyle(SettingsRowStyle())
         .pickerStyle(.menu)
         .disabled(!store.canModify)
     }
 
     private var planning: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 7) {
-                Toggle(L10n.string("显示已完成的待办"), isOn: $store.settings.showCompleted)
-                Toggle(L10n.string("删除前询问"), isOn: $store.settings.confirmBeforeDeleting)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(spacing: 0) {
+                settingsToggle("显示已完成的待办", isOn: $store.settings.showCompleted)
+                Divider()
+                settingsToggle("删除前询问", isOn: $store.settings.confirmBeforeDeleting)
+                Divider()
+                LabeledContent(L10n.string("预计时长单位")) {
+                    Picker(L10n.string("预计时长单位"), selection: $store.settings.estimatedDurationUnit) {
+                        ForEach(EstimatedDurationUnit.allCases) { unit in Text(unit.label).tag(unit) }
+                    }
+                    .labelsHidden()
+                }
             }
-            .toggleStyle(.checkbox)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(L10n.string("新建待办"))
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Form {
+                    .padding(.bottom, 6)
+                LabeledContent(L10n.string("项目")) {
+                    Button(L10n.string("管理")) { isManagingProjects = true }
+                        .accessibilityLabel(L10n.string("管理项目…"))
+                }
+                Divider()
+                LabeledContent(L10n.string("标签")) {
+                    Button(L10n.string("管理")) { isManagingTags = true }
+                        .accessibilityLabel(L10n.string("管理标签…"))
+                }
+                Divider()
+                DefaultScheduleDurationPicker(minutes: $store.settings.defaultScheduleMinutes)
+                Divider()
+                LabeledContent(L10n.string("默认重要度")) {
                     Picker(L10n.string("默认重要度"), selection: $store.settings.defaultPriority) {
                         ForEach(TodoItem.Priority.allCases) { value in Text(L10n.string(value.title)).tag(value) }
                     }
+                    .labelsHidden()
+                }
+                Divider()
+                LabeledContent(L10n.string("默认紧急度")) {
                     Picker(L10n.string("默认紧急度"), selection: $store.settings.defaultUrgency) {
                         ForEach(TodoItem.Urgency.allCases) { value in Text(L10n.string(value.title)).tag(value) }
                     }
-                }
-                .formStyle(.columns)
-                .pickerStyle(.menu)
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        managementButtons
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        managementButtons
-                    }
+                    .labelsHidden()
                 }
             }
-
-            Form { DefaultScheduleDurationPicker(minutes: $store.settings.defaultScheduleMinutes) }
-                .formStyle(.columns)
-                .pickerStyle(.menu)
         }
+        .labeledContentStyle(SettingsRowStyle())
+        .pickerStyle(.menu)
         .disabled(!store.canModify)
     }
 
-    @ViewBuilder
-    private var managementButtons: some View {
-        Button(L10n.string("管理标签…")) { isManagingTags = true }
-        Button(L10n.string("管理项目…")) { isManagingProjects = true }
+    private func settingsToggle(_ title: String, isOn: Binding<Bool>) -> some View {
+        LabeledContent(L10n.string(title)) {
+            Toggle(L10n.string(title), isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
     }
 }
 
 struct AppearancePreferencesView: View {
     var body: some View {
-        LanguagePicker()
-        AppearanceModePicker()
+        LabeledContent {
+            LanguagePicker().labelsHidden()
+        } label: {
+            Label(L10n.string("语言"), systemImage: "globe")
+        }
+        LabeledContent {
+            AppearanceModePicker().labelsHidden()
+        } label: {
+            Label(L10n.string("外观"), systemImage: "circle.lefthalf.filled")
+        }
     }
 }
 
@@ -187,45 +228,17 @@ private struct AppearanceModePicker: View {
     }
 }
 
-private struct AppearanceSettingsView: View {
-    @EnvironmentObject private var store: TodoStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Form {
-                AppearanceModePicker()
-                LabeledContent(L10n.string("主题色")) {
-                    ColorPicker(L10n.string("主题色"), selection: Binding(
-                        get: { store.settings.themeColor?.color ?? Color(nsColor: .controlAccentColor) },
-                        set: { store.settings.themeColor = TagColor(color: $0) }
-                    ), supportsOpacity: false)
-                    .labelsHidden()
-                    Button(L10n.string("系统默认")) { store.settings.themeColor = nil }
-                        .disabled(store.settings.themeColor == nil)
-                }
-            }
-            .formStyle(.columns)
-            .pickerStyle(.menu)
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text(L10n.string("动画效果")).font(.headline).accessibilityAddTraits(.isHeader)
-                if reduceMotion {
-                    Text(L10n.string("系统已开启减少动态效果。")).foregroundStyle(.secondary)
-                }
-                ForEach(AppAnimationEffect.allCases) { effect in
-                    Toggle(L10n.string(effect.title), isOn: Binding(
-                        get: { store.settings.animates(effect) },
-                        set: { enabled in
-                            if enabled { store.settings.disabledAnimations.remove(effect) }
-                            else { store.settings.disabledAnimations.insert(effect) }
-                        }
-                    ))
-                }
-            }
-            .toggleStyle(.checkbox)
+struct SettingsRowStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            configuration.content
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .disabled(!store.canModify)
+        .frame(minHeight: 34)
+        .padding(.vertical, 4)
     }
 }
 
@@ -245,17 +258,20 @@ struct DefaultScheduleDurationPicker: View {
 
     var body: some View {
         Group {
-            Picker(L10n.string("默认安排时长"), selection: Binding(
-                get: { isCustom || !Self.presets.contains(minutes) ? 0 : minutes },
-                set: { value in
-                    isCustom = value == 0
-                    invalid = false
-                    if value != 0 { minutes = value }
-                    input = String(minutes)
+            LabeledContent(L10n.string("默认安排时长")) {
+                Picker(L10n.string("默认安排时长"), selection: Binding(
+                    get: { isCustom || !Self.presets.contains(minutes) ? 0 : minutes },
+                    set: { value in
+                        isCustom = value == 0
+                        invalid = false
+                        if value != 0 { minutes = value }
+                        input = String(minutes)
+                    }
+                )) {
+                    ForEach(Self.presets, id: \.self) { value in Text(L10n.format("%lld 分钟", value)).tag(value) }
+                    Text(L10n.string("自定义")).tag(0)
                 }
-            )) {
-                ForEach(Self.presets, id: \.self) { value in Text(L10n.format("%lld 分钟", value)).tag(value) }
-                Text(L10n.string("自定义")).tag(0)
+                .labelsHidden()
             }
             if isCustom || !Self.presets.contains(minutes) {
                 LabeledContent(L10n.string("分钟")) {
@@ -288,47 +304,125 @@ struct DefaultScheduleDurationPicker: View {
 
 private struct SettingsHelpView: View {
     @ObservedObject var guide: OnboardingSession
+    @State private var showsGlossary = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack {
-                Text(L10n.string("新手指引")).font(.headline)
-                Spacer()
+        VStack(spacing: 0) {
+            LabeledContent(L10n.string("新手指引")) {
                 Button(L10n.string(guide.progress.status == .paused ? "继续练习" : "开始练习")) { guide.open() }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.string("词典"))
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                term("待办", "要做的一件事，可以设置日期、标签和预计时长。")
-                term("安排", "在时间线上留出的一段时间，可以关联待办，也可以独立存在。")
-                term("项目", "一组相关待办，用于跟踪共同目标。")
-                term("标签", "可跨项目使用的颜色分类，也可以用来筛选。")
-                term("重要度", "事情有多重要。")
-                term("紧急度", "事情需要多快处理。")
-                term("预计时长", "完成待办大约需要的时间。")
+            Divider()
+            LabeledContent(L10n.string("词典")) {
+                Button(L10n.string("打开")) { showsGlossary = true }
+                    .accessibilityLabel(L10n.string("词典"))
             }
         }
+        .labeledContentStyle(SettingsRowStyle())
+        .sheet(isPresented: $showsGlossary) { GlossarySheet() }
+    }
+}
+
+private struct GlossarySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: TodoStore
+    @State private var selection: GlossaryTerm? = .todo
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(L10n.string("词典"))
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+            Divider()
+            HStack(spacing: 0) {
+                List(selection: $selection) {
+                    ForEach(GlossaryTerm.allCases) { term in
+                        Text(L10n.string(term.title))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .tag(term)
+                    }
+                }
+                .listStyle(.sidebar)
+                .frame(width: 158)
+                Divider()
+                detail(selection ?? .todo)
+            }
+            .frame(height: 320)
+            Divider()
+            HStack {
+                Spacer()
+                Button(L10n.string("完成")) { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+        .frame(width: 520)
+        .editorEscapeDismissal(cancel: { dismiss() })
     }
 
-    private func term(_ title: String, _ definition: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(L10n.string(title)).fontWeight(.medium)
-            Text(L10n.string(definition)).foregroundStyle(.secondary)
+    private func detail(_ term: GlossaryTerm) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsIllustration(scene: .concept(term),
+                    tint: store.settings.themeColor?.color ?? .accentColor)
+                    .frame(maxWidth: 244)
+                    .frame(maxWidth: .infinity)
+                Text(L10n.string(term.title))
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Text(L10n.string(term.definition))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
         }
-        .accessibilityElement(children: .combine)
-        .padding(.vertical, 3)
     }
 }
 
 private struct SettingsAboutView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("DayVDO").font(.title2.weight(.semibold))
-            LabeledContent(L10n.string("版本"), value: appVersion)
-            Link(destination: URL(string: "https://github.com/AlIenwww/DayVDO")!) {
-                Label("GitHub", systemImage: "arrow.up.right")
-                    .labelStyle(.titleAndIcon)
+        VStack(alignment: .leading, spacing: 28) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("DayVDO")
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Text(appVersion)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(L10n.string("版本"))
+                    .accessibilityValue(appVersion)
+            }
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Image("GitHubMark", bundle: .module)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.string("GitHub 项目页面"))
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(L10n.string("求求点个免费的星吧🙏>_<"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Link(destination: URL(string: "https://github.com/AlIenwww/DayVDO")!) {
+                    Label(L10n.string("前往页面"), systemImage: "arrow.up.right")
+                }
+                .buttonStyle(.bordered)
+                .fixedSize()
             }
         }
     }
@@ -338,17 +432,6 @@ private struct SettingsAboutView: View {
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             // `swift run` launches a bare executable without an Info.plist. The
             // shipped app always takes the version from its bundle above.
-            ?? "0.9.0"
-    }
-}
-
-struct GuideConceptsView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.string("核心概念")).font(.headline)
-            Text(L10n.string("待办是要做的事，安排是分配的时间，项目是相关待办的集合。"))
-            Text(L10n.string("安排也可以独立存在，例如午休或会议。安排了时间，不代表待办已经完成。"))
-                .foregroundStyle(.secondary)
-        }.fixedSize(horizontal: false, vertical: true)
+            ?? "0.9.1"
     }
 }

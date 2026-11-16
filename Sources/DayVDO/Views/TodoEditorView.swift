@@ -9,6 +9,8 @@ struct TodoEditorView: View {
     @State private var dateInput: TaskDateInput
     @State private var isShowingStartDatePicker = false
     @State private var isShowingDeadlinePicker = false
+    @State private var isShowingProjectPicker = false
+    @State private var isShowingTagPicker = false
     @State private var isEstimateValid = true
     @State private var dateChange: TodoStore.DateChangeConfirmation?
     @State private var newProjectDraft: TodoProject?
@@ -57,63 +59,7 @@ struct TodoEditorView: View {
                             .frame(width: 20)
                         Text(L10n.string("所属项目"))
                         Spacer()
-                        Menu {
-                            Button {
-                                draft.projectID = nil
-                                draft.projectSortOrder = nil
-                            } label: {
-                                Label(
-                                    L10n.string("无归类"),
-                                    systemImage: draft.projectID == nil ? "checkmark" : "tray"
-                                )
-                            }
-                            Divider()
-                            ForEach(store.sortedProjects) { project in
-                                Button {
-                                    if draft.projectID != project.id {
-                                        draft.projectID = project.id
-                                        draft.projectSortOrder = nil
-                                        if draft.tagID == nil {
-                                            draft.tagID = project.tagID
-                                        }
-                                    }
-                                } label: {
-                                    Label(
-                                        project.title,
-                                        systemImage: draft.projectID == project.id ? "checkmark" : "folder"
-                                    )
-                                }
-                            }
-                            Divider()
-                            Button(L10n.string("新建大项目…"), systemImage: "plus") {
-                                newProjectDraft = TodoProject(title: "")
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text(selectedProjectTitle)
-                                    .lineLimit(1)
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .accessibilityHidden(true)
-                            }
-                            .frame(maxWidth: 190, alignment: .trailing)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityLabel(L10n.string("所属项目"))
-                            .accessibilityValue(selectedProjectTitle)
-                        }
-                        .menuIndicator(.hidden)
-                        .buttonStyle(.plain)
-                        .disabled(!store.canModify)
-                        .sheet(item: $newProjectDraft) { project in
-                            ProjectEditorView(project: project, isEditing: false) { savedProject in
-                                guard store.upsertProject(savedProject) else { return false }
-                                draft.projectID = savedProject.id
-                                draft.projectSortOrder = nil
-                                if draft.tagID == nil { draft.tagID = savedProject.tagID }
-                                return true
-                            }
-                        }
+                        projectPicker
                     }
                     .padding(.horizontal, 20)
                     .frame(height: 46)
@@ -127,7 +73,7 @@ struct TodoEditorView: View {
                         .frame(width: 20)
                     Text(L10n.string("标签"))
                     Spacer()
-                    TaskTagPicker(selection: $draft.tagID)
+                    TaskTagPicker(selection: $draft.tagID, isPresented: $isShowingTagPicker)
                 }
                 .padding(.horizontal, 20)
                 .frame(height: 46)
@@ -189,7 +135,8 @@ struct TodoEditorView: View {
                             .frame(width: 20)
                         Text(L10n.string("预计时长"))
                         Spacer()
-                        DurationInput(minutes: draft.estimatedMinutes, updatesDraft: true,
+                        DurationInput(minutes: draft.estimatedMinutes, unit: store.settings.estimatedDurationUnit,
+                                      updatesDraft: true,
                                       onValidityChange: { isEstimateValid = $0 }) { draft.estimatedMinutes = $0 }
                     }
                     .padding(.horizontal, 20)
@@ -265,7 +212,8 @@ struct TodoEditorView: View {
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
         .editorEscapeDismissal(
-            enabled: dateChange == nil && !isShowingStartDatePicker && !isShowingDeadlinePicker,
+            enabled: dateChange == nil && !isShowingStartDatePicker && !isShowingDeadlinePicker
+                && !isShowingProjectPicker && !isShowingTagPicker,
             cancel: { dismiss() }
         )
         .task {
@@ -345,6 +293,41 @@ struct TodoEditorView: View {
         .frame(height: 42)
     }
 
+    private var projectPicker: some View {
+        TaskAssignmentPicker(
+            title: L10n.string("所属项目"),
+            selection: draft.projectID,
+            options: store.sortedProjects.map {
+                .init(id: $0.id, title: $0.title, tag: store.tag(withID: $0.tagID))
+            },
+            noneTitle: L10n.string("无归类"),
+            symbol: "folder",
+            createTitle: L10n.string("新建大项目…"),
+            select: { id in
+                guard draft.projectID != id else { return }
+                draft.projectID = id
+                draft.projectSortOrder = nil
+                if draft.tagID == nil {
+                    draft.tagID = store.project(withID: id)?.tagID
+                }
+            },
+            create: {
+                newProjectDraft = TodoProject(title: "")
+            },
+            isPresented: $isShowingProjectPicker
+        )
+        .disabled(!store.canModify)
+        .sheet(item: $newProjectDraft) { project in
+            ProjectEditorView(project: project, isEditing: false) { savedProject in
+                guard store.upsertProject(savedProject) else { return false }
+                draft.projectID = savedProject.id
+                draft.projectSortOrder = nil
+                if draft.tagID == nil { draft.tagID = savedProject.tagID }
+                return true
+            }
+        }
+    }
+
     private var optionWidth: CGFloat {
         LocalizedControlSizing.popUpWidth(
             for: TodoItem.Priority.allCases.map { L10n.string($0.title) }
@@ -357,10 +340,6 @@ struct TodoEditorView: View {
             return L10n.string(isEditing ? "编辑子任务" : "添加子任务")
         }
         return L10n.string(isEditing ? "编辑待办" : "添加待办")
-    }
-
-    private var selectedProjectTitle: String {
-        store.project(withID: draft.projectID)?.title ?? L10n.string("无归类")
     }
 }
 

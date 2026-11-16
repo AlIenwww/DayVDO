@@ -179,7 +179,7 @@ struct CalendarView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "sidebar.right")
+                    Image(systemName: "list.bullet.rectangle.portrait")
                 }
                 .help(L10n.string(isInspectorPresented ? "隐藏日期详情" : "显示日期详情"))
                 .accessibilityLabel(L10n.string(isInspectorPresented ? "隐藏日期详情" : "显示日期详情"))
@@ -405,7 +405,7 @@ private struct CalendarDetailTodoRow: View {
 
     var body: some View {
         if let item = store.item(withID: id) {
-            TodoRow(item: item, showsDate: false) {
+            TodoRow(item: item, showsDate: false, animatesCalendarStatus: true) {
                 if let latest = store.item(withID: id) {
                     edit(latest)
                 }
@@ -453,6 +453,7 @@ private struct CalendarTimeline: View {
     let editTodo: (TodoItem) -> Void
     let showMore: (LocalDay) -> Void
     @StateObject private var dateInteraction = CalendarDateInteraction()
+    @Namespace private var dragPositions
 
     @State private var timelineAnchorWeek: Date
     @State private var loadedWeekRange = 0...(Self.visibleWeekCount - 1)
@@ -524,6 +525,7 @@ private struct CalendarTimeline: View {
                                     items: snapshot?.items(inWeek: LocalDay(week(at: weekOffset), timeZone: calendar.timeZone)) ?? [],
                                     visibility: visibility,
                                     preparedLayout: snapshot?.dateLayoutsByWeek[LocalDay(week(at: weekOffset), timeZone: calendar.timeZone)],
+                                    dragPositions: dragPositions,
                                     select: { onSelectDate($0.date()) }, showMore: showMore,
                                     edit: editTodo
                                 )

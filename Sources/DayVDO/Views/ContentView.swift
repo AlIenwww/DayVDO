@@ -76,11 +76,13 @@ struct ContentView: View {
     @State private var isRecoveryPromptPresented = false
     @State private var isConfirmingEmptyRecovery = false
     @State private var showsLoadingIndicator = false
-    @State private var practiceScheduleEditor: DaySchedule?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarDestinationList(selection: Binding(get: { selection }, set: selectDestination)) {
+            SidebarDestinationList(
+                selection: Binding(get: { selection }, set: selectDestination),
+                themeColor: store.settings.themeColor
+            ) {
                 pagePresentation.presentSelection(prepareCalendar: prepareCalendarForEntry)
             }
             // Native List can retain row labels when only the locale changes.
@@ -140,7 +142,7 @@ struct ContentView: View {
             .disabled(!store.canModify && displayedDestination != .settings)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if let practiceGuide {
-                    GuidePracticeBar(guide: practiceGuide) { practiceScheduleEditor = $0 }
+                    GuidePracticeBar(guide: practiceGuide, isShowingToday: displayedDestination == .today)
                 }
             }
             .overlay {
@@ -217,11 +219,6 @@ struct ContentView: View {
                 project: project,
                 isEditing: store.projects.contains { $0.id == project.id }
             ) { store.upsertProject($0) }
-        }
-        .sheet(item: $practiceScheduleEditor) { schedule in
-            ScheduleEditorView(schedule: schedule, isCreating: store.schedule(withID: schedule.id) == nil,
-                close: { practiceScheduleEditor = nil },
-                editTodo: { practiceScheduleEditor = nil; editingItem = $0 })
         }
         .onChange(of: pagePresentation.selection) { _, destination in
             if practiceGuide == nil { navigation.currentDestination = destination ?? .today }
@@ -471,19 +468,43 @@ struct ContentView: View {
 
 private struct SidebarDestinationList: View {
     @Binding var selection: SidebarDestination?
+    let themeColor: TagColor?
     let selectionChanged: () -> Void
 
     var body: some View {
         List(SidebarDestination.allCases, selection: $selection) { destination in
+            let selectedTheme = selection == destination ? themeColor : nil
             NavigationLink(value: destination) {
-                Label(L10n.string(destination.title), systemImage: destination.symbol)
+                if let selectedTheme {
+                    let foreground = selectionForeground(for: selectedTheme)
+                    Label {
+                        Text(L10n.string(destination.title)).foregroundStyle(foreground)
+                    } icon: {
+                        Image(systemName: destination.symbol).foregroundStyle(foreground)
+                    }
+                } else {
+                    Label(L10n.string(destination.title), systemImage: destination.symbol)
+                }
             }
+            .listItemTint(selectedTheme.map(selectionForeground) ?? themeColor?.color)
+            .listRowBackground(selectedTheme.map {
+                RoundedRectangle(cornerRadius: 7).fill($0.color).padding(.horizontal, 10)
+            })
         }
         .listStyle(.sidebar)
-        // Keep the first row below the toolbar's fade without overriding
-        // the native selection colors or keyboard-focus behavior.
+        .background { SidebarSelectionHighlight(usesTheme: themeColor != nil) }
+        // Keep the first row below the toolbar fade.
         .padding(.top, 12)
         .onChange(of: selection) { _, _ in selectionChanged() }
+    }
+
+    private func selectionForeground(for color: TagColor) -> Color {
+        func linear(_ component: Double) -> Double {
+            component <= 0.04045 ? component / 12.92 : pow((component + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear(color.red) + 0.7152 * linear(color.green) + 0.0722 * linear(color.blue)
+        // Black and white have equal contrast at a relative luminance of about 0.179.
+        return luminance > 0.179 ? .black : .white
     }
 }
 

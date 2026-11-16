@@ -6,13 +6,12 @@ struct ShortcutSettingsView: View {
     @State private var editing: AppCommand?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(AppCommand.allCases) { command in
                 let title = L10n.string(command.title)
                 let shortcut = store.settings.shortcut(for: command).display
-                HStack {
-                    Text(title)
-                    Spacer()
+                if command != AppCommand.allCases.first { Divider() }
+                LabeledContent(title) {
                     Button(shortcut) { editing = command }
                         .monospacedDigit()
                         .frame(minWidth: 78, alignment: .trailing)
@@ -23,7 +22,9 @@ struct ShortcutSettingsView: View {
             Divider()
             Button(L10n.string("恢复默认快捷键")) { store.settings.shortcutOverrides = [:] }
                 .disabled(store.settings.shortcutOverrides.isEmpty)
+                .padding(.top, 12)
         }
+        .labeledContentStyle(SettingsRowStyle())
         .disabled(!store.canModify)
         .sheet(item: $editing) { command in
             ShortcutEditor(command: command)

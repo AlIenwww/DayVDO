@@ -69,6 +69,12 @@
 "正在载入待办…" = "Aufgaben werden geladen…";
 "今天的待办已完成" = "Die heutigen Aufgaben sind erledigt";
 "已完成事项当前已隐藏。" = "Erledigte Aufgaben sind derzeit ausgeblendet.";
+"日历拖拽" = "Ziehen im Kalender";
+"日历任务状态切换" = "Aufgabenstatus im Kalender ändern";
+"预计时长单位" = "Einheit der geschätzten Dauer";
+"混合" = "Gemischt";
+"%@ 小时" = "%@ Std.";
+"%lld 小时 %lld 分钟" = "%lld Std. %lld Min.";
 
 "预计时长" = "Geschätzte Dauer";
 
@@ -271,7 +277,7 @@
 "标记完成" = "Als erledigt markieren";
 "核心概念" = "Grundbegriffe";
 "欢迎使用 DayVDO" = "Willkommen bei DayVDO";
-"点击“新建待办”，修改示例名称并保存。" = "Klicke auf + in der Symbolleiste, ändere den Beispieltitel und speichere.";
+"新建一条待办，修改示例名称后保存。" = "Erstelle eine Aufgabe, ändere den Beispieltitel und speichere.";
 "点击待办或安排上的状态图标，将待办标记为已完成。" = "Klicke auf das Statussymbol der Aufgabe oder des Zeitblocks, um die Aufgabe abzuschließen.";
 "现在拖动安排的边缘调整时长，或双击后修改结束时间。" = "Ziehe nun an einem Rand, um die Dauer zu ändern, oder bearbeite die Endzeit per Doppelklick.";
 "第 %lld / %lld 步" = "Schritt %lld von %lld";
@@ -311,6 +317,7 @@
 "系统已开启减少动态效果。" = "„Bewegung reduzieren“ ist in den Systemeinstellungen aktiviert.";
 "待办完成" = "Aufgaben abschließen";
 "今日安排列表变化" = "Änderungen in der Heute-Liste";
+"总待办列表变化" = "Änderungen in der Liste aller Aufgaben";
 "项目展开与折叠" = "Projekte ein- und ausklappen";
 "项目内拖动排序" = "Aufgaben in Projekten umsortieren";
 "列表按钮淡入淡出" = "Einblenden von Listenbuttons";
@@ -327,3 +334,23 @@
 "事情有多重要。" = "Wie wichtig eine Aufgabe ist.";
 "事情需要多快处理。" = "Wie bald eine Aufgabe erledigt werden sollte.";
 "完成待办大约需要的时间。" = "Die ungefähre Zeit zum Erledigen einer Aufgabe.";
+
+/* v0.9.1 Illustrated settings */
+"选择一项查看演示。" = "Wähle einen Effekt für die Vorschau aus.";
+"管理" = "Verwalten";
+"动画" = "Animationen";
+"求求点个免费的星吧🙏>_<" = "Schenk uns bitte einen kostenlosen Stern! 🙏>_<";
+"打开" = "Öffnen";
+"GitHub 项目页面" = "GitHub-Projektseite";
+"前往页面" = "Seite öffnen";
+
+"新手教程仍在开发中" = "Das Tutorial ist noch in Entwicklung";
+"DayVDO 帮你规划每天要做的事。点击「开始练习」，试试基本操作。" = "Mit DayVDO planst du deinen Tag. Klicke auf „Übung starten“, um die Grundfunktionen auszuprobieren.";
+"点击窗口右上角的「＋」，修改示例名称，再点击「保存」。" = "Klicke oben rechts auf +, ändere den Beispieltitel und klicke dann auf „Sichern“.";
+"已完成。点击「下一步」继续。" = "Erledigt. Klicke auf „Weiter“, um fortzufahren.";
+"点击左侧边栏的「今日安排」，回到练习页面。" = "Klicke links in der Seitenleiste auf „Heute“, um zur Übung zurückzukehren.";
+"拖动时间线上的安排块，把它移到另一个时间。" = "Ziehe den Zeitblock auf der Zeitleiste auf eine andere Uhrzeit.";
+"拖动安排块的上边缘或下边缘，调整时长。" = "Ziehe den oberen oder unteren Rand des Zeitblocks, um seine Dauer zu ändern.";
+"在右侧列表中，点击待办名称左边的圆形状态按钮，将它标记为完成。" = "Klicke in der rechten Liste auf den Kreis links neben dem Aufgabentitel, um die Aufgabe als erledigt zu markieren.";
+"可以点击左侧边栏的「日历」或「总待办」看看其他页面。" = "Klicke links in der Seitenleiste auf „Kalender“ oder „Alle Aufgaben“, um die anderen Seiten zu erkunden.";
+"点击「开始使用 DayVDO」结束练习。" = "Klicke auf „DayVDO verwenden“, um die Übung zu beenden.";

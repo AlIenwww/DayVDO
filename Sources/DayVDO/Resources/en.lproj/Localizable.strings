@@ -151,6 +151,12 @@
 "正在载入待办…" = "Loading to-dos…";
 "今天的待办已完成" = "Today's to-dos are complete";
 "已完成事项当前已隐藏。" = "Completed items are currently hidden.";
+"日历拖拽" = "Calendar Dragging";
+"日历任务状态切换" = "Calendar Task Status Changes";
+"预计时长单位" = "Estimated Duration Unit";
+"混合" = "Mixed";
+"%@ 小时" = "%@ h";
+"%lld 小时 %lld 分钟" = "%lld h %lld min";
 
 "预计时长" = "Estimated duration";
 
@@ -353,7 +359,7 @@
 "标记完成" = "Mark complete";
 "核心概念" = "Core concepts";
 "欢迎使用 DayVDO" = "Welcome to DayVDO";
-"点击“新建待办”，修改示例名称并保存。" = "Click + in the toolbar, edit the example title, and save.";
+"新建一条待办，修改示例名称后保存。" = "Create a to-do, edit the example title, then save.";
 "点击待办或安排上的状态图标，将待办标记为已完成。" = "Click the status icon on the to-do or time block to mark the to-do complete.";
 "现在拖动安排的边缘调整时长，或双击后修改结束时间。" = "Now drag an edge to resize the block, or double-click and change the end time.";
 "第 %lld / %lld 步" = "Step %lld of %lld";
@@ -393,6 +399,7 @@
 "系统已开启减少动态效果。" = "Reduce Motion is enabled in System Settings.";
 "待办完成" = "Completing To-Dos";
 "今日安排列表变化" = "Today List Changes";
+"总待办列表变化" = "All To-Dos List Changes";
 "项目展开与折叠" = "Expanding and Collapsing Projects";
 "项目内拖动排序" = "Reordering Tasks in Projects";
 "列表按钮淡入淡出" = "List Button Fades";
@@ -409,3 +416,23 @@
 "事情有多重要。" = "How important something is.";
 "事情需要多快处理。" = "How soon something needs attention.";
 "完成待办大约需要的时间。" = "The approximate time needed to finish a to-do.";
+
+/* v0.9.1 Illustrated settings */
+"选择一项查看演示。" = "Select an effect to preview it.";
+"管理" = "Manage";
+"动画" = "Animations";
+"求求点个免费的星吧🙏>_<" = "Pretty please, leave a free star? 🙏>_<";
+"打开" = "Open";
+"GitHub 项目页面" = "GitHub project page";
+"前往页面" = "Open page";
+
+"新手教程仍在开发中" = "This tutorial is still in development";
+"DayVDO 帮你规划每天要做的事。点击「开始练习」，试试基本操作。" = "DayVDO helps you plan your day. Click “Start practice” to try the basics.";
+"点击窗口右上角的「＋」，修改示例名称，再点击「保存」。" = "Click + in the top-right corner, change the example title, then click Save.";
+"已完成。点击「下一步」继续。" = "Done. Click Next to continue.";
+"点击左侧边栏的「今日安排」，回到练习页面。" = "Click Today in the left sidebar to return to the practice area.";
+"拖动时间线上的安排块，把它移到另一个时间。" = "Drag the block on the timeline to a different time.";
+"拖动安排块的上边缘或下边缘，调整时长。" = "Drag the top or bottom edge of the block to change its duration.";
+"在右侧列表中，点击待办名称左边的圆形状态按钮，将它标记为完成。" = "In the list on the right, click the circle to the left of the to-do title to mark it complete.";
+"可以点击左侧边栏的「日历」或「总待办」看看其他页面。" = "Click Calendar or All To-Dos in the left sidebar to explore the other pages.";
+"点击「开始使用 DayVDO」结束练习。" = "Click Start using DayVDO to finish practice.";

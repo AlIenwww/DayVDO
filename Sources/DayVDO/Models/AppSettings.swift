@@ -15,7 +15,7 @@ enum AppLanguage: String, Codable, CaseIterable, Identifiable, Sendable {
 
     @MainActor var title: String {
         switch self {
-        case .system: L10n.string("系统默认")
+        case .system: L10n.systemString("系统默认")
         case .simplifiedChinese: "简体中文"
         case .traditionalChinese: "繁體中文"
         case .english: "English"
@@ -73,6 +73,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     var startupPage = StartupPage.today
     var defaultUrgency = TodoItem.Urgency.none
     var defaultScheduleMinutes = 30
+    var estimatedDurationUnit = EstimatedDurationUnit.mixed
     var showCompleted = true
     var startWeekOnMonday = true
     var defaultPriority = TodoItem.Priority.none
@@ -104,6 +105,7 @@ struct AppSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case startupPage, defaultUrgency, defaultScheduleMinutes
+        case estimatedDurationUnit
         case showCompleted
         case startWeekOnMonday
         case defaultPriority
@@ -121,6 +123,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         defaultUrgency = (try? container.decode(TodoItem.Urgency.self, forKey: .defaultUrgency)) ?? .none
         let minutes = (try? container.decode(Int.self, forKey: .defaultScheduleMinutes)) ?? 30
         defaultScheduleMinutes = (1...1440).contains(minutes) ? minutes : 30
+        estimatedDurationUnit = (try? container.decode(EstimatedDurationUnit.self, forKey: .estimatedDurationUnit)) ?? .mixed
         showCompleted = try container.decodeIfPresent(Bool.self, forKey: .showCompleted) ?? true
         startWeekOnMonday = try container.decodeIfPresent(Bool.self, forKey: .startWeekOnMonday) ?? true
         defaultPriority = try container.decodeIfPresent(

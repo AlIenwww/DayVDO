@@ -6,6 +6,7 @@ struct ProjectEditorView: View {
     @State private var draft: TodoProject
     @State private var hasDueDate: Bool
     @State private var isShowingDatePicker = false
+    @State private var isShowingTagPicker = false
     @FocusState private var titleIsFocused: Bool
 
     let isEditing: Bool
@@ -63,7 +64,7 @@ struct ProjectEditorView: View {
                         .frame(width: 20)
                     Text(L10n.string("标签"))
                     Spacer()
-                    TaskTagPicker(selection: $draft.tagID)
+                    TaskTagPicker(selection: $draft.tagID, isPresented: $isShowingTagPicker)
                 }
                 .padding(.horizontal, 20)
                 .frame(height: 48)

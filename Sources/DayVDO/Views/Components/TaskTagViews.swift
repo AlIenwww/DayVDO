@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 extension TodoItem.Priority {
@@ -51,105 +50,32 @@ struct OverdueBadge: View {
     }
 }
 
-/// Native macOS menus do not reliably preserve custom SwiftUI shape fills.
-/// Supplying a non-template bitmap keeps each tag's original color in the menu.
-private struct TaskTagMenuDot: View {
-    let tag: TaskTag
-
-    var body: some View {
-        Image(nsImage: image)
-            .renderingMode(.original)
-            .accessibilityHidden(true)
-    }
-
-    private var image: NSImage {
-        let color = tag.color
-        let image = NSImage(size: NSSize(width: 9, height: 9), flipped: false) { rect in
-            NSColor(
-                srgbRed: color.red,
-                green: color.green,
-                blue: color.blue,
-                alpha: 1
-            ).setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
-            return true
-        }
-        image.isTemplate = false
-        return image
-    }
-}
-
 struct TaskTagPicker: View {
     @EnvironmentObject private var store: TodoStore
     @Binding var selection: UUID?
+    @Binding var isPresented: Bool
     @State private var newTagDraft: TaskTag?
 
     var body: some View {
-        Menu {
-            Button {
-                selection = nil
-            } label: {
-                Label(
-                    L10n.string("无标签"),
-                    systemImage: selection == nil ? "checkmark" : "minus"
-                )
-            }
-
-            if !store.sortedTags.isEmpty {
-                Divider()
-                ForEach(store.sortedTags) { tag in
-                    Button {
-                        selection = tag.id
-                    } label: {
-                        Label {
-                            HStack {
-                                Text(tag.name)
-                                if selection == tag.id {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        } icon: {
-                            TaskTagMenuDot(tag: tag)
-                        }
-                    }
-                }
-            }
-
-            Divider()
-            Button(L10n.string("新建标签…"), systemImage: "plus") {
+        TaskAssignmentPicker(
+            title: L10n.string("标签"),
+            selection: selection,
+            options: store.sortedTags.map { .init(id: $0.id, title: $0.name, tag: $0) },
+            noneTitle: L10n.string("无标签"),
+            symbol: "tag",
+            createTitle: L10n.string("新建标签…"),
+            select: { selection = $0 },
+            create: {
                 newTagDraft = TaskTag(name: "")
-            }
-        } label: {
-            HStack(spacing: 6) {
-                if let selectedTag {
-                    TaskTagDot(tag: selectedTag)
-                    Text(selectedTag.name)
-                        .lineLimit(1)
-                } else {
-                    Text(L10n.string("无标签"))
-                }
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-            }
-            .frame(maxWidth: 190, alignment: .trailing)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(L10n.string("标签"))
-            .accessibilityValue(selectedTag?.name ?? L10n.string("无标签"))
-        }
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
+            },
+            isPresented: $isPresented
+        )
         .disabled(!store.canModify)
         .sheet(item: $newTagDraft) { tag in
             TaskTagEditorView(tag: tag, isEditing: false) { savedTag in
                 selection = savedTag.id
             }
         }
-    }
-
-    private var selectedTag: TaskTag? {
-        store.tag(withID: selection)
     }
 }
 

@@ -26,9 +26,12 @@ struct TodoRow: View {
     var showsProject = true
     var showsOverdue = false
     var presentation: TodoRowPresentation = .standard
+    var animatesCalendarStatus = false
     let onEdit: () -> Void
 
     var body: some View {
+        let calendarAnimation = animatesCalendarStatus
+            ? store.settings.calendarTaskStatusAnimation(reduceMotion: reduceMotion) : nil
         HStack(spacing: TopLevelTodoRowMetrics.columnSpacing) {
             if presentation == .topLevel {
                 Color.clear
@@ -40,11 +43,22 @@ struct TodoRow: View {
             }
 
             Button {
-                withAnimation(store.settings.animation(.snappy(duration: 0.18), for: .completion, reduceMotion: reduceMotion)) {
+                if animatesCalendarStatus {
                     _ = store.toggle(item)
+                } else {
+                    withAnimation(store.settings.animation(.snappy(duration: 0.18), for: .completion, reduceMotion: reduceMotion)) {
+                        _ = store.toggle(item)
+                    }
                 }
             } label: {
-                TodoStatusIcon(status: item.status)
+                Group {
+                    if animatesCalendarStatus {
+                        CalendarTaskStatusIcon(status: item.status, animates: calendarAnimation != nil)
+                            .animation(calendarAnimation, value: item.status)
+                    } else {
+                        TodoStatusIcon(status: item.status)
+                    }
+                }
                     .font(.title3)
                     .frame(
                         width: TopLevelTodoRowMetrics.statusWidth,
@@ -58,13 +72,20 @@ struct TodoRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(item.title)
-                        .font(.body.weight(.medium))
-                        .strikethrough(item.isCompleted)
-                        .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .layoutPriority(1)
+                    Group {
+                        if animatesCalendarStatus {
+                            CalendarTaskStatusTitle(title: item.title, isCompleted: item.isCompleted)
+                                .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                                .animation(calendarAnimation, value: item.status)
+                        } else {
+                            Text(item.title).strikethrough(item.isCompleted)
+                                .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                        }
+                    }
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
 
                     if isOverdue {
                         OverdueBadge()

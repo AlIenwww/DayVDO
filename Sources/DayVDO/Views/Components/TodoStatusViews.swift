@@ -21,6 +21,34 @@ struct TodoStatusIcon: View {
     }
 }
 
+struct CalendarTaskStatusIcon: View {
+    let status: TodoItem.Status
+    let animates: Bool
+
+    var body: some View {
+        TodoStatusIcon(status: status)
+            .symbolEffect(.bounce, options: .speed(1.8), value: status)
+            .symbolEffectsRemoved(!animates)
+    }
+}
+
+struct CalendarTaskStatusTitle: View {
+    let title: String
+    let isCompleted: Bool
+
+    var body: some View {
+        Text(title)
+            .opacity(isCompleted ? 0 : 1)
+            .overlay(alignment: .leading) {
+                Text(title)
+                    .strikethrough()
+                    .opacity(isCompleted ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            .accessibilityLabel(title)
+    }
+}
+
 struct TodoStatusMenuItems: View {
     @EnvironmentObject private var store: TodoStore
     let item: TodoItem

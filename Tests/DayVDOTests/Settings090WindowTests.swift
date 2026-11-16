@@ -11,7 +11,9 @@ final class Settings090WindowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory); L10n.configure(language: .system) }
         let store = TodoStore(fileURL: directory.appendingPathComponent("todos.json"))
         let navigation = AppNavigation(store: store)
-        let host = NSHostingView(rootView: SettingsView().environmentObject(store).environmentObject(navigation))
+        let host = NSHostingView(rootView: SettingsView().environmentObject(store).environmentObject(navigation)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        host.sizingOptions = []
         let window = makeWindow(host)
         defer { window.contentView = nil; window.close() }
         for language in [AppLanguage.simplifiedChinese, .english, .german] {
@@ -22,13 +24,14 @@ final class Settings090WindowTests: XCTestCase {
                     navigation.settingsCategory = category
                     try await settle(host)
                     XCTAssertEqual(host.frame.width, size.width, accuracy: 1)
+                    XCTAssertEqual(host.frame.height, size.height, accuracy: 1)
                     for scroll in descendants(host).compactMap({ $0 as? NSScrollView }) {
                         if let document = scroll.documentView {
                             XCTAssertLessThanOrEqual(document.frame.width, scroll.contentView.bounds.width + 2,
                                 "Horizontal overflow: \(language) \(category) \(size)")
                         }
                     }
-                    if category == .planning || category == .help {
+                    if [.general, .animation, .planning, .help, .about].contains(category) {
                         try capture(host, name: "settings-\(language.rawValue)-\(category.rawValue)-\(Int(size.width))")
                     }
                 }
@@ -47,6 +50,7 @@ final class Settings090WindowTests: XCTestCase {
         let navigation = AppNavigation(store: store)
         let guide = navigation.guide
         let host = NSHostingView(rootView: AppRootView(store: store, navigation: navigation, guide: guide))
+        host.sizingOptions = []
         let window = makeWindow(host)
         defer { window.contentView = nil; window.close() }
         // The split view can impose a larger native minimum than requested.
@@ -78,10 +82,11 @@ final class Settings090WindowTests: XCTestCase {
     }
 
     private func makeWindow(_ host: NSView) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 650),
+        let window = SettingsTestWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 650),
             styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
+        window.setContentSize(NSSize(width: 820, height: 650))
         window.makeKeyAndOrderFront(nil)
         return window
     }
@@ -100,4 +105,11 @@ final class Settings090WindowTests: XCTestCase {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url.appendingPathComponent(name + ".png"))
     }
+}
+
+// A locked/offscreen desktop can report a zero-height visible screen. Keep the
+// requested content size so these tests actually exercise the intended viewport.
+@MainActor
+private final class SettingsTestWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

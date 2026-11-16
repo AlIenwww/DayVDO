@@ -345,7 +345,7 @@ private struct PlanningTodoRow: View {
                     HStack(spacing: 4) {
                         Image(systemName: "clock")
                             .font(.caption2)
-                        Text(item.estimatedMinutes.map { L10n.format("%lld 分钟", $0) } ?? L10n.string("无"))
+                        Text(estimateText ?? L10n.string("无"))
                             .monospacedDigit()
                             .lineLimit(1)
                     }
@@ -374,13 +374,13 @@ private struct PlanningTodoRow: View {
                 .help(L10n.string("预计时长"))
                 .accessibilityLabel(L10n.string("预计时长"))
                 .accessibilityValue(
-                    item.estimatedMinutes.map { L10n.format("%lld 分钟", $0) } ?? L10n.string("无")
+                    estimateText ?? L10n.string("无")
                 )
                 .popover(isPresented: $isEditingDuration, arrowEdge: .trailing) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(L10n.string("预计时长"))
                             .font(.headline)
-                        DurationInput(minutes: item.estimatedMinutes) { minutes in
+                        DurationInput(minutes: item.estimatedMinutes, unit: store.settings.estimatedDurationUnit) { minutes in
                             updateDuration(minutes)
                         }
                     }
@@ -465,7 +465,7 @@ private struct PlanningTodoRow: View {
                 [
                     store.project(withID: item.projectID)?.title,
                     store.tag(withID: item.tagID)?.name,
-                    item.estimatedMinutes.map { L10n.format("%lld 分钟", $0) },
+                    estimateText,
                     L10n.string(item.priority.title)
                 ].compactMap { $0 }.joined(separator: ", ")
             )
@@ -474,6 +474,10 @@ private struct PlanningTodoRow: View {
 
     private var cardShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 10)
+    }
+
+    private var estimateText: String? {
+        item.estimatedMinutes.map(store.settings.estimatedDurationUnit.formatted)
     }
 
     private var cardBackground: Color {

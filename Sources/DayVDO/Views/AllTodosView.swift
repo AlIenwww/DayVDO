@@ -50,8 +50,15 @@ struct AllTodosView: View {
     }
 
     struct PresentationSnapshot {
-        var topLevelEntries: [TopLevelEntry]
-        var childrenByProject: [UUID: [TodoItem]]
+        let topLevelEntries: [TopLevelEntry]
+        let topLevelIDs: [String]
+        let childrenByProject: [UUID: [TodoItem]]
+
+        init(topLevelEntries: [TopLevelEntry], childrenByProject: [UUID: [TodoItem]]) {
+            self.topLevelEntries = topLevelEntries
+            topLevelIDs = topLevelEntries.map(\.id)
+            self.childrenByProject = childrenByProject
+        }
     }
 
     @MainActor
@@ -124,6 +131,7 @@ struct AllTodosView: View {
     @ObservedObject var expansionState: ProjectExpansionState
     let presentationCache: PresentationCache
     @State private var visualExpandedProjectIDs: Set<UUID> = []
+    @State private var filteredExpansionOverrides: [UUID: Bool] = [:]
     @State private var renderedProjectIDs: Set<UUID> = []
     @State private var pendingCollapseDeadlines: [UUID: ContinuousClock.Instant] = [:]
     @State private var projectPendingDeletion: TodoProject?
@@ -165,7 +173,34 @@ struct AllTodosView: View {
             today: today, startsOnMonday: store.settings.startWeekOnMonday, locale: L10n.locale.identifier,
             dynamicTypeSize: dynamicTypeSize
         ), build: makePresentationSnapshot)
-        Group {
+        ScrollView {
+            // Keep the stack mounted so the final row can transition out.
+            // The lazy stack still unloads offscreen rows and preserves measured project heights.
+            LazyVStack(spacing: 0) {
+                ForEach(presentation.topLevelEntries) { entry in
+                    switch entry {
+                    case .project(let project):
+                        projectRow(
+                            project,
+                            children: presentation.childrenByProject[project.id] ?? []
+                        )
+                        .transition(.opacity)
+                    case .todo(let item):
+                        topLevelTodoRow(item)
+                            .transition(.opacity)
+                    }
+                }
+            }
+            .padding(.top, 10)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollPosition($scrollPosition)
+        .onScrollPhaseChange { _, newPhase in
+            if newPhase == .interacting {
+                finishPendingProjectCollapses()
+            }
+        }
+        .overlay {
             if presentation.topLevelEntries.isEmpty {
                 EmptyStateView(
                     title: L10n.string(hasActiveFiltering ? "没有找到结果" : "还没有待办"),
@@ -176,34 +211,10 @@ struct AllTodosView: View {
                     ),
                     symbol: hasActiveFiltering ? "line.3.horizontal.decrease.circle" : "checklist"
                 )
-            } else {
-                ScrollView {
-                    // A project retains its measured natural height in the
-                    // presentation cache when this lazy stack unloads its row.
-                    LazyVStack(spacing: 0) {
-                        ForEach(presentation.topLevelEntries) { entry in
-                            switch entry {
-                            case .project(let project):
-                                projectRow(
-                                    project,
-                                    children: presentation.childrenByProject[project.id] ?? []
-                                )
-                            case .todo(let item):
-                                topLevelTodoRow(item)
-                            }
-                        }
-                    }
-                    .padding(.top, 10)
-                    .frame(maxWidth: .infinity)
-                }
-                .scrollPosition($scrollPosition)
-                .onScrollPhaseChange { _, newPhase in
-                    if newPhase == .interacting {
-                        finishPendingProjectCollapses()
-                    }
-                }
+                .transition(.opacity)
             }
         }
+        .animation(store.settings.allTodosListAnimation(reduceMotion: reduceMotion), value: presentation.topLevelIDs)
         .navigationTitle(L10n.string("总待办"))
         .onReceive(AppClock.refreshes) { _ in today = LocalDay(.now) }
         .searchable(
@@ -218,6 +229,9 @@ struct AllTodosView: View {
             }
         }
         .onAppear { synchronizeProjectExpansion(animated: false) }
+        .onChange(of: hasActiveFiltering) { _, active in
+            if !active { filteredExpansionOverrides.removeAll() }
+        }
         .onDisappear {
             finishPendingProjectCollapses()
         }
@@ -295,14 +309,18 @@ struct AllTodosView: View {
             projectHeader(project, expanded: expanded)
                 .padding(.horizontal, TopLevelTodoRowMetrics.listHorizontalInset)
 
-            if expanded || renderedProjectIDs.contains(project.id) {
+            if hasActiveFiltering || expanded || renderedProjectIDs.contains(project.id) {
                 CollapsibleProjectRowLayout(
                     progress: expanded ? 1 : 0,
                     projectID: project.id,
                     heightCache: presentationCache.heightStorage,
                     heightGeneration: presentationCache.heightGeneration
                 ) {
-                    projectChildrenContent(project, children: children)
+                    ProjectTaskList(
+                        project: project, children: children, editingItem: $editingItem, today: today,
+                        emptyMessage: L10n.string(hasActiveFiltering && store.projectProgress(project).total > 0
+                            ? "没有匹配的子任务" : "还没有子任务")
+                    )
                 }
                 .opacity(expanded ? 1 : 0)
                 .animation(projectDisclosureAnimation, value: expanded)
@@ -323,9 +341,7 @@ struct AllTodosView: View {
             return .handled
         }
         .onKeyPress(.space) {
-            if !isExpansionForced {
-                setProjectExpanded(project.id, !expanded, animated: true)
-            }
+            setProjectExpanded(project.id, !expanded, animated: true)
             return .handled
         }
     }
@@ -338,31 +354,6 @@ struct AllTodosView: View {
                     + TopLevelTodoRowMetrics.separatorLeading
             )
             .padding(.trailing, TopLevelTodoRowMetrics.listHorizontalInset)
-    }
-
-    @ViewBuilder
-    private func projectChildrenContent(_ project: TodoProject, children: [TodoItem]) -> some View {
-        if children.isEmpty {
-            Text(L10n.string(hasActiveFiltering ? "没有匹配的子任务" : "还没有子任务"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-                .background(
-                    Color.secondary.opacity(0.055),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.12), lineWidth: 0.5)
-                }
-                .padding(.top, 5)
-                .padding(.leading, 28)
-                .padding(.bottom, 12)
-        } else {
-            ProjectTaskList(project: project, children: children, editingItem: $editingItem, today: today)
-        }
     }
 
     private func projectHeader(
@@ -465,19 +456,14 @@ struct AllTodosView: View {
         .contentShape(Rectangle())
         .overlay(alignment: .leading) {
             Button {
-                setProjectExpanded(
-                    project.id,
-                    !visualExpandedProjectIDs.contains(project.id),
-                    animated: true
-                )
+                setProjectExpanded(project.id, !expanded, animated: true)
             } label: {
                 Color.clear
                     .frame(width: 64, height: 52)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(isExpansionForced)
-            .accessibilityLabel(L10n.string(isExpanded(project) ? "收起项目" : "展开项目"))
+            .accessibilityLabel(L10n.string(expanded ? "收起项目" : "展开项目"))
         }
         .onHover { isHovering in
             guard isHovering != (hoveredProjectID == project.id) else { return }
@@ -546,6 +532,8 @@ struct AllTodosView: View {
                 isVisible = store.settings.showCompleted || !store.projectIsCompleted(project)
             } else if !children.isEmpty {
                 isVisible = true
+            } else if filter.projectIDs.contains(project.id), store.projectProgress(project).total == 0 {
+                isVisible = query.isEmpty || projectMatchesQuery(project)
             } else {
                 isVisible = !filter.isActive
                     && projectMatchesQuery(project)
@@ -581,11 +569,15 @@ struct AllTodosView: View {
     }
 
     private func isExpanded(_ project: TodoProject) -> Bool {
-        isExpansionForced || visualExpandedProjectIDs.contains(project.id)
+        if hasActiveFiltering { return filteredExpansionOverrides[project.id] ?? true }
+        return visualExpandedProjectIDs.contains(project.id)
     }
 
     private func setProjectExpanded(_ projectID: UUID, _ expanded: Bool, animated: Bool) {
-        guard !isExpansionForced else { return }
+        if hasActiveFiltering {
+            filteredExpansionOverrides[projectID] = expanded
+            return
+        }
         expansionState.setExpanded(expanded, for: projectID)
 
         if expanded {
@@ -627,10 +619,6 @@ struct AllTodosView: View {
     }
 
     private var hasActiveFiltering: Bool {
-        !query.isEmpty || filter.isActive
-    }
-
-    private var isExpansionForced: Bool {
         !query.isEmpty || filter.isActive
     }
 
