@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import SwiftUI
 import XCTest
 @testable import DayVDO
@@ -60,25 +61,93 @@ final class Settings090WindowTests: XCTestCase {
         XCTAssertEqual(mainWindowSize.width, 760, accuracy: 1)
         guide.open()
         try await settle(host)
+        if let sheet = window.attachedSheet?.contentView {
+            try capture(sheet, name: "guide-welcome")
+        }
         try capture(host, name: "guide-welcome-minimum")
-        guide.advance(); guide.advance()
+        guide.startTour()
+        try await settle(host)
+        try capture(host, name: "guide-create-minimum")
         let practice = try XCTUnwrap(guide.practice)
         var item = practice.newItem(dueDate: guide.progress.day.date())
         item.title = "阅读 20 分钟"; item.estimatedMinutes = 20
+        guide.bindDraft(item.id)
         practice.upsert(item)
-        guide.advance()
         try await settle(host)
         window.setContentSize(mainWindowSize)
+        try await settle(host)
+        try capture(host, name: "guide-timeline-intro-minimum")
+        XCTAssertNotNil(guide.locations.rect(.timeline, in: host))
+        guide.acknowledgeTimeline()
         try await settle(host)
         try capture(host, name: "guide-schedule-minimum")
         XCTAssertEqual(host.bounds.width, mainWindowSize.width, accuracy: 1)
         XCTAssertEqual(host.bounds.height, mainWindowSize.height, accuracy: 1)
         XCTAssertGreaterThanOrEqual(descendants(host).compactMap { $0 as? NSScrollView }.count, 2,
                                     "Practice keeps the task list visible alongside the timeline")
+        window.setContentSize(NSSize(width: 1080, height: 720))
+        try await settle(host)
+        try capture(host, name: "guide-schedule-default")
+        XCTAssertNotNil(guide.locations.rect(.row(item.id), in: host), "The visible planning row must expose its window position")
+        let block = DaySchedule(startDay: guide.progress.day, startMinute: 620, durationMinutes: 20, content: .todo(item.id))
+        XCTAssertTrue(practice.upsertSchedule(block))
+        guide.revealRequest += 1
+        for _ in 0..<8 where guide.page != .calendar {
+            window.update()
+            try await settle(host)
+        }
+        try capture(host, name: "guide-calendar")
+        XCTAssertEqual(guide.page, .calendar)
+        XCTAssertFalse(guide.week)
+        XCTAssertEqual(guide.progress.step, .calendarIntro)
         XCTAssertTrue(guide.close())
         XCTAssertEqual(navigation.currentDestination, .today)
         let saved = await store.flushPersistence()
         XCTAssertTrue(saved)
+    }
+
+    func testTutorialSheetAllowsNormalAppTermination() async throws {
+        guard #available(macOS 15.4, *) else { throw XCTSkip("Requires the SwiftUI termination policy") }
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("DayVDO-SettingsQuit-\(UUID())")
+        let store = TodoStore(fileURL: folder.appendingPathComponent("todos.json"))
+        let probe = SheetTerminationProbe()
+        let host = NSHostingView(rootView: SheetTerminationHarness(probe: probe, guide: OnboardingSession(formal: store)))
+        host.sizingOptions = []
+        let window = makeWindow(host)
+        defer { window.contentView = nil; window.close() }
+        try await settle(host)
+        probe.isPresented = true
+        try await settle(host)
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        XCTAssertFalse(sheet.preventsApplicationTerminationWhenModal)
+        probe.isPresented = false
+        try await settle(host)
+    }
+
+    func testTutorialWindowFitsVideoWithoutPlayerControls() async throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("DayVDO-Tutorial-\(UUID())")
+        let store = TodoStore(fileURL: folder.appendingPathComponent("todos.json"))
+        let guide = OnboardingSession(formal: store)
+        let host = NSHostingView(rootView: TutorialSheet(guide: guide) { _ in })
+        host.sizingOptions = []
+        let window = makeWindow(host)
+        defer { window.contentView = nil; window.close() }
+        try await settle(host)
+        let views = descendants(host)
+        XCTAssertFalse(views.contains { $0 is AVPlayerView })
+        let video = try XCTUnwrap(views.flatMap { $0.layer?.sublayers ?? [] }
+            .compactMap { $0 as? AVPlayerLayer }.first)
+        let clip = try XCTUnwrap(video.superlayer)
+        XCTAssertNotNil(video.player?.currentItem)
+        XCTAssertFalse(try XCTUnwrap(video.player).allowsExternalPlayback)
+        XCTAssertEqual(video.videoGravity, .resizeAspectFill)
+        XCTAssertTrue(clip.masksToBounds)
+        XCTAssertGreaterThan(clip.bounds.height, 1)
+        XCTAssertEqual(clip.bounds.width / clip.bounds.height, 1.5, accuracy: 0.01)
+        XCTAssertEqual(video.frame, clip.bounds)
+        XCTAssertEqual(video.opacity, video.isReadyForDisplay ? 1 : 0)
     }
 
     private func makeWindow(_ host: NSView) -> NSWindow {
@@ -104,6 +173,22 @@ final class Settings090WindowTests: XCTestCase {
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url.appendingPathComponent(name + ".png"))
+    }
+}
+
+@MainActor
+private final class SheetTerminationProbe: ObservableObject {
+    @Published var isPresented = false
+}
+
+private struct SheetTerminationHarness: View {
+    @ObservedObject var probe: SheetTerminationProbe
+    let guide: OnboardingSession
+
+    var body: some View {
+        Color.clear.sheetAllowingAppTermination(isPresented: $probe.isPresented) {
+            TutorialSheet(guide: guide) { _ in }
+        }
     }
 }
 

@@ -29,45 +29,66 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
     }
 }
 
+@MainActor @Observable
+final class WorkspaceBrowsingState {
+    var planningDay = LocalDay(.now)
+    var columnVisibility: NavigationSplitViewVisibility = .all
+    var allTodosQuery = ""
+    var allTodosFilter = TodoFilterState()
+    var calendarFilter = TodoFilterState()
+    var allTodosScrollPosition = ScrollPosition(y: 0)
+    var todayHourHeight: CGFloat = 90
+    var todayScrollMinute: CGFloat?
+    let calendarWeekPosition = CalendarWeekViewportPosition()
+    var calendarSelectedDate = Date.now
+    var calendarCurrentMonth = Date.now
+    var calendarInspectorPresented = false
+    let projectExpansionState = ProjectExpansionState()
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: TodoStore
     @EnvironmentObject private var navigation: AppNavigation
+    @State private var browsing: WorkspaceBrowsingState
     private let commandsEnabled: Bool
     private let practiceGuide: OnboardingSession?
 
     init(initialDestination: SidebarDestination = .today, commandsEnabled: Bool = true,
-         practiceGuide: OnboardingSession? = nil) {
+         practiceGuide: OnboardingSession? = nil, browsingState: WorkspaceBrowsingState? = nil) {
+        let initial = browsingState ?? WorkspaceBrowsingState()
+        _browsing = State(initialValue: initial)
         self.commandsEnabled = commandsEnabled
         self.practiceGuide = practiceGuide
         _pagePresentation = State(initialValue: SidebarPagePresentation(initialDestination: initialDestination))
         if let day = practiceGuide?.progress.day {
-            _planningDay = State(initialValue: day)
+            initial.planningDay = day
             _calendarToday = State(initialValue: day)
-            _calendarSelectedDate = State(initialValue: day.date())
-            _calendarCurrentMonth = State(initialValue: day.date())
-            _todayScrollMinute = State(initialValue: 540)
+            initial.calendarSelectedDate = day.date()
+            initial.calendarCurrentMonth = day.date()
+            let wantsWeek = practiceGuide?.progress.step == .undoDate
+            _practiceCalendarMode = State(initialValue: wantsWeek ? CalendarDisplayMode.week.rawValue : CalendarDisplayMode.month.rawValue)
+            if let guide = practiceGuide {
+                if let block = guide.targetSchedule {
+                    initial.calendarWeekPosition.scrollMinute = CGFloat(max(0, block.startMinute - 30))
+                }
+                if guide.progress.step == .clearFilter, let id = guide.progress.tagID {
+                    initial.calendarFilter.tagIDs = [id]
+                }
+                if guide.progress.step == .seeDates, let start = guide.targetTodo?.startDay {
+                    initial.calendarSelectedDate = start.date()
+                    initial.calendarCurrentMonth = start.date()
+                }
+            }
+            initial.todayScrollMinute = 540
         }
     }
     @State private var pagePresentation = SidebarPagePresentation()
     @AppStorage("calendarDisplayMode") private var storedCalendarMode = CalendarDisplayMode.month.rawValue
     @State private var practiceCalendarMode = CalendarDisplayMode.month.rawValue
-    @State private var planningDay = LocalDay(.now)
     @State private var editingItem: TodoItem?
     @State private var editingProject: TodoProject?
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var searchFocusRequest = 0
-    @State private var allTodosQuery = ""
-    @State private var allTodosFilter = TodoFilterState()
-    @State private var calendarFilter = TodoFilterState()
     @State private var calendarToday = LocalDay(.now)
-    @State private var allTodosScrollPosition = ScrollPosition(y: 0)
-    @State private var todayHourHeight: CGFloat = 90
-    @State private var todayScrollMinute: CGFloat?
-    @State private var calendarWeekPosition = CalendarWeekViewportPosition()
-    @State private var calendarSelectedDate = Date.now
-    @State private var calendarCurrentMonth = Date.now
-    @State private var calendarInspectorPresented = false
-    @StateObject private var projectExpansionState = ProjectExpansionState()
     @StateObject private var allTodosPresentationCache = AllTodosView.PresentationCache()
     @StateObject private var calendarWeekCache = CalendarWindowCache()
     @StateObject private var calendarWeekPresentationCache = CalendarWeekPresentationCache()
@@ -77,8 +98,8 @@ struct ContentView: View {
     @State private var isConfirmingEmptyRecovery = false
     @State private var showsLoadingIndicator = false
 
-    var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+    private var workspace: some View {
+        NavigationSplitView(columnVisibility: $browsing.columnVisibility) {
             SidebarDestinationList(
                 selection: Binding(get: { selection }, set: selectDestination),
                 themeColor: store.settings.themeColor
@@ -100,9 +121,9 @@ struct ContentView: View {
                 case .today:
                     TodayView(
                         editingItem: $editingItem,
-                        selectedDay: $planningDay,
-                        hourHeight: $todayHourHeight,
-                        timelineScrollMinute: $todayScrollMinute,
+                        selectedDay: $browsing.planningDay,
+                        hourHeight: $browsing.todayHourHeight,
+                        timelineScrollMinute: $browsing.todayScrollMinute,
                         isPractice: practiceGuide != nil
                     )
                 case .all:
@@ -110,22 +131,22 @@ struct ContentView: View {
                         editingItem: $editingItem,
                         editingProject: $editingProject,
                         searchFocusRequest: searchFocusRequest,
-                        query: $allTodosQuery,
-                        filter: $allTodosFilter,
-                        scrollPosition: $allTodosScrollPosition,
-                        expansionState: projectExpansionState,
+                        query: $browsing.allTodosQuery,
+                        filter: $browsing.allTodosFilter,
+                        scrollPosition: $browsing.allTodosScrollPosition,
+                        expansionState: browsing.projectExpansionState,
                         presentationCache: allTodosPresentationCache
                     )
                 case .calendar:
                     CalendarView(
                         editingItem: $editingItem,
-                        filter: $calendarFilter,
+                        filter: $browsing.calendarFilter,
                         visibility: calendarFilterContext,
-                        columnVisibility: $columnVisibility,
-                        selectedDate: $calendarSelectedDate,
-                        currentMonth: $calendarCurrentMonth,
-                        weekPosition: calendarWeekPosition,
-                        isInspectorPresented: $calendarInspectorPresented,
+                        columnVisibility: $browsing.columnVisibility,
+                        selectedDate: $browsing.calendarSelectedDate,
+                        currentMonth: $browsing.calendarCurrentMonth,
+                        weekPosition: browsing.calendarWeekPosition,
+                        isInspectorPresented: $browsing.calendarInspectorPresented,
                         windowCache: calendarWindowCache,
                         weekCache: calendarWeekCache,
                         weekPresentationCache: calendarWeekPresentationCache,
@@ -140,11 +161,6 @@ struct ContentView: View {
             .animation(nil, value: displayedDestination)
             .toolbarBackground(.automatic, for: .windowToolbar)
             .disabled(!store.canModify && displayedDestination != .settings)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let practiceGuide {
-                    GuidePracticeBar(guide: practiceGuide, isShowingToday: displayedDestination == .today)
-                }
-            }
             .overlay {
                 if showsLoadingIndicator && store.isInitialLoading {
                     ProgressView(L10n.string("正在载入待办…"))
@@ -165,6 +181,7 @@ struct ContentView: View {
                             Label(L10n.string("新建待办…"), systemImage: "plus")
                         }
                         .disabled(!store.canModify)
+                        .guideTarget(.add)
                         .help(L10n.string("新建待办") + " (" + store.settings.shortcut(for: .newTodo).display + ")")
                     }
                 } else if displayedDestination == .all {
@@ -184,6 +201,11 @@ struct ContentView: View {
                         .disabled(!store.canModify)
                     }
                 }
+            }
+        }
+        .overlay {
+            if let practiceGuide, editingItem == nil, editingProject == nil {
+                PracticeHint(guide: practiceGuide, page: displayedDestination)
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -208,27 +230,54 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             persistenceBanner
         }
-        .sheet(item: $editingItem) { item in
+        .sheetAllowingAppTermination(item: $editingItem) { item in
             TodoEditorView(
                 item: item,
                 isEditing: store.items.contains { $0.id == item.id }
             ) { store.upsert($0) }
         }
-        .sheet(item: $editingProject) { project in
+        .sheetAllowingAppTermination(item: $editingProject) { project in
             ProjectEditorView(
                 project: project,
                 isEditing: store.projects.contains { $0.id == project.id }
             ) { store.upsertProject($0) }
         }
+    }
+
+    private var routedWorkspace: some View {
+        workspace
         .onChange(of: pagePresentation.selection) { _, destination in
-            if practiceGuide == nil { navigation.currentDestination = destination ?? .today }
+            if practiceGuide == nil {
+                navigation.currentDestination = destination ?? .today
+                if destination != .settings { navigation.completeTutorialDiscovery() }
+            }
         }
         .onChange(of: navigation.requestID) { _, _ in
             if practiceGuide == nil, let destination = navigation.requestedDestination { selection = destination }
         }
-        .onChange(of: practiceGuide?.progress.step) { _, step in
-            if let step, step != .discover { selection = .today }
+        .onChange(of: displayedDestination, initial: true) { _, destination in
+            practiceGuide?.displayed(destination, week: practiceCalendarMode == CalendarDisplayMode.week.rawValue)
         }
+        .onChange(of: practiceCalendarMode) { _, mode in
+            practiceGuide?.displayed(displayedDestination, week: mode == CalendarDisplayMode.week.rawValue)
+        }
+        .onReceive(practiceGuide?.$revealRequest.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            if let guide = practiceGuide {
+                browsing.columnVisibility = .all
+                if guide.progress.step == .seeDates { practiceCalendarMode = CalendarDisplayMode.month.rawValue }
+                if guide.course == .tour {
+                    browsing.allTodosFilter.clear()
+                    browsing.calendarFilter.clear()
+                    browsing.allTodosQuery = ""
+                    browsing.planningDay = guide.progress.day
+                }
+                // Keep the final Settings action for the user to perform.
+                if guide.progress.step != .done { selectDestination(guide.progress.step.destination) }
+            }
+        }
+        .onChange(of: browsing.allTodosQuery) { _, _ in reportFilter(.all) }
+        .onChange(of: browsing.allTodosFilter) { _, _ in reportFilter(.all) }
+        .onChange(of: browsing.calendarFilter) { _, _ in reportFilter(.calendar) }
         .onAppear {
             store.undoManager = practiceGuide?.undoManager ?? navigation.undoManager
             if case .recoveryRequired = store.persistenceIssue {
@@ -245,6 +294,10 @@ struct ContentView: View {
                 isRecoveryPromptPresented = true
             }
         }
+    }
+
+    var body: some View {
+        routedWorkspace
         .task(id: store.isInitialLoading) {
             showsLoadingIndicator = false
             guard store.isInitialLoading else { return }
@@ -269,6 +322,7 @@ struct ContentView: View {
         } message: {
             Text(L10n.string("主数据文件已损坏。DayVDO 已保留原文件；取消后应用将保持只读。"))
         }
+        .allowAppTerminationDuringDialog()
         .alert(L10n.string("确认以空白数据继续？"), isPresented: $isConfirmingEmptyRecovery) {
             Button(L10n.string("以空白数据继续"), role: .destructive) {
                 store.continueWithEmptyData()
@@ -277,6 +331,7 @@ struct ContentView: View {
         } message: {
             Text(L10n.string("现有损坏文件会被保留，但当前内容将替换为空白数据。"))
         }
+        .allowAppTerminationDuringDialog()
     }
 
     private var selection: SidebarDestination? {
@@ -294,28 +349,38 @@ struct ContentView: View {
         if practiceGuide != nil, destination == .settings {
             navigation.navigate(to: .settings)
         } else {
+            if destination == .calendar, let guide = practiceGuide {
+                let day = guide.targetTodo?.startDay ?? guide.progress.day
+                browsing.calendarSelectedDate = day.date()
+                browsing.calendarCurrentMonth = day.date()
+                if let block = guide.targetSchedule { browsing.calendarWeekPosition.scrollMinute = CGFloat(max(0, block.startMinute - 30)) }
+            }
             selection = destination
         }
     }
 
     private func newTodo() {
-        guard store.canModify else { return }
+        guard store.canModify, editingItem == nil, editingProject == nil else { return }
         let dueDate: Date? = switch selection {
-        case .today: planningDay.date()
-        case .calendar: calendarSelectedDate
+        case .today: browsing.planningDay.date()
+        case .calendar: browsing.calendarSelectedDate
         default: nil
         }
         var item = store.newItem(dueDate: dueDate)
         if let practiceGuide, practiceGuide.progress.step == .create, practiceGuide.targetTodo == nil {
             item.dueDate = practiceGuide.progress.day.date()
-            item.title = L10n.string("阅读 20 分钟")
+            practiceGuide.bindDraft(item.id)
             item.estimatedMinutes = 20
         }
         editingItem = item
     }
 
+    private func reportFilter(_ page: SidebarDestination) {
+        practiceGuide?.filtered(query: page == .all ? browsing.allTodosQuery : "", filter: page == .all ? browsing.allTodosFilter : browsing.calendarFilter, at: page)
+    }
+
     private var calendarFilterContext: TodoFilterContext {
-        .init(filter: calendarFilter, showCompleted: store.settings.showCompleted,
+        .init(filter: browsing.calendarFilter, showCompleted: store.settings.showCompleted,
               today: calendarToday, startsOnMonday: store.settings.startWeekOnMonday)
     }
 
@@ -325,9 +390,9 @@ struct ContentView: View {
     }
 
     private func sanitizeCalendarFilter() {
-        var updated = calendarFilter
+        var updated = browsing.calendarFilter
         updated.sanitize(projectIDs: Set(store.projects.map(\.id)), tagIDs: Set(store.tags.map(\.id)))
-        if updated != calendarFilter { calendarFilter = updated }
+        if updated != browsing.calendarFilter { browsing.calendarFilter = updated }
     }
 
     private var calendarPrewarmTrigger: CalendarPrewarmTrigger {
@@ -371,8 +436,8 @@ struct ContentView: View {
                 locale: L10n.locale, startsOnMonday: store.settings.startWeekOnMonday
             )
             let week = LocalDay(
-                calendar.dateInterval(of: .weekOfYear, for: calendarSelectedDate)?.start
-                    ?? calendarSelectedDate,
+                calendar.dateInterval(of: .weekOfYear, for: browsing.calendarSelectedDate)?.start
+                    ?? browsing.calendarSelectedDate,
                 timeZone: calendar.timeZone
             )
             return CalendarWindowRequest(
@@ -394,8 +459,8 @@ struct ContentView: View {
             locale: L10n.locale,
             startsOnMonday: store.settings.startWeekOnMonday
         )
-        let month = calendar.dateInterval(of: .month, for: calendarCurrentMonth)?.start
-            ?? calendarCurrentMonth
+        let month = calendar.dateInterval(of: .month, for: browsing.calendarCurrentMonth)?.start
+            ?? browsing.calendarCurrentMonth
         let restoredTop = calendarTimelineSession.topWeek.map {
             let date = $0.date(timeZone: calendar.timeZone)
             return calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
@@ -475,17 +540,21 @@ private struct SidebarDestinationList: View {
         List(SidebarDestination.allCases, selection: $selection) { destination in
             let selectedTheme = selection == destination ? themeColor : nil
             NavigationLink(value: destination) {
-                if let selectedTheme {
-                    let foreground = selectionForeground(for: selectedTheme)
-                    Label {
-                        Text(L10n.string(destination.title)).foregroundStyle(foreground)
-                    } icon: {
-                        Image(systemName: destination.symbol).foregroundStyle(foreground)
+                Group {
+                    if let selectedTheme {
+                        let foreground = selectionForeground(for: selectedTheme)
+                        Label {
+                            Text(L10n.string(destination.title)).foregroundStyle(foreground)
+                        } icon: {
+                            Image(systemName: destination.symbol).foregroundStyle(foreground)
+                        }
+                    } else {
+                        Label(L10n.string(destination.title), systemImage: destination.symbol)
                     }
-                } else {
-                    Label(L10n.string(destination.title), systemImage: destination.symbol)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .guideTarget(.sidebar(destination))
             .listItemTint(selectedTheme.map(selectionForeground) ?? themeColor?.color)
             .listRowBackground(selectedTheme.map {
                 RoundedRectangle(cornerRadius: 7).fill($0.color).padding(.horizontal, 10)

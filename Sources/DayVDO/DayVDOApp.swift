@@ -57,6 +57,12 @@ private struct DayVDOCommands: Commands {
                 .keyboardShortcut(store.settings.shortcut(for: .search).keyboardShortcut)
                 .disabled(actions == nil)
         }
+        CommandGroup(after: .help) {
+            Button(L10n.string("使用教程")) {
+                navigation.settingsCategory = .help
+                navigate(.settings)
+            }
+        }
         CommandGroup(after: .sidebar) {
             Button(L10n.string("今日待办")) { navigate(.today) }
                 .keyboardShortcut(store.settings.shortcut(for: .today).keyboardShortcut)
@@ -119,15 +125,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     private var appearanceSubscription: AnyCancellable?
+    private var legacyModalObservation: AnyCancellable?
     weak var guide: OnboardingSession?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        if #unavailable(macOS 15.4) {
+            // Earlier systems expose the same policy on the native window.
+            legacyModalObservation = NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification).sink {
+                guard let window = $0.object as? NSWindow, window.sheetParent != nil else { return }
+                window.preventsApplicationTerminationWhenModal = false
+            }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if let guide, guide.isPresented, !guide.needsReset, !guide.persist() { return .terminateCancel }
+        if let guide, guide.isPresented, !guide.needsReset, !guide.persist() {
+            let alert = NSAlert()
+            alert.messageText = guide.error ?? ""
+            alert.addButton(withTitle: L10n.string("取消"))
+            alert.addButton(withTitle: L10n.string("放弃未保存的练习并退出"))
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+            guide.discardAndClose()
+        }
         guard let store, store.hasPendingPersistence else { return .terminateNow }
         Task {
             let didSave = await store.prepareForTermination()

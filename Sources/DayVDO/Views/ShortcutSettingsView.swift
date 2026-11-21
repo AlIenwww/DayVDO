@@ -26,7 +26,7 @@ struct ShortcutSettingsView: View {
         }
         .labeledContentStyle(SettingsRowStyle())
         .disabled(!store.canModify)
-        .sheet(item: $editing) { command in
+        .sheetAllowingAppTermination(item: $editing) { command in
             ShortcutEditor(command: command)
         }
     }

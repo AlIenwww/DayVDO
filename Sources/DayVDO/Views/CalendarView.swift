@@ -144,6 +144,7 @@ struct CalendarView: View {
                 }
                 Button(L10n.string("取消"), role: .cancel) { selection.pendingDelete = nil }
             } message: { Text(L10n.string("删除后可以从“编辑”菜单撤销。")) }
+        .allowAppTerminationDuringDialog()
         .dateChangeConfirmation($dateChange) { _ in }
         .onChange(of: displayMode) { _, _ in
             visibleWeekFirstDay = nil
@@ -157,10 +158,10 @@ struct CalendarView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                CalendarDisplayModePicker(selection: practiceDisplayMode ?? $storedDisplayMode)
+                CalendarDisplayModePicker(selection: practiceDisplayMode ?? $storedDisplayMode).guideTarget(.mode)
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                TodoFilterButton(filter: $filter)
+                TodoFilterButton(filter: $filter).guideTarget(.filter)
                 Button { createTodo(LocalDay(selectedDate), LocalDay(selectedDate)) } label: {
                     Label(L10n.string("新建待办…"), systemImage: "plus")
                 }

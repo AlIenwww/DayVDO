@@ -71,7 +71,7 @@ struct TaskTagPicker: View {
             isPresented: $isPresented
         )
         .disabled(!store.canModify)
-        .sheet(item: $newTagDraft) { tag in
+        .sheetAllowingAppTermination(item: $newTagDraft) { tag in
             TaskTagEditorView(tag: tag, isEditing: false) { savedTag in
                 selection = savedTag.id
             }
@@ -257,7 +257,7 @@ struct TaskTagManagementView: View {
             .padding(16)
         }
         .frame(width: 520, height: 480)
-        .sheet(item: $editingTag) { tag in
+        .sheetAllowingAppTermination(item: $editingTag) { tag in
             TaskTagEditorView(
                 tag: tag,
                 isEditing: store.tags.contains { $0.id == tag.id }
@@ -288,5 +288,6 @@ struct TaskTagManagementView: View {
                 )
             }
         }
+        .allowAppTerminationDuringDialog()
     }
 }

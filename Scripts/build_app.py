@@ -98,7 +98,7 @@ def main():
             'CFBundleIdentifier': bundle_id, 'CFBundleName': app_name,
             'CFBundleDisplayName': app_name, 'CFBundleExecutable': 'DayVDO',
             'CFBundlePackageType': 'APPL', 'CFBundleInfoDictionaryVersion': '6.0',
-            'CFBundleShortVersionString': '0.9.1',
+            'CFBundleShortVersionString': '0.9.2',
             'CFBundleVersion': datetime.datetime.now().strftime('%Y%m%d%H%M%S'),
             'CFBundleDevelopmentRegion': 'zh-Hans', 'CFBundleLocalizations': list(LANGUAGES),
             'NSPrincipalClass': 'NSApplication',

@@ -851,6 +851,12 @@ final class TodoStore: ObservableObject {
         return true
     }
 
+    func installPracticeUndo(_ snapshot: TodoSnapshot, name: String) {
+        guard !persistsToDisk, let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { $0.restoreSnapshot(snapshot, actionName: name) }
+        undoManager.setActionName(name)
+    }
+
     private func restoreSnapshot(_ snapshot: TodoSnapshot, actionName: String) {
         let inverse = currentSnapshot()
         isApplyingUndo = true

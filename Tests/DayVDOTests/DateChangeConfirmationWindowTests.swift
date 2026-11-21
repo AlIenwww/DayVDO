@@ -13,6 +13,9 @@ final class DateChangeConfirmationWindowTests: XCTestCase {
             let fixture = try makeWindow()
             defer { close(fixture) }
             let sheet = try XCTUnwrap(fixture.window.attachedSheet)
+            if #available(macOS 15.4, *) {
+                XCTAssertFalse(sheet.preventsApplicationTerminationWhenModal)
+            }
             let text = controls(NSTextField.self, in: try XCTUnwrap(sheet.contentView)).map(\.stringValue).joined(separator: "\n")
             XCTAssertTrue(text.contains("需要处理 1 段安排。"))
             XCTAssertTrue(text.contains("范围内的安排继续关联此待办"))

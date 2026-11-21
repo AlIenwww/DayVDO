@@ -13,6 +13,12 @@ final class CalendarRefreshWindowTests: XCTestCase {
         try await checkRefresh(mode: .week)
     }
 
+    func testCompletionCircleTogglesInMonthAndWeek() async throws {
+        for mode in [CalendarDisplayMode.month, .week] {
+            try await checkRefresh(mode: mode, toggleCompletion: true)
+        }
+    }
+
     func testMonthDropIntoOccupiedDayKeepsTheFinalLane() async throws {
         try await checkRefresh(mode: .month, dropOffset: 4)
     }
@@ -66,7 +72,8 @@ final class CalendarRefreshWindowTests: XCTestCase {
         }
     }
 
-    private func checkRefresh(mode: CalendarDisplayMode, dropOffset: Int? = nil) async throws {
+    private func checkRefresh(mode: CalendarDisplayMode, dropOffset: Int? = nil,
+                              toggleCompletion: Bool = false) async throws {
         _ = NSApplication.shared
         let defaults = UserDefaults.standard
         let previousMode = defaults.object(forKey: "calendarDisplayMode")
@@ -127,7 +134,23 @@ final class CalendarRefreshWindowTests: XCTestCase {
         XCTAssertTrue(probe.current.contains(edited.id))
         probe.samples.removeAll()
 
-        if let dropOffset {
+        if toggleCompletion {
+            XCTAssertTrue(store.setStatus(.inProgress, for: edited))
+            for expected in [TodoItem.Status.completed, .inProgress] {
+                try await settle(hosting)
+                let input = try XCTUnwrap(findInput(in: hosting, matching: edited.id))
+                let region = try XCTUnwrap(input.regions.first {
+                    if case let .item(id, _, _) = $0.target { return id == edited.id }
+                    return false
+                })
+                // Click the drawn circle, rather than deriving the test point from the hit region.
+                let point = CGPoint(x: region.frame.minX + 12, y: region.frame.midY)
+                input.pointerDown(at: point, clickCount: 1)
+                input.pointerUp(at: point)
+                XCTAssertEqual(store.item(withID: edited.id)?.status, expected, "\(mode) calendar")
+                XCTAssertEqual(store.item(withID: edited.id)?.dueDay, monday.adding(days: 1))
+            }
+        } else if let dropOffset {
             try await checkDrop(from: monday, offset: dropOffset, edited: edited,
                 occupied: unchanged, hosting: hosting, store: store, probe: probe)
         } else {
@@ -146,7 +169,7 @@ final class CalendarRefreshWindowTests: XCTestCase {
             try await settle(hosting)
             XCTAssertFalse(probe.current.contains(edited.id))
         }
-        XCTAssertFalse(probe.samples.isEmpty)
+        if !toggleCompletion { XCTAssertFalse(probe.samples.isEmpty) }
         XCTAssertTrue(probe.samples.allSatisfy { $0.contains(unchanged.id) },
             "Editing one task must not remove an unrelated bar during any layout pass")
         let saved = await store.flushPersistence()

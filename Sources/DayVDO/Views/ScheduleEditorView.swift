@@ -26,25 +26,19 @@ struct SchedulePopoverView: View {
                     DispatchQueue.main.async { editTodo(todo) }
                 }
             } else {
-                VStack(alignment: .trailing, spacing: 0) {
-                    Button { close() } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.borderless)
-                        .keyboardShortcut(.cancelAction)
-                        .accessibilityLabel(L10n.string("完成"))
-                        .padding([.top, .trailing], 12)
-                    ScheduleDetailsView(
-                        schedule: schedule,
-                        showsCalendarStatus: showsCalendarStatus,
-                        edit: { _ in isEditing = true },
-                        editTodo: { todo in
-                            close()
-                            DispatchQueue.main.async { editTodo(todo) }
-                        },
-                        remove: {
-                            if store.deleteSchedule(schedule.id) { close() }
-                        }
-                    )
-                }
+                ScheduleDetailsView(
+                    schedule: schedule,
+                    showsCalendarStatus: showsCalendarStatus,
+                    close: close,
+                    edit: { isEditing = true },
+                    editTodo: { todo in
+                        close()
+                        DispatchQueue.main.async { editTodo(todo) }
+                    },
+                    remove: {
+                        if store.deleteSchedule(schedule.id) { close() }
+                    }
+                )
             }
         }
     }
@@ -52,6 +46,7 @@ struct SchedulePopoverView: View {
 
 struct ScheduleEditorView: View {
     @Environment(\.practiceDay) private var practiceDay
+    @Environment(\.lessonSession) private var guide
     @EnvironmentObject private var store: TodoStore
     @Environment(\.dismiss) private var dismiss
     @State private var draft: DaySchedule
@@ -62,12 +57,10 @@ struct ScheduleEditorView: View {
     @State private var nextDay: Bool
     @State private var failed = false
     @State private var wasStored = false
-    let isCreating: Bool
     var close: (() -> Void)?
     var editTodo: (TodoItem) -> Void
 
-    init(schedule: DaySchedule, isCreating: Bool = false, close: (() -> Void)? = nil, editTodo: @escaping (TodoItem) -> Void) {
-        self.isCreating = isCreating
+    init(schedule: DaySchedule, close: (() -> Void)? = nil, editTodo: @escaping (TodoItem) -> Void) {
         _draft = State(initialValue: schedule)
         if case .independent(let title, let notes) = schedule.content {
             _title = State(initialValue: title); _notes = State(initialValue: notes)
@@ -126,7 +119,7 @@ struct ScheduleEditorView: View {
                 DatePicker(L10n.string("开始日期"), selection: Binding(
                     get: { draft.startDay.date() }, set: { draft.startDay = LocalDay($0) }
                 ), displayedComponents: .date)
-                .disabled(practiceDay != nil)
+                .disabled(practiceDay != nil && guide?.course != .dates && guide?.course != .calendar)
                 .datePickerStyle(.stepperField)
                 .labelsHidden()
                 .fixedSize()
@@ -162,18 +155,16 @@ struct ScheduleEditorView: View {
                     .font(.caption).foregroundStyle(.red)
                     .padding(.top, 10)
             }
-            if isCreating {
-                Divider().padding(.top, 14)
-                HStack(spacing: 10) {
-                    Spacer()
-                    Button(L10n.string("取消"), role: .cancel, action: dismissEditor)
-                        .keyboardShortcut(.cancelAction)
-                    Button(L10n.string("保存"), action: saveAndClose)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(candidate == nil || !store.canModify)
-                }
-                .padding(.top, 14)
+            Divider().padding(.top, 14)
+            HStack(spacing: 10) {
+                Spacer()
+                Button(L10n.string("取消"), role: .cancel, action: dismissEditor)
+                    .keyboardShortcut(.cancelAction)
+                Button(L10n.string("保存"), action: saveAndClose)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(candidate == nil || !store.canModify)
             }
+            .padding(.top, 14)
         }
         .controlSize(.regular)
         .padding(20)
@@ -211,44 +202,134 @@ struct ScheduleEditorView: View {
 }
 
 
-struct ScheduleDetailsView: View {
+private struct ScheduleDetailsView: View {
     @EnvironmentObject private var store: TodoStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let schedule: DaySchedule
-    var showsCalendarStatus = false
-    var edit: (DaySchedule) -> Void
-    var editTodo: (TodoItem) -> Void
-    var remove: () -> Void
+    let showsCalendarStatus: Bool
+    let close: () -> Void
+    let edit: () -> Void
+    let editTodo: (TodoItem) -> Void
+    let remove: () -> Void
+
+    private var todo: TodoItem? { store.item(withID: schedule.todoID) }
+    private var title: String { SchedulePresentation.title(schedule, store: store) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(SchedulePresentation.title(schedule, store: store)).font(.headline)
-            Text(SchedulePresentation.time(schedule)).foregroundStyle(.secondary)
-            let notes = SchedulePresentation.notes(schedule, store: store)
-            if !notes.isEmpty { Text(notes).textSelection(.enabled) }
-            if let todo = store.items.first(where: { $0.id == schedule.todoID }) {
-                Button {
-                    _ = store.toggle(todo)
-                } label: {
-                    HStack(spacing: 6) {
-                        if showsCalendarStatus {
-                            CalendarTaskStatusIcon(status: todo.status, animates: statusAnimation != nil)
-                            Text(L10n.string(todo.status.title)).contentTransition(.opacity)
-                        } else {
-                            TodoStatusIcon(status: todo.status)
-                            Text(L10n.string(todo.status.title))
-                        }
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                let notes = SchedulePresentation.notes(schedule, store: store)
+                if !notes.isEmpty {
+                    ViewThatFits(in: .vertical) {
+                        note(notes)
+                        ScrollView { note(notes) }
                     }
-                    .animation(statusAnimation, value: todo.status)
+                    .frame(maxHeight: 112, alignment: .topLeading)
                 }
-                .contextMenu { TodoStatusMenuItems(item: todo) }
-                Button(L10n.string("编辑原待办")) { editTodo(todo) }
             }
-            HStack {
-                Button(L10n.string("编辑安排")) { edit(schedule) }
-                Button(L10n.string("移除安排"), role: .destructive, action: remove)
+            .padding(16)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Menu {
+                    if let todo {
+                        Button(L10n.string("编辑原待办"), systemImage: "checklist") { editTodo(todo) }
+                    }
+                    Button(L10n.string("移除安排"), systemImage: "trash", role: .destructive, action: remove)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 17))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel(L10n.string("更多操作"))
+                .help(L10n.string("更多操作"))
+
+                Spacer()
+                Button(L10n.string("编辑安排"), systemImage: "pencil", action: edit)
+                    .buttonStyle(.bordered)
+                    .disabled(!store.canModify)
             }
-        }.padding(20).frame(width: 300)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .frame(width: 332)
+        .fixedSize(horizontal: true, vertical: true)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(3)
+                    .help(title)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                Button(action: close) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel(L10n.string("完成"))
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    time
+                    Spacer(minLength: 6)
+                    if let todo { status(todo) }
+                }
+                VStack(alignment: .leading, spacing: 7) {
+                    time
+                    if let todo { status(todo) }
+                }
+            }
+        }
+    }
+
+    private var time: some View {
+        Label(SchedulePresentation.time(schedule), systemImage: "clock")
+            .font(.callout.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .fixedSize()
+    }
+
+    private func note(_ value: String) -> some View {
+        Text(value)
+            .font(.callout)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func status(_ todo: TodoItem) -> some View {
+        Button {
+            _ = store.toggle(todo)
+        } label: {
+            HStack(spacing: 5) {
+                if showsCalendarStatus {
+                    CalendarTaskStatusIcon(status: todo.status, animates: statusAnimation != nil)
+                } else {
+                    TodoStatusIcon(status: todo.status)
+                }
+                Text(L10n.string(todo.status.title)).contentTransition(.opacity)
+            }
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary.opacity(0.65), in: Capsule())
+            .animation(statusAnimation, value: todo.status)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(!store.canModify)
+        .contextMenu { TodoStatusMenuItems(item: todo) }
     }
 
     private var statusAnimation: Animation? {

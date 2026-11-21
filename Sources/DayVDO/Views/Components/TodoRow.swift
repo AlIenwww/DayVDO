@@ -137,7 +137,9 @@ struct TodoRow: View {
         } message: {
             Text(L10n.string("删除后可以从“编辑”菜单撤销。"))
         }
+        .allowAppTerminationDuringDialog()
         .accessibilityElement(children: .contain)
+        .guideTarget(.row(item.id))
         .accessibilityLabel(item.title)
         .accessibilityValue(L10n.string(item.status.title))
         .accessibilityAction(named: L10n.string("编辑"), onEdit)

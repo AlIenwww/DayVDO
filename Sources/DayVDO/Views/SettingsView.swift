@@ -18,11 +18,13 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
             }
             .id(navigation.settingsCategory)
+            // Native menu pickers can retain their selected text and menu items.
+            .id(store.settings.language)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(L10n.string("设置"))
-        .sheet(isPresented: $isManagingTags) { TaskTagManagementView() }
-        .sheet(isPresented: $isManagingProjects) { ProjectManagementView() }
+        .sheetAllowingAppTermination(isPresented: $isManagingTags) { TaskTagManagementView() }
+        .sheetAllowingAppTermination(isPresented: $isManagingProjects) { ProjectManagementView() }
     }
 
     private var categoryBar: some View {
@@ -41,6 +43,7 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.menu)
+            .guideTarget(.settingsCategories)
             .frame(minHeight: 54)
         }
         .padding(.horizontal, 16)
@@ -79,6 +82,7 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .guideTarget(category == .help ? .helpCategory : nil)
     }
 
     @ViewBuilder
@@ -303,13 +307,39 @@ struct DefaultScheduleDurationPicker: View {
 }
 
 private struct SettingsHelpView: View {
+    private enum TutorialAction {
+        case practice(GuideCourse)
+        case enterDayVDO
+    }
+
+    @EnvironmentObject private var navigation: AppNavigation
     @ObservedObject var guide: OnboardingSession
     @State private var showsGlossary = false
+    #if DEBUG
+    @State private var showsDiagnostics = false
+    #endif
+
+    @State private var showsTutorials = false
+    @State private var openedFromTour = false
+    @State private var pendingTutorialAction: TutorialAction?
 
     var body: some View {
         VStack(spacing: 0) {
-            LabeledContent(L10n.string("新手指引")) {
-                Button(L10n.string(guide.progress.status == .paused ? "继续练习" : "开始练习")) { guide.open() }
+            #if DEBUG
+            if guide.debugEnabled {
+                Button(L10n.string("教程调试")) { showsDiagnostics = true }
+                    .sheetAllowingAppTermination(isPresented: $showsDiagnostics) { GuideDiagnostics(guide: guide) }
+                Divider()
+            }
+            #endif
+            LabeledContent(L10n.string("使用教程")) {
+                Button(L10n.string("打开")) {
+                    openedFromTour = navigation.isFindingTutorials
+                    navigation.completeTutorialDiscovery()
+                    showsTutorials = true
+                }
+                .accessibilityLabel(L10n.string("使用教程"))
+                .guideTarget(.openTutorials)
             }
             Divider()
             LabeledContent(L10n.string("词典")) {
@@ -318,18 +348,39 @@ private struct SettingsHelpView: View {
             }
         }
         .labeledContentStyle(SettingsRowStyle())
-        .sheet(isPresented: $showsGlossary) { GlossarySheet() }
+        .sheetAllowingAppTermination(isPresented: $showsGlossary) { GlossarySheet() }
+        .sheetAllowingAppTermination(isPresented: $showsTutorials, onDismiss: {
+            let action = pendingTutorialAction
+            pendingTutorialAction = nil
+            switch action {
+            case .enterDayVDO: navigation.navigate(to: .today)
+            case .practice(let course): guide.open(course)
+            case nil: break
+            }
+        }) {
+            TutorialSheet(guide: guide, enterDayVDO: openedFromTour ? { pendingTutorialAction = .enterDayVDO } : nil) { course in
+                pendingTutorialAction = .practice(course)
+                showsTutorials = false
+            }
+        }
     }
 }
 
-private struct GlossarySheet: View {
+struct HelpReferenceSheet<Sidebar: View, Detail: View, Actions: View>: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: TodoStore
-    @State private var selection: GlossaryTerm? = .todo
+    let title: String
+    var width: CGFloat = 520
+    var height: CGFloat = 320
+    var sidebarWidth: CGFloat = 158
+    var doneLabel = "完成"
+    var beforeDismiss: (() -> Void)? = nil
+    @ViewBuilder var sidebar: Sidebar
+    @ViewBuilder var detail: Detail
+    @ViewBuilder var actions: Actions
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(L10n.string("词典"))
+            Text(title)
                 .font(.title2.weight(.semibold))
                 .accessibilityAddTraits(.isHeader)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -337,30 +388,48 @@ private struct GlossarySheet: View {
                 .padding(.vertical, 14)
             Divider()
             HStack(spacing: 0) {
-                List(selection: $selection) {
-                    ForEach(GlossaryTerm.allCases) { term in
-                        Text(L10n.string(term.title))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .tag(term)
-                    }
-                }
-                .listStyle(.sidebar)
-                .frame(width: 158)
+                sidebar.frame(width: sidebarWidth)
                 Divider()
-                detail(selection ?? .todo)
+                detail.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(height: 320)
+            .frame(height: height)
             Divider()
             HStack {
                 Spacer()
-                Button(L10n.string("完成")) { dismiss() }
-                    .keyboardShortcut(.defaultAction)
+                actions
+                Button(L10n.string(doneLabel)) {
+                    beforeDismiss?()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
-        .frame(width: 520)
+        .frame(width: width)
         .editorEscapeDismissal(cancel: { dismiss() })
+    }
+}
+
+private struct GlossarySheet: View {
+    @EnvironmentObject private var store: TodoStore
+    @State private var selection: GlossaryTerm? = .todo
+
+    var body: some View {
+        HelpReferenceSheet(title: L10n.string("词典")) {
+            List(selection: $selection) {
+                ForEach(GlossaryTerm.allCases) { term in
+                    Text(L10n.string(term.title))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .tag(term)
+                }
+            }
+            .listStyle(.sidebar)
+        } detail: {
+            detail(selection ?? .todo)
+        } actions: {
+            EmptyView()
+        }
     }
 
     private func detail(_ term: GlossaryTerm) -> some View {
@@ -432,6 +501,6 @@ private struct SettingsAboutView: View {
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             // `swift run` launches a bare executable without an Info.plist. The
             // shipped app always takes the version from its bundle above.
-            ?? "0.9.1"
+            ?? "0.9.2"
     }
 }

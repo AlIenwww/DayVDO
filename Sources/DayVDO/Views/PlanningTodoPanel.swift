@@ -185,6 +185,7 @@ struct PlanningTodoPanel: View {
     let today: LocalDay
     var edit: (TodoItem) -> Void
     @Namespace private var cardPositions
+    var arrange: (TodoItem) -> Void = { _ in }
     @State private var selectedID: UUID?
     @State private var expandedSections = Set(
         PlanningTodoSectionKind.allCases.filter(\.isExpandedByDefault)
@@ -214,7 +215,7 @@ struct PlanningTodoPanel: View {
                                         isOverdue: TaskDateRangePolicy.isOverdue(item, on: day, today: today),
                                         isSelected: selectedID == item.id,
                                         select: { selectedID = item.id },
-                                        edit: edit
+                                        edit: edit, arrange: arrange
                                     )
                                     .matchedGeometryEffect(id: item.id, in: cardPositions)
                                     .padding(.horizontal, 12).padding(.bottom, 10)
@@ -286,6 +287,7 @@ private struct PlanningTodoRow: View {
     let isSelected: Bool
     var select: () -> Void
     var edit: (TodoItem) -> Void
+    let arrange: (TodoItem) -> Void
     @State private var isHovered = false
     @State private var isDurationHovered = false
     @State private var isEditingDuration = false
@@ -432,8 +434,12 @@ private struct PlanningTodoRow: View {
             _ = store.toggle(item)
             return .handled
         }
+        .guideTarget(.row(item.id))
+        .onKeyPress(.return) { arrange(item); return .handled }
+        .accessibilityAction(named: L10n.string("安排时间…")) { arrange(item) }
         .onDrag { PlanningTodoTransfer.provider(for: item.id) }
         .contextMenu {
+            Button(L10n.string("安排时间…")) { arrange(item) }
             Button(L10n.string("编辑待办")) { edit(item) }
             Divider()
             TodoStatusMenuItems(item: item)
@@ -449,6 +455,7 @@ private struct PlanningTodoRow: View {
         } message: {
             Text(L10n.string("删除后可以从“编辑”菜单撤销。"))
         }
+        .allowAppTerminationDuringDialog()
         .accessibilityElement(children: .contain)
         .accessibilityValue(L10n.string(item.status.title))
         .accessibilityAction(named: L10n.string("标记为未开始")) {

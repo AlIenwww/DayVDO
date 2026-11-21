@@ -56,7 +56,7 @@ struct ProjectManagementView: View {
             .padding(16)
         }
         .frame(width: 520, height: 420)
-        .sheet(item: $editing) { project in
+        .sheetAllowingAppTermination(item: $editing) { project in
             ProjectEditorView(project: project, isEditing: store.project(withID: project.id) != nil) {
                 store.upsertProject($0)
             }
@@ -75,5 +75,6 @@ struct ProjectManagementView: View {
         } message: { _ in
             Text(L10n.string("你可以将子任务保留为普通待办，或将它们一起删除。"))
         }
+        .allowAppTerminationDuringDialog()
     }
 }

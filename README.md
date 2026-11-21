@@ -10,6 +10,8 @@
 
 DayVDO 是一款原生 macOS 应用，把待办清单、每日时间线和日历放在一起。先记下要做的事，再把它拖进时间线留出一段时间，最后在周历或月历中查看前后的安排。
 
+[更新日志](CHANGELOG.md#简体中文)
+
 ![DayVDO 的今日安排，左侧是每日时间线，右侧按未安排、已安排和已完成分组显示待办。](Docs/ReadmeAssets/today-zh.jpg)
 
 ### 从待办到安排
@@ -57,6 +59,8 @@ python3 Scripts/build_app.py --configuration release --output-dir dist/local-rel
 ## Plan your day with DayVDO
 
 DayVDO is a native macOS app that brings a to-do list, a daily timeline, and a calendar together. Capture what you need to do, drag it onto your timeline to set aside time, and see where it fits in your week or month.
+
+[Changelog](CHANGELOG.md#english)
 
 ![DayVDO Today view with a daily timeline on the left and unscheduled, scheduled, and completed to-dos on the right.](Docs/ReadmeAssets/today-en.jpg)
 

@@ -10,6 +10,12 @@ struct CalendarDateHitRegion: Equatable {
     var frame: CGRect
     var target: Target
 
+    var statusFrame: CGRect {
+        guard case .item = target else { return .null }
+        return frame.intersection(CGRect(x: frame.minX + CalendarTodoBar.statusLeadingInset, y: frame.minY,
+            width: CalendarTodoBar.statusWidth, height: frame.height))
+    }
+
     func mode(at point: CGPoint) -> CalendarDateDragMode {
         guard case let .item(_, startsHere, endsHere) = target else { return .create }
         if startsHere, point.x < frame.minX + 7 { return .start }
@@ -122,6 +128,7 @@ struct CalendarDateInput: NSViewRepresentable {
             var day: LocalDay
             var more: LocalDay?
             var clickCount: Int
+            var statusFrame: CGRect?
         }
         private var press: Press?
         private var dragging = false
@@ -234,9 +241,11 @@ struct CalendarDateInput: NSViewRepresentable {
             }
             if case let .more(day) = region?.target { more = day }
             let mode = region?.mode(at: point) ?? .create
-            press = Press(point: point, item: item, mode: mode, day: day, more: more, clickCount: clickCount)
+            let statusFrame = region.map(\.statusFrame).flatMap { $0.contains(point) ? $0 : nil }
+            press = Press(point: point, item: item, mode: mode, day: day, more: more,
+                clickCount: clickCount, statusFrame: statusFrame)
             dragging = false
-            if let item {
+            if let item, statusFrame == nil {
                 selection?.selectedID = item.id
                 selection?.day = day
                 select(day)
@@ -246,6 +255,7 @@ struct CalendarDateInput: NSViewRepresentable {
             guard let press, press.more == nil, let interaction, !interaction.suppressed else { return }
             guard dragging || hypot(point.x - press.point.x, point.y - press.point.y) >= 4 else { return }
             dragging = true
+            guard press.statusFrame == nil else { return }
             if let target = day(at: point) {
                 interaction.update(anchor: press.day, target: target, item: press.item, mode: press.mode)
             }
@@ -260,7 +270,11 @@ struct CalendarDateInput: NSViewRepresentable {
         func pointerUp(at point: CGPoint) {
             defer { resetPress() }
             guard let press, let interaction, !interaction.suppressed, day(at: point) != nil else { return }
-            if dragging {
+            if let statusFrame = press.statusFrame {
+                if !dragging, statusFrame.contains(point), let item = press.item {
+                    store?.toggle(item)
+                }
+            } else if dragging {
                 pointerDragged(to: point)
                 interaction.finish(isValidTarget: true, create: create, change: change)
             } else if let more = press.more { selection?.selectedID = nil; showMore(more) }

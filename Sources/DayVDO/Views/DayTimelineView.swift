@@ -211,7 +211,7 @@ struct DayTimelineView: View {
             .popover(item: creationDraft,
                      attachmentAnchor: .point(TimelinePopoverAnchor.point(at: creationAnchor, in: geometry.size)),
                      arrowEdge: .trailing) { schedule in
-                ScheduleEditorView(schedule: schedule, isCreating: true,
+                ScheduleEditorView(schedule: schedule,
                     close: { creationDraft.wrappedValue = nil }, editTodo: editTodo)
             }
             .popover(
@@ -576,6 +576,7 @@ struct DayTimelineView: View {
                 resizeHandle(schedule, mode: .end)
             }
         }
+        .guideTarget(.block(schedule.id))
         .offset(x: gutter + CGFloat(placement.column) * columnWidth,
                 y: CGFloat(placement.interval.lowerBound) * pixelsPerMinute)
         .contextMenu {

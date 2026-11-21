@@ -225,7 +225,7 @@ struct AllTodosView: View {
         )
         .toolbar {
             ToolbarItem {
-                TodoFilterButton(filter: $filter)
+                TodoFilterButton(filter: $filter).guideTarget(.filter)
             }
         }
         .onAppear { synchronizeProjectExpansion(animated: false) }
@@ -278,6 +278,7 @@ struct AllTodosView: View {
         } message: {
             Text(L10n.string("你可以将子任务保留为普通待办，或将它们一起删除。"))
         }
+        .allowAppTerminationDuringDialog()
     }
 
     private func topLevelTodoRow(_ item: TodoItem) -> some View {

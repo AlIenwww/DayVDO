@@ -21,9 +21,11 @@ private struct DateChangeConfirmationModifier: ViewModifier {
             Text(L10n.format("原日期：%@\n新日期：%@\n需要处理 %lld 段安排。\n\n仅处理新日期范围之外的安排，范围内的安排继续关联此待办。部分超出范围的跨日安排将整段处理。",
                              range(value.original), range(value.candidate), value.affectedSchedules.count))
         }
+        .allowAppTerminationDuringDialog()
         .alert(L10n.string("内容已变化，请重试。"), isPresented: $failed) {
             Button(L10n.string("完成"), role: .cancel) {}
         }
+        .allowAppTerminationDuringDialog()
     }
 
     private func resolve(_ value: TodoStore.DateChangeConfirmation, action: TodoStore.DateChangeScheduleAction) {

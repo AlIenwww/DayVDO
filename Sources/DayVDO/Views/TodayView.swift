@@ -4,6 +4,7 @@ import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject private var store: TodoStore
+    @Environment(\.lessonSession) private var guide
     @Binding var editingItem: TodoItem?
     @Binding var selectedDay: LocalDay
     @Binding var hourHeight: CGFloat
@@ -16,6 +17,7 @@ struct TodayView: View {
     @State private var scheduleDraft: DaySchedule?
     @State private var schedulePopover: SchedulePopoverRequest?
     @State private var queuedTodo: TodoItem?
+    @State private var arranging: TodoItem?
     @State private var pending: PendingSchedule?
     @State private var timelineActive = false
 
@@ -53,8 +55,36 @@ struct TodayView: View {
                 editTodo: queueTodoForEditing,
                 activityChanged: { timelineActive = $0 }
             )
+            .background(alignment: .topLeading) {
+                // The hour gutter remains visible even when the narrow task panel is open.
+                Color.clear.frame(width: 54, height: min(210, geometry.size.height))
+                    .guideTarget(.timeline)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .trailing) {
+                if !narrow || showsTodoPanel {
+                    // The visible panel lives beside NSScrollView.documentView. AppKit only
+                    // enumerates its document for AX, so expose the panel's actions here.
+                    Color.clear.frame(width: panelWidth)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel(L10n.string("待办事项"))
+                        .accessibilityChildren {
+                            ForEach(store.planningItems(on: selectedDay, today: isPractice ? selectedDay : LocalDay(now))) { task in
+                                Button(task.title) { editingItem = task }
+                                    .accessibilityValue(L10n.string(task.status.title))
+                                    .accessibilityAction(named: L10n.string("安排时间…")) { arranging = task }
+                                    .accessibilityAction(named: L10n.string(task.isCompleted ? "标记为未完成" : "标记为已完成")) {
+                                        store.toggle(task)
+                                    }
+                            }
+                        }.allowsHitTesting(false)
+                }
+            }
             .pageTopBar {
                 dateHeader(narrow: narrow)
+            }
+            .onReceive(guide?.$revealRequest.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+                if narrow { showsTodoPanel = true }
             }
             .onChange(of: narrow, initial: true) { _, value in showsTodoPanel = value && isPractice }
         }
@@ -69,6 +99,13 @@ struct TodayView: View {
             scheduleDraft = nil
             schedulePopover = nil
         }
+        .sheetAllowingAppTermination(item: $arranging) { item in
+            ScheduleTimeForm(item: item, day: selectedDay, initialMinute: Int(timelineScrollMinute ?? 540),
+                             duration: duration(for: item.id)) { minute in
+                arranging = nil
+                requestSchedule(item.id, at: minute, horizontalPosition: 0.5)
+            }
+        }
         .alert(L10n.string("已达到预计时长"), isPresented: Binding(
             get: { pending != nil }, set: { if !$0 { pending = nil } }
         )) {
@@ -81,6 +118,7 @@ struct TodayView: View {
         } message: {
             Text(L10n.string("这个待办已安排足够时间，仍要再添加一段吗？"))
         }
+        .allowAppTerminationDuringDialog()
         .onReceive(AppClock.refreshes) { _ in refreshClock() }
         .onChange(of: isBusy) { _, busy in if !busy { refreshClock() } }
     }
@@ -89,7 +127,7 @@ struct TodayView: View {
         PlanningTodoPanel(
             day: selectedDay,
             today: isPractice ? selectedDay : LocalDay(now),
-            edit: { editingItem = $0 }
+            edit: { editingItem = $0 }, arrange: { arranging = $0 }
         )
     }
 
@@ -121,6 +159,7 @@ struct TodayView: View {
             .disabled(isPractice)
             if narrow {
                 Button { showsTodoPanel.toggle() } label: { Image(systemName: "sidebar.right") }
+                    .guideTarget(.panel)
                     .help(L10n.string("待办事项"))
             }
         }
@@ -137,10 +176,15 @@ struct TodayView: View {
         }
     }
 
+    private func duration(for id: UUID) -> Int {
+        DayPlanningPolicy.defaultDuration(estimated: store.item(withID: id)?.estimatedMinutes,
+                                          scheduled: store.scheduledMinutes(for: id), fallback: store.settings.defaultScheduleMinutes)
+    }
+
     private func requestSchedule(_ id: UUID, at minute: Int, horizontalPosition: Double) {
         guard let todo = store.items.first(where: { $0.id == id }) else { return }
         let scheduled = store.scheduledMinutes(for: id)
-        let duration = DayPlanningPolicy.defaultDuration(estimated: todo.estimatedMinutes, scheduled: scheduled, fallback: store.settings.defaultScheduleMinutes)
+        let duration = duration(for: id)
         let schedule = DaySchedule(startDay: selectedDay, startMinute: minute,
                                    durationMinutes: duration, content: .todo(id),
                                    horizontalPosition: horizontalPosition, horizontalPositionUpdatedAt: .now)
@@ -169,5 +213,40 @@ struct TodayView: View {
         let today = LocalDay(now)
         selectedDay = DayPlanningPolicy.followedDay(selected: selectedDay, previousToday: previousToday, today: today)
         previousToday = today
+    }
+}
+
+private struct ScheduleTimeForm: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: TodoItem
+    let day: LocalDay
+    let duration: Int
+    let submit: (Int) -> Void
+    @State private var minute: Int
+
+    init(item: TodoItem, day: LocalDay, initialMinute: Int, duration: Int, submit: @escaping (Int) -> Void) {
+        self.item = item
+        self.day = day
+        self.duration = duration
+        self.submit = submit
+        _minute = State(initialValue: min(1439, max(0, initialMinute)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(item.title).font(.title2.bold())
+            Text(day.date().formatted(date: .complete, time: .omitted)).foregroundStyle(.secondary)
+            LabeledContent(L10n.string("开始时间")) {
+                ScheduleTimePicker(title: L10n.string("开始时间"), minute: $minute)
+            }
+            LabeledContent(L10n.string("结束时间")) {
+                Text((minute + duration >= 1440 ? L10n.string("次日") + " " : "") + SchedulePresentation.clock((minute + duration) % 1440))
+            }
+            HStack {
+                Spacer()
+                Button(L10n.string("取消")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L10n.string("安排时间")) { submit(minute) }.keyboardShortcut(.defaultAction)
+            }
+        }.padding(22).frame(minWidth: 320)
     }
 }

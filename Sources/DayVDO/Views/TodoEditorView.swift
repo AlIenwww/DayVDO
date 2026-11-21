@@ -3,6 +3,7 @@ import AppKit
 
 struct TodoEditorView: View {
     @Environment(\.practiceDay) private var practiceDay
+    @Environment(\.lessonSession) private var guide
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: TodoStore
     @State private var draft: TodoItem
@@ -125,7 +126,7 @@ struct TodoEditorView: View {
                             }
                         }
                     }
-                    .disabled(practiceDay != nil)
+                    .disabled(practiceDay != nil && guide?.course != .dates && guide?.course != .calendar)
 
                     Divider().padding(.leading, 50)
 
@@ -216,10 +217,7 @@ struct TodoEditorView: View {
                 && !isShowingProjectPicker && !isShowingTagPicker,
             cancel: { dismiss() }
         )
-        .task {
-            await Task.yield()
-            titleIsFocused = true
-        }
+        .defaultFocus($titleIsFocused, true)
     }
 
     private func save() {
@@ -317,7 +315,7 @@ struct TodoEditorView: View {
             isPresented: $isShowingProjectPicker
         )
         .disabled(!store.canModify)
-        .sheet(item: $newProjectDraft) { project in
+        .sheetAllowingAppTermination(item: $newProjectDraft) { project in
             ProjectEditorView(project: project, isEditing: false) { savedProject in
                 guard store.upsertProject(savedProject) else { return false }
                 draft.projectID = savedProject.id

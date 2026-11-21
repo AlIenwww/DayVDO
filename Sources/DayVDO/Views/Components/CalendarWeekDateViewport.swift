@@ -266,6 +266,7 @@ final class CalendarWeekNativeViewport: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         scroll.drawsBackground = false
+        scroll.focusRingType = .none
         scroll.hasHorizontalScroller = false; scroll.hasVerticalScroller = false
         scroll.horizontalScrollElasticity = .none; scroll.verticalScrollElasticity = .none
         scroll.automaticallyAdjustsContentInsets = false

@@ -34,9 +34,9 @@ struct CalendarWeekTimeline: View {
     @State private var suppressed = false
     @State private var draft: DaySchedule?
     @State private var presentation: SchedulePopoverRequest?
+    @Environment(\.lessonSession) private var guide
     @State private var selectedID: UUID?
     @State private var creationAnchor = CGPoint.zero
-    @FocusState private var isFocused: Bool
     @State private var zoomAnchor: TimelineZoomAnchor?
     @State private var zoomTarget: CGFloat?
     @State private var lastMagnification: CGFloat = 1
@@ -81,11 +81,10 @@ struct CalendarWeekTimeline: View {
                     .frame(height: hourHeight * 24 + 24)
             }
             .scrollPosition($position)
-            .focusable().focusEffectDisabled().focused($isFocused)
             .popover(item: $draft,
                      attachmentAnchor: .point(TimelinePopoverAnchor.point(at: creationAnchor, in: geometry.size)),
                      arrowEdge: .trailing) { schedule in
-                ScheduleEditorView(schedule: schedule, isCreating: true,
+                ScheduleEditorView(schedule: schedule,
                     close: { draft = nil }, editTodo: editTodo)
             }
             .onDrop(of: [.url], delegate: dropDelegate)
@@ -138,22 +137,9 @@ struct CalendarWeekTimeline: View {
             .background(ScheduleClickMonitor(acceptsClick: { point in
                 isActive && column(at: point) != nil
             }) { location, count in
-                guard count == 1, draft == nil, presentation == nil, !suppressed,
-                      store.canModify, let column = column(at: location) else { return }
-                let day = week.adding(days: column)
-                let minute = Double((location.y + offset - 12) / ppm)
-                guard !(timelinePresentation.placementsByDay[day] ?? []).contains(where: {
-                    $0.interval.contains(Int(minute))
-                }) else { return }
-                if selectedID != nil { selectedID = nil; return }
-                let start = TimelineCreationPolicy.startMinute(at: minute,
-                    boundaries: creationBoundaries(on: day), pointsPerMinute: Double(ppm))
-                let range = TimelineCreationPolicy.defaultRange(anchoredAt: start,
-                    duration: store.settings.defaultScheduleMinutes)
-                creationAnchor = location
-                draft = DaySchedule(startDay: day, startMinute: range.lowerBound,
-                    durationMinutes: range.count, content: .independent(title: "", notes: ""),
-                    horizontalPosition: horizontalPosition(at: location, column: column))
+                guard count == 1, selectedID != nil, draft == nil, presentation == nil, !suppressed,
+                      let column = column(at: location), dragSource(at: location, column: column).0 == nil else { return }
+                selectedID = nil
             })
             .background(TimelineControlScrollMonitor { delta, precise in
                 beginZoom()
@@ -196,6 +182,7 @@ struct CalendarWeekTimeline: View {
         } message: {
             Text(L10n.string("这个待办已安排足够时间，仍要再添加一段吗？"))
         }
+        .allowAppTerminationDuringDialog()
         .onReceive(AppClock.ticks) { now = $0 }
         .background(TimelineSelectionKeyMonitor(
             enabled: isActive && selectedID != nil && presentation == nil && draft == nil && drag == nil && !suppressed,
@@ -398,11 +385,18 @@ struct CalendarWeekTimeline: View {
         }
         .animation(statusAnimation, value: todo?.status)
         .clipped().contentShape(Rectangle())
-        .onTapGesture(count: 2) { selectedID = schedule.id; isFocused = true; presentation = .editor(schedule.id) }
+        .guideTarget(.block(schedule.id))
+        .focusable(guide != nil)
+        .focusEffectDisabled()
+        .onKeyPress(.return) {
+            guard guide != nil else { return .ignored }
+            openDetails(schedule)
+            return .handled
+        }
+        .accessibilityAction(named: L10n.string("查看详情")) { openDetails(schedule) }
+        .onTapGesture(count: 2) { guide?.inspected(schedule.id); selectedID = schedule.id; presentation = .editor(schedule.id) }
         .onTapGesture {
-            selectedID = schedule.id
-            isFocused = true
-            presentation = schedule.todoID == nil ? nil : .details(schedule.id)
+            openDetails(schedule)
         }
         .overlay(alignment: .top) { if schedule.startDay == day { handle(mode: .start, height: height) } }
         .overlay(alignment: .bottom) {
@@ -421,6 +415,12 @@ struct CalendarWeekTimeline: View {
             .accessibilityLabel(L10n.string(mode == .start ? "调整开始时间" : "调整结束时间"))
     }
 
+    private func openDetails(_ schedule: DaySchedule) {
+        selectedID = schedule.id
+        presentation = schedule.todoID == nil ? nil : .details(schedule.id)
+        guide?.inspected(schedule.id)
+    }
+
     private func resizeHandleHeight(for height: CGFloat) -> CGFloat { min(6, height / 3) }
 
     private func column(at point: CGPoint) -> Int? {
@@ -436,7 +436,6 @@ struct CalendarWeekTimeline: View {
             draftID = UUID(); positionUpdatedAt = .now
             presentation = nil
             selectedID = original?.id
-            if original != nil { isFocused = true }
             let minute = Double((origin.y + offset - 12) / ppm)
             let start = TimelineCreationPolicy.startMinute(at: minute,
                 boundaries: creationBoundaries(on: week.adding(days: column)), pointsPerMinute: Double(ppm))

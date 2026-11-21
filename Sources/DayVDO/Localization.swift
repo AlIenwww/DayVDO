@@ -67,7 +67,7 @@ enum L10n {
         return preferredLocalization(for: globalLanguages ?? Locale.preferredLanguages)
     }
 
-    private static let resources: Bundle = {
+    static let resources: Bundle = {
         if let resourceURL = Bundle.main.resourceURL,
            let appBundle = Bundle(
                url: resourceURL.appendingPathComponent("DayVDO_DayVDO.bundle")

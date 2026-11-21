@@ -100,6 +100,33 @@ final class TimelineInteractionWindowTests: XCTestCase {
         }
     }
 
+    func testWeekTimelineBlankClickDoesNotShowFocusBorder() throws {
+        let fixture = makeWindow()
+        defer { close(fixture) }
+        let host = NSHostingView(rootView: CalendarWeekView(
+            calendar: AppCalendar.make(locale: L10n.locale, startsOnMonday: true),
+            visibility: .init(showCompleted: true), selectedDate: .constant(day.date()),
+            position: CalendarWeekViewportPosition(scrollMinute: 480), windowCache: CalendarWindowCache(),
+            presentationCache: CalendarWeekPresentationCache(), createTodo: { _, _ in }, changeTodo: { _ in },
+            editTodo: { _ in }, showMore: { _ in })
+            .environmentObject(fixture.store).environmentObject(CalendarTodoSelection()))
+        fixture.window.contentView = host
+        fixture.window.makeKeyAndOrderFront(nil)
+        settle()
+
+        func viewport(in view: NSView) -> CalendarWeekNativeViewport? {
+            (view as? CalendarWeekNativeViewport) ?? view.subviews.lazy.compactMap { viewport(in: $0) }.first
+        }
+        XCTAssertEqual(try XCTUnwrap(viewport(in: host)).scroll.focusRingType, .none)
+        XCTAssertTrue(fixture.window.makeFirstResponder(nil))
+        let responder = fixture.window.firstResponder
+        for x: CGFloat in [300, 34] {
+            click(screenPoint(x: x, yFromTop: host.bounds.height - 34, in: fixture.window), in: fixture.window)
+            settle()
+            XCTAssertTrue(fixture.window.firstResponder === responder)
+        }
+    }
+
     func testWeekArrangementCanMoveAcrossDaysAndCancelAnotherMove() throws {
         let fixture = makeWindow()
         defer { close(fixture) }
@@ -148,6 +175,11 @@ final class TimelineInteractionWindowTests: XCTestCase {
 
         let blank = screenPoint(x: 310, yFromTop: 270, in: fixture.window)
         let blankEnd = screenPoint(x: 310, yFromTop: 315, in: fixture.window)
+        for _ in 0..<2 {
+            click(blank, in: fixture.window)
+            settle()
+            XCTAssertNil(editorWindow(fixture), "Clicking empty time must not open a creation editor")
+        }
         mouse(.leftMouseDown, at: blank, in: fixture.window)
         mouse(.leftMouseDragged, at: blankEnd, in: fixture.window)
         mouse(.leftMouseUp, at: blankEnd, in: fixture.window)
@@ -482,7 +514,7 @@ private struct TimelineWindowHarness: View {
                 probe.editingItem = $0
             }, activityChanged: { _ in })
         .popover(item: $probe.draft) { schedule in
-            ScheduleEditorView(schedule: schedule, isCreating: true, close: { probe.draft = nil }, editTodo: { _ in })
+            ScheduleEditorView(schedule: schedule, close: { probe.draft = nil }, editTodo: { _ in })
         }
         .sheet(item: $probe.editingItem) { item in
             TodoEditorView(item: item, isEditing: true) { store.upsert($0) }

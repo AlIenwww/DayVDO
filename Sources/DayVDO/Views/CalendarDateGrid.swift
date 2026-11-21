@@ -291,5 +291,8 @@ private struct CalendarDateTaskBar: View, Equatable {
             .accessibilityValue(L10n.string(segment.item.status.title))
             .accessibilityHidden(isDraft)
             .accessibilityAction { if let latest = store.item(withID: segment.id) { edit(latest) } }
+            .accessibilityAction(named: L10n.string(segment.item.isCompleted ? "标记为未完成" : "标记为已完成")) {
+                if let latest = store.item(withID: segment.id) { store.toggle(latest) }
+            }
     }
 }

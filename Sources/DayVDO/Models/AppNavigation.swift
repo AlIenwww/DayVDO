@@ -32,6 +32,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 final class AppNavigation: ObservableObject {
     var currentDestination: SidebarDestination
     @Published var settingsCategory = SettingsCategory.general
+    @Published private(set) var isFindingTutorials = false
     @Published private(set) var requestID = 0
     private(set) var requestedDestination: SidebarDestination?
     let undoManager = UndoManager()
@@ -43,9 +44,22 @@ final class AppNavigation: ObservableObject {
     }
 
     func navigate(to destination: SidebarDestination) {
-        if guide.isPresented, !guide.close() { return }
+        if guide.isPresented {
+            if destination == .settings && guide.course == .tour && guide.progress.step == .done {
+                guard guide.finish() else { return }
+                settingsCategory = .general
+                isFindingTutorials = true
+            } else if !guide.close() {
+                return
+            }
+        }
+        if destination != .settings { completeTutorialDiscovery() }
         currentDestination = destination
         requestedDestination = destination
         requestID += 1
+    }
+
+    func completeTutorialDiscovery() {
+        if isFindingTutorials { isFindingTutorials = false }
     }
 }
