@@ -1,7 +1,4 @@
 {
-  "fill": {
-    "solid": "extended-srgb:1.00000,1.00000,1.00000,1.00000"
-  },
   "groups": [
     {
       "layers": [
@@ -68,30 +65,50 @@
       "layers": [
         {
           "glass": false,
-          "image-name": "Blue-Accent.svg",
+          "image-name": "Graphite-Stroke.svg",
           "name": "Diagonal stroke",
           "fill-specializations": [
             {
               "value": {
                 "linear-gradient": [
-                  "extended-srgb:0.54118,0.59216,0.66667,1.00000",
-                  "extended-srgb:0.43137,0.49804,0.58431,1.00000"
-                ]
+                  "extended-srgb:0.30196,0.30588,0.30980,1.00000",
+                  "extended-srgb:0.21569,0.21961,0.22745,1.00000"
+                ],
+                "orientation": {
+                  "start": {
+                    "x": 0.5,
+                    "y": -3.705357142857143
+                  },
+                  "stop": {
+                    "x": 0.5,
+                    "y": 1.3303571428571428
+                  }
+                }
               }
             },
             {
               "appearance": "dark",
               "value": {
                 "linear-gradient": [
-                  "extended-srgb:0.61176,0.67451,0.76078,1.00000",
-                  "extended-srgb:0.47451,0.54510,0.63922,1.00000"
-                ]
+                  "extended-srgb:0.60000,0.60784,0.62353,1.00000",
+                  "extended-srgb:0.41176,0.42745,0.45098,1.00000"
+                ],
+                "orientation": {
+                  "start": {
+                    "x": 0.5,
+                    "y": -3.705357142857143
+                  },
+                  "stop": {
+                    "x": 0.5,
+                    "y": 1.3303571428571428
+                  }
+                }
               }
             }
           ]
         }
       ],
-      "name": "Blue-gray accent",
+      "name": "Graphite accent",
       "shadow": {
         "kind": "neutral",
         "opacity": 0.04
